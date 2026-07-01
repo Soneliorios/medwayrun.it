@@ -5,7 +5,6 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   LayoutGrid,
-  Building2,
   Users,
   User,
   MessageSquare,
@@ -24,7 +23,6 @@ import {
   X,
   Loader2,
   Square,
-  Globe,
   Clock,
   ListTodo as TaskIcon,
   Shield,
@@ -48,8 +46,6 @@ const EMPRESA_ITEMS = [
   { href: "/teams", label: "Equipes", icon: Users2 },
   { href: "/company/forms", label: "Formulários", icon: FileText },
   { href: "/automations", label: "Automações", icon: Zap, badge: "NOVO" },
-  { href: "/company/clients", label: "Clientes", icon: Building2 },
-  { href: "/company/portals", label: "Portais", icon: Globe },
 ];
 
 const TOP_LINKS = [
