@@ -1,3 +1,4 @@
+import Link from "next/link";
 import { LoginForm } from "@/features/auth/components/LoginForm";
 
 export default function LoginPage() {
@@ -13,6 +14,13 @@ export default function LoginPage() {
       </div>
 
       <LoginForm />
+
+      <p className="text-center text-sm text-neutral-500">
+        Primeira vez aqui?{" "}
+        <Link href="/register" className="text-brand-teal font-medium hover:underline">
+          Criar conta
+        </Link>
+      </p>
     </div>
   );
 }

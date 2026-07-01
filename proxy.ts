@@ -1,7 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
-const PUBLIC_ROUTES = ["/login", "/forgot-password", "/invite"];
+const PUBLIC_ROUTES = ["/login", "/forgot-password", "/invite", "/register"];
 // Bypass auth when Supabase isn't configured (placeholder URL or missing env var)
 const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
