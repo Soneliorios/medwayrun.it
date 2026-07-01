@@ -1,3 +1,4 @@
+// build: force fresh bundle with Supabase env vars
 import type { Metadata } from "next";
 import { Inter, Montserrat } from "next/font/google";
 import { TooltipProvider } from "@/components/ui/tooltip";
