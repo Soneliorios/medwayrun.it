@@ -5,8 +5,6 @@ import { useRouter } from "next/navigation";
 import { createClient } from "@/lib/supabase/client";
 import { useAuthStore } from "../store/authStore";
 import { ORG_ID } from "@/lib/utils";
-import { IS_MOCK } from "@/lib/mockDb";
-import { readMockSessionCookie, getMockUser, clearMockSession } from "@/lib/mockUsers";
 
 export function useAuthListener() {
   const { setUser, setSession, setProfile, setMember, setLoading, reset } =
@@ -14,20 +12,6 @@ export function useAuthListener() {
   const supabase = createClient();
 
   useEffect(() => {
-    if (IS_MOCK) {
-      const userId = readMockSessionCookie();
-      const mockUser = userId ? getMockUser(userId) : null;
-      if (mockUser) {
-        setUser({ id: mockUser.id, email: mockUser.email, created_at: new Date().toISOString() } as any);
-        setProfile({ id: mockUser.id, full_name: mockUser.full_name, avatar_url: mockUser.avatar_url, email: mockUser.email, role: mockUser.role } as any);
-      } else {
-        setUser(null);
-        setProfile(null);
-      }
-      setLoading(false);
-      return;
-    }
-
     supabase.auth.getSession().then(({ data: { session } }) => {
       setSession(session);
       setUser(session?.user ?? null);
@@ -76,12 +60,6 @@ export function useSignOut() {
   const supabase = createClient();
 
   return async () => {
-    if (IS_MOCK) {
-      clearMockSession();
-      router.push("/login");
-      router.refresh();
-      return;
-    }
     await supabase.auth.signOut();
     router.push("/login");
     router.refresh();

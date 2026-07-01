@@ -16,7 +16,6 @@ import { ProjectForm } from "@/features/projects/components/ProjectForm";
 import { useProjectStore } from "@/features/projects/store/projectStore";
 import { useProjectActions } from "@/features/projects/hooks/useProjects";
 import { cn } from "@/lib/utils";
-import { IS_MOCK, mockProjects } from "@/lib/mockDb";
 import type { Project } from "@/types";
 
 type ViewMode = "cards" | "list";
@@ -59,11 +58,8 @@ export function ProjectsExplorer({ title = "Quadros", noun = "quadro" }: { title
 
   useEffect(() => { setStats(computeStats()); }, [projects]);
 
-  function duplicate(p: Project) {
-    if (IS_MOCK) {
-      mockProjects.create({ name: `${p.name} (cópia)`, description: p.description ?? undefined, color: p.color });
-      useProjectStore.getState().setProjects(mockProjects.list() as any);
-    }
+  function duplicate(_p: Project) {
+    // TODO: implement project duplication via Supabase
   }
 
   const filtered = useMemo(() => {

@@ -17,7 +17,6 @@ import { cn, formatDate, isOverdue } from "@/lib/utils";
 import { PRIORITY_COLORS, PRIORITY_LABELS, formatElapsed as fmtElapsed } from "@/types";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
-import { MOCK_MEMBER_NAMES } from "@/lib/mockMembers";
 import { useTimerStore } from "@/features/timer/store/timerStore";
 import { useAuthStore } from "@/features/auth/store/authStore";
 import { useSelectionStore } from "../store/selectionStore";
@@ -315,9 +314,9 @@ function TaskCardInner({ task, onOpen }: Props) {
               </AvatarFallback>
             </Avatar>
           ) : task.assignee_id ? (
-            <Avatar className="w-5 h-5" title={MOCK_MEMBER_NAMES[task.assignee_id]?.name ?? task.assignee_id}>
+            <Avatar className="w-5 h-5" title={task.assignee_id}>
               <AvatarFallback className="text-[9px] font-bold text-white" style={{ background: stringToColor(task.assignee_id) }}>
-                {MOCK_MEMBER_NAMES[task.assignee_id]?.initials ?? task.assignee_id.slice(0, 2).toUpperCase()}
+                {task.assignee_id.slice(0, 2).toUpperCase()}
               </AvatarFallback>
             </Avatar>
           ) : null}

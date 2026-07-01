@@ -16,7 +16,6 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { createRawClient } from "@/lib/supabase/client";
-import { IS_MOCK } from "@/lib/mockDb";
 import { useProjectStore } from "@/features/projects/store/projectStore";
 import { PRIORITY_LABELS, PRIORITY_COLORS } from "@/types";
 import type { TaskWithRelations } from "@/types";
@@ -73,42 +72,6 @@ export default function CompanyTasksPage() {
     setLoading(true);
     setError(null);
     try {
-      if (IS_MOCK) {
-        // Load all tasks from all projects in localStorage
-        const allTasksRaw = (() => {
-          try { const r = localStorage.getItem("mwr_tasks"); return r ? JSON.parse(r) : []; } catch { return []; }
-        })();
-        const allColumnsRaw = (() => {
-          try { const r = localStorage.getItem("mwr_columns"); return r ? JSON.parse(r) : []; } catch { return []; }
-        })();
-        const allProjectsRaw = (() => {
-          try { const r = localStorage.getItem("mwr_projects"); return r ? JSON.parse(r) : []; } catch { return []; }
-        })();
-
-        let rows: TaskRow[] = allTasksRaw.map((t: any) => {
-          const col = allColumnsRaw.find((c: any) => c.id === t.column_id);
-          const proj = allProjectsRaw.find((p: any) => p.id === t.project_id);
-          return {
-            ...t,
-            labels: [],
-            assignee: null,
-            _commentCount: 0,
-            _projectName: proj?.name ?? "—",
-            _columnName: col?.name ?? "—",
-            _columnColor: col?.color ?? "#A0A4A8",
-          };
-        });
-
-        if (filters.projectId) rows = rows.filter(t => t.project_id === filters.projectId);
-        if (filters.priority) rows = rows.filter(t => t.priority === filters.priority);
-        if (filters.status) rows = rows.filter(t => (t as any).status === filters.status);
-        if (filters.onlyUrgent) rows = rows.filter(t => (t as any).is_urgent);
-        rows.sort((a, b) => b.created_at.localeCompare(a.created_at));
-        setTasks(rows);
-        setLoading(false);
-        return;
-      }
-
       const supabase = createRawClient();
       let query = supabase
         .from("tasks")

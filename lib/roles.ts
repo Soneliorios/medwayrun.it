@@ -1,18 +1,4 @@
-import { IS_MOCK } from "./mockDb";
-
 export type AppRole = "superadmin" | "admin" | "user";
-
-const STORAGE_KEY = "mwr_mock_role";
-
-export function getMockRole(): AppRole {
-  if (typeof window === "undefined") return "superadmin";
-  return (localStorage.getItem(STORAGE_KEY) as AppRole) ?? "superadmin";
-}
-
-export function setMockRole(role: AppRole) {
-  localStorage.setItem(STORAGE_KEY, role);
-  window.dispatchEvent(new Event("mwr_role_change"));
-}
 
 // ── Permission matrix ────────────────────────────────────────────────────────
 

@@ -8,12 +8,8 @@
  * becomes a string literal in client code — the `process` object is never accessed at runtime.
  * The old `typeof process !== "undefined"` guard was incorrectly short-circuiting to false.
  */
-const _supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
-export const IS_MOCK: boolean =
-  !_supabaseUrl ||
-  _supabaseUrl.includes("placeholder") ||
-  !(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "") ||
-  (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "").includes("placeholder");
+// Mock mode permanently disabled — app runs exclusively on Supabase.
+export const IS_MOCK = false;
 
 function uuid(): string {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {

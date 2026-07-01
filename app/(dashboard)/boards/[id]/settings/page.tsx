@@ -11,11 +11,9 @@ import { useProjectStore } from "@/features/projects/store/projectStore";
 import { useProjectActions } from "@/features/projects/hooks/useProjects";
 import { useBoardStore } from "@/features/board/store/boardStore";
 import { useBoardProjectStore } from "@/features/board/store/boardProjectStore";
-import { mockTypeHistory } from "@/lib/mockDb";
-import { MOCK_MEMBER_NAMES } from "@/lib/mockMembers";
 import {
   ArrowLeft, Archive, Loader2, Settings, Tag, Users, Layers,
-  LayoutList, Plus, Trash2, ChevronDown, Check, GripVertical, FolderKanban, ChevronRight,
+  LayoutList, Plus, Trash2, ChevronDown, Check, GripVertical, FolderKanban,
 } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -103,7 +101,6 @@ export default function ProjectSettingsPage({ params }: Props) {
   const [newTypeName, setNewTypeName] = useState("");
   const [newTypeHours, setNewTypeHours] = useState(2);
   const [newTypeColor, setNewTypeColor] = useState(TYPE_COLORS[0]);
-  const [expandedTypeId, setExpandedTypeId] = useState<string | null>(null);
 
   // Members
   const [members, setMembers] = useState<Member[]>([
@@ -277,60 +274,24 @@ export default function ProjectSettingsPage({ params }: Props) {
                 </div>
 
                 <div className="space-y-2">
-                  {taskTypes.map((type) => {
-                    const typeHistory = mockTypeHistory.listByBoard(projectId).filter((h) => h.type_name === type.name);
-                    const isExpanded = expandedTypeId === type.id;
-                    return (
-                      <div key={type.id} className="bg-white rounded-xl border border-neutral-100 shadow-sm overflow-hidden">
-                        <div className="flex items-center gap-3 p-3">
-                          <GripVertical size={14} className="text-neutral-300" />
-                          <span className="w-3 h-3 rounded-full shrink-0" style={{ background: type.color }} />
-                          <span className="text-sm font-medium text-neutral-700 flex-1">{type.name}</span>
-                          <span className="text-xs text-neutral-400 bg-neutral-50 px-2 py-0.5 rounded-full">
-                            {type.default_hours}h estimadas
-                          </span>
-                          <button
-                            onClick={() => setExpandedTypeId(isExpanded ? null : type.id)}
-                            className="w-6 h-6 flex items-center justify-center rounded-md text-neutral-400 hover:text-brand-navy hover:bg-neutral-50 transition-colors"
-                            title="Ver histórico por usuário"
-                          >
-                            <ChevronRight size={12} className={cn("transition-transform", isExpanded && "rotate-90")} />
-                          </button>
-                          <button
-                            onClick={() => setTaskTypes((prev) => prev.filter((t) => t.id !== type.id))}
-                            className="w-6 h-6 flex items-center justify-center rounded-md text-neutral-300 hover:text-destructive hover:bg-destructive/5 transition-colors"
-                          >
-                            <Trash2 size={12} />
-                          </button>
-                        </div>
-                        {isExpanded && (
-                          <div className="border-t border-neutral-100 px-4 py-3 bg-neutral-50/60">
-                            <p className="text-[10px] uppercase tracking-wider text-neutral-400 font-semibold mb-2">Histórico por usuário</p>
-                            {typeHistory.length === 0 ? (
-                              <p className="text-xs text-neutral-400 italic">Nenhuma entrega registrada ainda</p>
-                            ) : (
-                              <div className="space-y-1.5">
-                                {typeHistory.map((entry) => {
-                                  const member = MOCK_MEMBER_NAMES[entry.user_id];
-                                  const avg = entry.count > 0 ? (entry.total_hours / entry.count).toFixed(1) : "—";
-                                  return (
-                                    <div key={entry.id} className="flex items-center gap-2 text-xs">
-                                      <span className="w-5 h-5 rounded-full bg-brand-navy/10 flex items-center justify-center text-[8px] font-bold text-brand-navy shrink-0">
-                                        {member?.initials ?? "??"}
-                                      </span>
-                                      <span className="text-neutral-600 flex-1">{member?.name ?? entry.user_id}</span>
-                                      <span className="text-neutral-400">{entry.count} entregas</span>
-                                      <span className="font-medium text-neutral-700 w-14 text-right">{avg}h média</span>
-                                    </div>
-                                  );
-                                })}
-                              </div>
-                            )}
-                          </div>
-                        )}
+                  {taskTypes.map((type) => (
+                    <div key={type.id} className="bg-white rounded-xl border border-neutral-100 shadow-sm overflow-hidden">
+                      <div className="flex items-center gap-3 p-3">
+                        <GripVertical size={14} className="text-neutral-300" />
+                        <span className="w-3 h-3 rounded-full shrink-0" style={{ background: type.color }} />
+                        <span className="text-sm font-medium text-neutral-700 flex-1">{type.name}</span>
+                        <span className="text-xs text-neutral-400 bg-neutral-50 px-2 py-0.5 rounded-full">
+                          {type.default_hours}h estimadas
+                        </span>
+                        <button
+                          onClick={() => setTaskTypes((prev) => prev.filter((t) => t.id !== type.id))}
+                          className="w-6 h-6 flex items-center justify-center rounded-md text-neutral-300 hover:text-destructive hover:bg-destructive/5 transition-colors"
+                        >
+                          <Trash2 size={12} />
+                        </button>
                       </div>
-                    );
-                  })}
+                    </div>
+                  ))}
                 </div>
 
                 {/* Add new type */}

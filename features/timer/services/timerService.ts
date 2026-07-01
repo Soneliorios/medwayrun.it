@@ -1,13 +1,7 @@
 import { createRawClient } from "@/lib/supabase/client";
-import { IS_MOCK, mockTimers, mockTasks, mockTimeEntries } from "@/lib/mockDb";
 
 export const timerService = {
   async start(userId: string, taskId: string): Promise<{ started_at: string }> {
-    if (IS_MOCK) {
-      const timer = mockTimers.start(userId, taskId);
-      return { started_at: timer.started_at };
-    }
-
     const supabase = createRawClient();
     const existing = await this.getActive(userId);
     if (existing) {
@@ -24,33 +18,6 @@ export const timerService = {
   },
 
   async stop(userId: string): Promise<number | null> {
-    if (IS_MOCK) {
-      const active = mockTimers.get(userId);
-      if (!active) return null;
-      // Use seconds precision: even a 1-second session counts
-      const durationSeconds = Math.ceil((Date.now() - new Date(active.started_at).getTime()) / 1000);
-      const durationMinutes = Math.max(1, Math.round(durationSeconds / 60)); // minimum 1 minute for display
-      const durationHours = durationSeconds / 3600; // exact hours from seconds
-      mockTimers.stop(userId);
-      // Update tracked_hours on the task + record a time entry for the timesheet
-      if (durationSeconds >= 1) {
-        const task = mockTasks.get(active.task_id);
-        if (task) {
-          mockTasks.update(active.task_id, {
-            tracked_hours: (task.tracked_hours ?? 0) + durationHours,
-          });
-        }
-        mockTimeEntries.add(
-          userId,
-          active.task_id,
-          durationMinutes,
-          new Date(active.started_at).toISOString().slice(0, 10),
-          "Cronômetro"
-        );
-      }
-      return durationMinutes;
-    }
-
     const supabase = createRawClient();
     const active = await this.getActive(userId);
     if (!active) return null;
@@ -90,10 +57,6 @@ export const timerService = {
   },
 
   async getActive(userId: string) {
-    if (IS_MOCK) {
-      return mockTimers.get(userId);
-    }
-
     const supabase = createRawClient();
     const { data } = await supabase
       .from("active_timers")

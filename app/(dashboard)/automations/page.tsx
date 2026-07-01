@@ -9,7 +9,13 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useProjectStore } from "@/features/projects/store/projectStore";
-import { IS_MOCK, mockAutomations, type MockAutomation, type MockAutomationAction } from "@/lib/mockDb";
+interface MockAutomationAction { type: string; config: Record<string, unknown>; }
+interface MockAutomation {
+  id: string; name: string; board: string; trigger: string;
+  trigger_config: Record<string, unknown>; actions: MockAutomationAction[];
+  is_active: boolean; executions: number;
+  logs: Array<{ at: string; task: string; status: "success" | "error"; message: string }>;
+}
 
 // ── Trigger & action catalogs ───────────────────────────────────────────────────
 
@@ -48,28 +54,17 @@ function fmtDate(iso: string) {
 
 export default function AutomationsPage() {
   const projects = useProjectStore((s) => s.projects);
-  const [automations, setAutomations] = useState<MockAutomation[]>([]);
+  const [automations] = useState<MockAutomation[]>([]);
   const [showCreate, setShowCreate] = useState(false);
   const [selectedBoard, setSelectedBoard] = useState<string>("");
   const [expandedLog, setExpandedLog] = useState<string | null>(null);
 
-  useEffect(() => { if (IS_MOCK) setAutomations(mockAutomations.list()); }, []);
-
-  function reload() { if (IS_MOCK) setAutomations(mockAutomations.list()); }
-
-  function toggle(id: string, is_active: boolean) {
-    mockAutomations.update(id, { is_active: !is_active });
-    reload();
-  }
-  function remove(id: string) {
-    if (!confirm("Excluir esta automação?")) return;
-    mockAutomations.delete(id);
-    reload();
-  }
-  function rename(id: string, name: string) {
-    mockAutomations.update(id, { name });
-    reload();
-  }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  function toggle(_id: string, _is_active: boolean) { /* Supabase: not yet implemented */ }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  function remove(_id: string) { /* Supabase: not yet implemented */ }
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  function rename(_id: string, _name: string) { /* Supabase: not yet implemented */ }
 
   const filtered = selectedBoard ? automations.filter((a) => a.board === selectedBoard) : automations;
 
@@ -181,7 +176,7 @@ export default function AutomationsPage() {
           boards={projects.map((p) => p.name)}
           defaultBoard={selectedBoard || projects[0]?.name || "Geral"}
           onClose={() => setShowCreate(false)}
-          onSave={(a) => { mockAutomations.create(a); reload(); setShowCreate(false); }}
+          onSave={() => { setShowCreate(false); }}
         />
       )}
     </div>
@@ -196,7 +191,7 @@ function AutomationBuilder({
   boards: string[];
   defaultBoard: string;
   onClose: () => void;
-  onSave: (a: Omit<MockAutomation, "id" | "executions" | "logs">) => void;
+  onSave: () => void;
 }) {
   const [name, setName] = useState("");
   const [board, setBoard] = useState(defaultBoard);
@@ -216,10 +211,7 @@ function AutomationBuilder({
   function removeAction(i: number) { setActions((arr) => arr.filter((_, j) => j !== i)); }
 
   function save() {
-    onSave({
-      name: name.trim() || TRIGGERS[trigger].label,
-      board, trigger, trigger_config: triggerConfig, actions, is_active: true,
-    });
+    onSave();
   }
 
   return (

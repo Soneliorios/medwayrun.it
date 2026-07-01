@@ -1,16 +1,9 @@
 import { createClient, createRawClient } from "@/lib/supabase/client";
 import { ORG_ID } from "@/lib/utils";
-import { IS_MOCK, mockTasks, mockComments } from "@/lib/mockDb";
 import type { TaskWithRelations, InsertTask } from "@/types";
 
 export const taskService = {
   async get(id: string): Promise<TaskWithRelations> {
-    if (IS_MOCK) {
-      const t = mockTasks.get(id);
-      if (!t) throw new Error("Task not found");
-      return t as unknown as TaskWithRelations;
-    }
-
     const supabase = createClient();
     const { data, error } = await supabase
       .from("tasks")
@@ -46,8 +39,6 @@ export const taskService = {
     due_date?: string;
     position?: number;
   }): Promise<TaskWithRelations> {
-    if (IS_MOCK) return mockTasks.create(input) as unknown as TaskWithRelations;
-
     const supabase = createRawClient();
     const { data, error } = await supabase
       .from("tasks")
@@ -60,11 +51,6 @@ export const taskService = {
   },
 
   async update(id: string, updates: Partial<TaskWithRelations>): Promise<void> {
-    if (IS_MOCK) {
-      mockTasks.update(id, updates as any);
-      return;
-    }
-
     const supabase = createRawClient();
     const {
       title, description, priority, assignee_id, due_date,
@@ -81,16 +67,12 @@ export const taskService = {
   },
 
   async delete(id: string): Promise<void> {
-    if (IS_MOCK) { mockTasks.delete(id); return; }
-
     const supabase = createRawClient();
     const { error } = await supabase.from("tasks").delete().eq("id", id);
     if (error) throw error;
   },
 
   async getComments(taskId: string) {
-    if (IS_MOCK) return mockComments.listByTask(taskId);
-
     const supabase = createClient();
     const { data, error } = await supabase
       .from("comments")
@@ -102,8 +84,6 @@ export const taskService = {
   },
 
   async addComment(taskId: string, userId: string, content: string) {
-    if (IS_MOCK) return mockComments.create(taskId, content);
-
     const supabase = createRawClient();
     const { data, error } = await supabase
       .from("comments")
@@ -115,16 +95,12 @@ export const taskService = {
   },
 
   async deleteComment(commentId: string) {
-    if (IS_MOCK) { mockComments.delete(commentId); return; }
-
     const supabase = createRawClient();
     const { error } = await supabase.from("comments").delete().eq("id", commentId);
     if (error) throw error;
   },
 
   async updateChecklist(itemId: string, isDone: boolean) {
-    if (IS_MOCK) return; // checklist mock — skip for now
-
     const supabase = createRawClient();
     const { error } = await supabase
       .from("checklist_items")
@@ -134,10 +110,6 @@ export const taskService = {
   },
 
   async addChecklistItem(taskId: string, title: string, position: number) {
-    if (IS_MOCK) {
-      return { id: Math.random().toString(), task_id: taskId, title, is_done: false, position };
-    }
-
     const supabase = createRawClient();
     const { data, error } = await supabase
       .from("checklist_items")
@@ -149,8 +121,6 @@ export const taskService = {
   },
 
   async deleteChecklistItem(itemId: string) {
-    if (IS_MOCK) return;
-
     const supabase = createRawClient();
     const { error } = await supabase
       .from("checklist_items")

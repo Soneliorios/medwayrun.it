@@ -5,24 +5,18 @@ import { Plus, Trash2, GripVertical, Search, AlertCircle, CheckCircle2, ArrowRig
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn, getInitials } from "@/lib/utils";
-import {
-  IS_MOCK,
-  mockTaskSequences,
-  mockTaskDependencies,
-  mockTasks,
-  mockProjects,
-  type MockTaskSequence,
-  type MockTaskDependency,
-} from "@/lib/mockDb";
+interface MockTaskSequence {
+  id: string; task_id: string; user_id: string; name: string;
+  order_position: number; status: "pending" | "active" | "done";
+}
+interface MockTaskDependency {
+  id: string; task_id: string; dependency_task_id: string;
+  dependency_task_title: string | null; dependency_board_id: string | null;
+  dependency_board_name: string | null; type: "prerequisite" | "subsequent";
+}
 import { useBoardStore } from "@/features/board/store/boardStore";
 
-const DEMO_MEMBERS = [
-  { id: "mock-user", name: "Você (demo)" },
-  { id: "u-ana", name: "Ana Souza" },
-  { id: "u-bruno", name: "Bruno Lima" },
-  { id: "u-carla", name: "Carla Dias" },
-  { id: "u-diego", name: "Diego Reis" },
-];
+const DEMO_MEMBERS: Array<{ id: string; name: string }> = [];
 
 interface AvailableTask {
   id: string;
@@ -58,33 +52,14 @@ export function RulesTab({ taskId }: Props) {
     [columns, taskId]
   );
 
-  // All-boards tasks (resolved on demand)
-  const allBoardTasks: AvailableTask[] = useMemo(() => {
-    if (!IS_MOCK) return boardTasks;
-    const projects = mockProjects.list();
-    const projectMap = new Map(projects.map((p) => [p.id, p.name]));
-    // Build column→board map from current store for current board
-    const colBoardMap = new Map<string, string>();
-    columns.forEach((c) => colBoardMap.set(c.id, columns[0]?.tasks[0]?.project_id ?? ""));
-    return mockTasks.listAll()
-      .filter((t) => t.id !== taskId)
-      .map((t) => ({
-        id: t.id,
-        title: t.title,
-        status: t.status,
-        columnName: "",
-        boardId: t.project_id,
-        boardName: projectMap.get(t.project_id) ?? "Quadro desconhecido",
-      }));
-  }, [columns, taskId]);
+  // All-boards tasks (Supabase implementation pending — fall back to current board)
+  const allBoardTasks: AvailableTask[] = useMemo(() => boardTasks, [boardTasks]);
 
   const [sequence, setSequence] = useState<MockTaskSequence[]>([]);
   const [deps, setDeps] = useState<MockTaskDependency[]>([]);
 
   function reload() {
-    if (!IS_MOCK) return;
-    setSequence(mockTaskSequences.listByTask(taskId));
-    setDeps(mockTaskDependencies.listByTask(taskId));
+    // No-op: sequence/dependency data requires Supabase implementation
   }
 
   useEffect(() => {
@@ -98,39 +73,26 @@ export function RulesTab({ taskId }: Props) {
   // ── Sequence handlers ──────────────────────────────────────────────────────
   const [memberPickerOpen, setMemberPickerOpen] = useState(false);
 
-  function addToSequence(member: { id: string; name: string }) {
-    mockTaskSequences.add(taskId, member.id, member.name);
+  function addToSequence(_member: { id: string; name: string }) {
     setMemberPickerOpen(false);
-    reload();
+    // No-op: requires Supabase implementation
   }
-  function removeFromSequence(id: string) {
-    mockTaskSequences.remove(id);
-    reload();
+  function removeFromSequence(_id: string) {
+    // No-op: requires Supabase implementation
   }
 
   const [dragIndex, setDragIndex] = useState<number | null>(null);
-  function handleDrop(targetIndex: number) {
-    if (dragIndex === null || dragIndex === targetIndex) return;
-    const reordered = [...sequence];
-    const [moved] = reordered.splice(dragIndex, 1);
-    reordered.splice(targetIndex, 0, moved);
-    mockTaskSequences.reorder(taskId, reordered.map((s) => s.id));
+  function handleDrop(_targetIndex: number) {
     setDragIndex(null);
-    reload();
+    // No-op: requires Supabase implementation
   }
 
   // ── Dependency handlers ────────────────────────────────────────────────────
-  function addDependency(task: AvailableTask, type: "prerequisite" | "subsequent") {
-    mockTaskDependencies.add(taskId, task.id, type, {
-      title: task.title,
-      boardId: task.boardId ?? undefined,
-      boardName: task.boardName ?? undefined,
-    });
-    reload();
+  function addDependency(_task: AvailableTask, _type: "prerequisite" | "subsequent") {
+    // No-op: requires Supabase implementation
   }
-  function removeDependency(id: string) {
-    mockTaskDependencies.remove(id);
-    reload();
+  function removeDependency(_id: string) {
+    // No-op: requires Supabase implementation
   }
 
   return (
@@ -309,13 +271,12 @@ function DependencySection({
       .slice(0, 8);
   }, [pool, excludeIds, query]);
 
-  // Resolve linked task metadata — prefer live data, fall back to stored title/board
+  // Resolve linked task metadata — fall back to stored title/board
   function resolveTask(d: MockTaskDependency): { title: string; boardName: string | null; status: string | null } {
-    const live = IS_MOCK ? mockTasks.get(d.dependency_task_id) : null;
     return {
-      title: live?.title ?? d.dependency_task_title ?? "Tarefa removida",
+      title: d.dependency_task_title ?? "Tarefa removida",
       boardName: d.dependency_board_name ?? null,
-      status: live?.status ?? null,
+      status: null,
     };
   }
 

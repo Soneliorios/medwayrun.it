@@ -2,7 +2,6 @@
 
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
-import { IS_MOCK, mockSavedFilters } from "@/lib/mockDb";
 
 export interface BoardFilters {
   subtasks?: "all" | "hide" | "only";
@@ -50,7 +49,7 @@ interface FilterState {
   setSidebarVisible: (v: boolean) => void;
   applyFilters: (filters: BoardFilters) => void;
 
-  // Saved filters (persisted via mockDb / supabase by the caller through these actions)
+  // Saved filters (persisted via Supabase by the caller through these actions)
   loadSavedFilters: (boardId: string) => void;
   saveCurrentFilter: (name: string, boardId: string) => void;
   deleteSavedFilter: (id: string) => void;
@@ -122,34 +121,15 @@ export const useFilterStore = create<FilterState>()(
 
     applyFilters: (filters) => set({ filters, activeSavedId: null }),
 
-    loadSavedFilters: (boardId) => {
-      if (IS_MOCK) {
-        const items: SavedFilterItem[] = mockSavedFilters.listByBoard(boardId).map((f) => ({
-          id: f.id,
-          board_id: f.board_id,
-          name: f.name,
-          filters: f.filters as BoardFilters,
-        }));
-        set({ savedFilters: items });
-      }
+    loadSavedFilters: (_boardId) => {
+      // Supabase path: populated externally via server action / query
     },
 
-    saveCurrentFilter: (name, boardId) => {
-      const { filters } = get();
-      if (IS_MOCK) {
-        const created = mockSavedFilters.create(boardId, name, filters as Record<string, unknown>);
-        const item: SavedFilterItem = {
-          id: created.id,
-          board_id: created.board_id,
-          name: created.name,
-          filters: created.filters as BoardFilters,
-        };
-        set((s) => ({ savedFilters: [...s.savedFilters, item], activeSavedId: item.id }));
-      }
+    saveCurrentFilter: (_name, _boardId) => {
+      // Supabase path: persisted externally via server action / mutation
     },
 
     deleteSavedFilter: (id) => {
-      if (IS_MOCK) mockSavedFilters.delete(id);
       set((s) => ({
         savedFilters: s.savedFilters.filter((f) => f.id !== id),
         activeSavedId: s.activeSavedId === id ? null : s.activeSavedId,

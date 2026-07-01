@@ -62,12 +62,10 @@ import { RulesTab } from "./RulesTab";
 import { ApprovalBanner } from "./ApprovalControls";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
-import { IS_MOCK, mockTaskSequences, mockTaskDependencies, mockCapacityRequests, mockTasks as mockTasksDb } from "@/lib/mockDb";
 import { useRole } from "@/features/auth/hooks/useRole";
-import { useNotificationStore } from "@/features/notifications/store/notificationStore";
-import { checkCapacityOverflow, loadBoardTypeAverages, findTeamLeaderForUser, recordDeliveryHistory, getUserWeekCapacity } from "@/lib/liquidTime";
-import { MOCK_MEMBER_NAMES, DEMO_MEMBERS } from "@/lib/mockMembers";
 import { useBoardProjectStore } from "@/features/board/store/boardProjectStore";
+import { createClient } from "@/lib/supabase/client";
+import { ORG_ID } from "@/lib/utils";
 import type { TaskWithRelations } from "@/types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -201,7 +199,6 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   const store = useBoardStore();
   const { user } = useAuthStore();
   const { isUser, isAdmin } = useRole();
-  const addNotification = useNotificationStore((s) => s.addNotification);
   const timerStore = useTimerStore();
   const projectStore = useProjectStore();
   const boardColumns = useBoardStore((s) => s.columns);
@@ -213,6 +210,14 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
 
   const isTimerActive = timerStore.activeTaskId === taskId;
   const elapsed = timerStore.getElapsedForTask(taskId);
+
+  const [orgProfiles, setOrgProfiles] = useState<Array<{ id: string; full_name: string | null; avatar_url: string | null }>>([]);
+  useEffect(() => {
+    const sb = createClient();
+    sb.from("members").select("user_id, profiles!inner(id, full_name, avatar_url)").eq("org_id", ORG_ID).then(({ data }) => {
+      setOrgProfiles((data ?? []).map((m: any) => m.profiles));
+    });
+  }, []);
 
   // Load task
   useEffect(() => {
@@ -289,12 +294,6 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
     if (!user?.id) return;
     if (isTimerActive) {
       await timerStore.stopTimer(user.id);
-      // Refresh task from storage so tracked_hours display updates immediately
-      if (IS_MOCK) {
-        const { mockTasks } = await import("@/lib/mockDb");
-        const refreshed = mockTasks.get(taskId);
-        if (refreshed) setTask((prev) => prev ? { ...prev, tracked_hours: refreshed.tracked_hours } : prev);
-      }
     } else {
       if (!(task as any)?.start_date) {
         await handleFieldUpdate("start_date", new Date().toISOString().split("T")[0]);
@@ -337,45 +336,6 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
     if (!task) return;
     if (isDelivered) return;
 
-    // Persist delivery extras
-    if (IS_MOCK && opts) {
-      const updates: Record<string, unknown> = {};
-      if (opts.hours !== undefined) updates.tracked_hours = opts.hours;
-      if (opts.link !== undefined) updates.delivery_link = opts.link || null;
-      if (opts.note !== undefined) updates.delivery_note = opts.note || null;
-      if (Object.keys(updates).length) {
-        mockTasksDb.update(taskId, updates as any);
-        setTask((t) => t ? { ...t, ...updates } as any : t);
-        if (opts.hours !== undefined) {
-          store.updateTask(taskId, { tracked_hours: opts.hours } as any);
-        }
-      }
-    }
-
-    // Record delivery history for capacity calculations
-    if (IS_MOCK) {
-      const current = mockTasksDb.get(taskId);
-      if (current) recordDeliveryHistory(current, task.project_id);
-    }
-
-    // Block delivery if prerequisites aren't all delivered.
-    if (IS_MOCK) {
-      const allTasks = store.columns.flatMap((c) => c.tasks);
-      const prereqs = mockTaskDependencies
-        .listByTask(taskId)
-        .filter((d) => d.type === "prerequisite");
-      const pending = prereqs.filter((d) => {
-        const dep = allTasks.find((t) => t.id === d.dependency_task_id);
-        return !dep || (dep as any).status !== "delivered";
-      });
-      if (pending.length > 0) {
-        alert(
-          `Não é possível entregar: ${pending.length} pré-requisito(s) ainda não foram entregues.`
-        );
-        return;
-      }
-    }
-
     await handleFieldUpdate("status", "delivered");
 
     // Move to the last column ("Concluído")
@@ -388,54 +348,11 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
       taskService.update(taskId, { column_id: lastCol.id } as any).catch(() => {});
     }
 
-    if (IS_MOCK) {
-      // Advance the assignee sequence to the next person.
-      const next = mockTaskSequences.advance(taskId);
-      // "Notify" subsequents that they are now unblocked.
-      const subsequents = mockTaskDependencies
-        .listByTask(taskId)
-        .filter((d) => d.type === "subsequent");
-      const parts: string[] = [];
-      if (next) parts.push(`Sequência: ${next.name} agora é o responsável atual.`);
-      if (subsequents.length > 0)
-        parts.push(`${subsequents.length} tarefa(s) subsequente(s) notificada(s).`);
-      if (parts.length > 0) alert(parts.join("\n"));
-    }
   }
 
   async function handleReopen() {
     if (!task) return;
     await handleFieldUpdate("status", "open");
-    
-    // Track reopen history for dashboard metrics
-    if (IS_MOCK) {
-      const { mockTasks } = await import("@/lib/mockDb");
-      const current = mockTasks.get(taskId);
-      if (current) {
-        const now = new Date().toISOString();
-        const deliveryDate = (current as any).delivery_date ?? current.updated_at;
-        const daysSinceDelivery = deliveryDate
-          ? Math.round((Date.now() - new Date(deliveryDate).getTime()) / 86400000)
-          : 0;
-        const history = (current as any).reopen_history ?? [];
-        history.push({
-          reopened_at: now,
-          reopened_by: user?.id ?? "unknown",
-          days_since_delivery: daysSinceDelivery,
-        });
-        const newReopenCount = ((current as any).reopen_count ?? 0) + 1;
-        mockTasks.update(taskId, {
-          reopen_count: newReopenCount,
-          reopen_history: history,
-        } as any);
-        store.updateTask(taskId, { reopen_count: newReopenCount, reopen_history: history } as any);
-        setTask((prev) => prev ? {
-          ...prev,
-          reopen_count: ((prev as any).reopen_count ?? 0) + 1,
-          reopen_history: history,
-        } as any : prev);
-      }
-    }
 
     const sorted = [...boardColumns].sort((a, b) => a.position - b.position);
     const targetCol =
@@ -451,13 +368,8 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   }
 
   async function handleDeleteTask() {
-    if (IS_MOCK) {
-      mockTasksDb.delete(taskId);
-      useBoardStore.getState().removeTask(taskId);
-    } else {
-      store.removeTask(taskId);
-      await taskService.delete(taskId);
-    }
+    store.removeTask(taskId);
+    await taskService.delete(taskId);
     setDeleteConfirm(false);
     onClose();
   }
@@ -533,56 +445,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
 
   async function handleAssigneeChange(newUserId: string | null) {
     if (!task) return;
-
-    if (newUserId && IS_MOCK) {
-      // Use mockTasksDb.listAll() so the check covers ALL tasks across all boards,
-      // not just what happens to be loaded in the current board store.
-      const allTasks = mockTasksDb.listAll();
-      const boardTypeAverages = loadBoardTypeAverages(task.project_id);
-      const taskForCheck = { ...task, assignee_id: newUserId, capacity_pending: false } as any;
-      const overflow = checkCapacityOverflow(taskForCheck, newUserId, task.project_id, allTasks, boardTypeAverages);
-
-      if (overflow?.overflows) {
-        const leaderId = findTeamLeaderForUser(newUserId);
-        mockCapacityRequests.create({
-          task_id: taskId,
-          task_title: task.title,
-          assignee_id: newUserId,
-          week_start: overflow.weekStart,
-          board_id: task.project_id,
-          projected_hours: overflow.projectedHours,
-          liquid_hours: overflow.liquidHours,
-          overflow_hours: overflow.newTotalHours - overflow.liquidHours,
-          leader_id: leaderId,
-          comment: null,
-        });
-        if (leaderId) {
-          addNotification({
-            id: crypto.randomUUID(),
-            type: "capacity_overflow",
-            content: `Overflow: ${MOCK_MEMBER_NAMES[newUserId]?.name ?? newUserId} — ${overflow.newTotalHours.toFixed(1)}h/${overflow.liquidHours}h na semana`,
-            task_id: taskId,
-            from_user_id: newUserId,
-            read_at: null,
-            created_at: new Date().toISOString(),
-          });
-        }
-        mockTasksDb.update(taskId, { assignee_id: newUserId, capacity_pending: true });
-        const updated = { ...task, assignee_id: newUserId, capacity_pending: true } as any;
-        setTask(updated);
-        store.updateTask(taskId, { assignee_id: newUserId, capacity_pending: true } as any);
-        return;
-      }
-    }
-
     await handleFieldUpdate("assignee_id", newUserId);
-    if (IS_MOCK) {
-      // Resolve any pending capacity request for this task (previous assignee may have overflowed)
-      const existingReq = mockCapacityRequests.getForTask(taskId);
-      if (existingReq) mockCapacityRequests.resolve(existingReq.id, "reallocated", "Responsável alterado sem overflow");
-      mockTasksDb.update(taskId, { capacity_pending: false });
-      setTask((t) => t ? { ...t, capacity_pending: false } as any : t);
-    }
   }
 
   // ── Derived ────────────────────────────────────────────────────────────────
@@ -607,9 +470,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   const timeBarColor = timeRatio < 0.7 ? "#01CFB5" : timeRatio <= 1 ? "#FFB81C" : "#AC145A";
 
   // Role-based action gating
-  const isAssignee = IS_MOCK
-    ? task?.assignee_id === "mock-user"
-    : task?.assignee_id === user?.id;
+  const isAssignee = task?.assignee_id === user?.id;
   const canActOnTask = !isUser || !!isAssignee;
 
   // ── Render ─────────────────────────────────────────────────────────────────
@@ -706,15 +567,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
 
               {/* Assignees */}
               <div className="flex items-center gap-0.5 relative" ref={headerAssigneeRef}>
-                {IS_MOCK && (task as any).assignee_id ? (() => {
-                  const m = MOCK_MEMBER_NAMES[(task as any).assignee_id];
-                  const initials = m?.initials ?? getInitials(m?.name ?? (task as any).assignee_id);
-                  return (
-                    <div className="w-6 h-6 rounded-full bg-brand-teal/20 text-brand-teal text-[9px] font-bold flex items-center justify-center border border-neutral-200">
-                      {initials}
-                    </div>
-                  );
-                })() : (task.assignees?.map((a: any) => (
+                {task.assignees?.map((a: any) => (
                   <Avatar key={a.user_id} className={cn("w-6 h-6 border-2", a.delivered_at ? "border-brand-teal" : "border-white")}>
                     <AvatarImage src={a.profile?.avatar_url ?? undefined} />
                     <AvatarFallback className="text-[9px] bg-brand-navy/10 text-brand-navy">
@@ -728,7 +581,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                       {getInitials(task.assignee.full_name)}
                     </AvatarFallback>
                   </Avatar>
-                )))}
+                ))}
                 {!isUser && (
                   <button
                     onClick={() => setHeaderAssigneeOpen((v) => !v)}
@@ -738,9 +591,9 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                     <Plus size={10} />
                   </button>
                 )}
-                {headerAssigneeOpen && IS_MOCK && (
+                {headerAssigneeOpen && (
                   <div className="absolute top-8 right-0 z-50 bg-white rounded-xl border border-neutral-200 shadow-lg py-1 min-w-[170px]">
-                    {DEMO_MEMBERS.map((m) => {
+                    {orgProfiles.map((m) => {
                       const isSelected = (task as any).assignee_id === m.id;
                       return (
                         <button
@@ -754,10 +607,13 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                             isSelected && "text-brand-teal font-semibold"
                           )}
                         >
-                          <span className="w-5 h-5 rounded-full bg-brand-teal/15 text-brand-teal text-[8px] font-bold flex items-center justify-center shrink-0">
-                            {m.initials}
-                          </span>
-                          <span className="flex-1 text-left">{m.name}</span>
+                          <Avatar className="w-5 h-5 shrink-0">
+                            <AvatarImage src={m.avatar_url ?? undefined} />
+                            <AvatarFallback className="text-[8px] bg-brand-teal/15 text-brand-teal font-bold">
+                              {getInitials(m.full_name)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="flex-1 text-left">{m.full_name ?? m.id}</span>
                           {isSelected && <Check size={11} className="shrink-0" />}
                         </button>
                       );
@@ -912,15 +768,6 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
 
                 {/* APPROVAL */}
                 <ApprovalBanner taskId={taskId} taskTitle={task.title} />
-                {IS_MOCK && (
-                  <CapacityWarningBanner
-                    taskId={taskId}
-                    isAdmin={isAdmin}
-                    capacityPending={(task as any)?.capacity_pending}
-                    onTaskUpdated={(updates) => setTask((t) => t ? { ...t, ...updates } as any : t)}
-                    onTaskDeleted={onClose}
-                  />
-                )}
 
                 {/* DESCRIPTION */}
                 {activeTab === "description" && (
@@ -1197,9 +1044,8 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                 <MetaField label="Responsáveis" icon={<Users size={12} />}>
                   <div className="flex flex-wrap gap-1 items-center relative" ref={assigneePickerRef}>
                     {task.assignee_id ? (() => {
-                      const m = MOCK_MEMBER_NAMES[task.assignee_id];
-                      const name = task.assignee?.full_name ?? m?.name ?? task.assignee_id;
-                      const initials = m?.initials ?? getInitials(name);
+                      const name = task.assignee?.full_name ?? orgProfiles.find((p) => p.id === task.assignee_id)?.full_name ?? task.assignee_id;
+                      const initials = getInitials(name);
                       return (
                         <div
                           className={cn(
@@ -1228,7 +1074,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                     )}
                     {assigneePickerOpen && (
                       <div className="absolute top-7 left-0 z-50 bg-white rounded-xl border border-neutral-200 shadow-lg py-1 min-w-[160px]">
-                        {DEMO_MEMBERS.map((m) => {
+                        {orgProfiles.map((m) => {
                           const isSelected = task.assignee_id === m.id;
                           return (
                             <button
@@ -1242,10 +1088,13 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                                 isSelected && "text-brand-teal font-semibold"
                               )}
                             >
-                              <span className="w-5 h-5 rounded-full bg-brand-teal/15 text-brand-teal text-[8px] font-bold flex items-center justify-center shrink-0">
-                                {m.initials}
-                              </span>
-                              <span className="flex-1 text-left">{m.name}</span>
+                              <Avatar className="w-5 h-5 shrink-0">
+                                <AvatarImage src={m.avatar_url ?? undefined} />
+                                <AvatarFallback className="text-[8px] bg-brand-teal/15 text-brand-teal font-bold">
+                                  {getInitials(m.full_name)}
+                                </AvatarFallback>
+                              </Avatar>
+                              <span className="flex-1 text-left">{m.full_name ?? m.id}</span>
                               {isSelected && <Check size={11} className="shrink-0" />}
                             </button>
                           );
@@ -2046,358 +1895,5 @@ function MetaField({
 }
 
 
-// ── CapacityWarningBanner ────────────────────────────────────────────────────
 
-interface MemberSuggestion {
-  id: string; name: string; initials: string;
-  available: number; liquidHours: number; allocatedHours: number; fits: boolean;
-}
-interface DateSuggestion {
-  weekStart: string; available: number; liquidHours: number; allocatedHours: number;
-}
 
-function weekLabel(monday: string): string {
-  const d = new Date(monday + "T12:00:00Z");
-  const sun = new Date(d); sun.setUTCDate(d.getUTCDate() + 6);
-  const fmt = (x: Date) => x.toLocaleDateString("pt-BR", { day: "2-digit", month: "short", timeZone: "UTC" });
-  return `${fmt(d)} – ${fmt(sun)}`;
-}
-
-function CapacityWarningBanner({
-  taskId, isAdmin, capacityPending, onTaskUpdated, onTaskDeleted,
-}: {
-  taskId: string;
-  isAdmin: boolean;
-  capacityPending?: boolean;
-  onTaskUpdated?: (updates: Record<string, unknown>) => void;
-  onTaskDeleted?: () => void;
-}) {
-  const [request, setRequest] = useState<ReturnType<typeof mockCapacityRequests.getForTask>>(null);
-  const [comment, setComment] = useState("");
-  const [showRealloc, setShowRealloc] = useState(false);
-  const [memberSugs, setMemberSugs] = useState<MemberSuggestion[]>([]);
-  const [dateSugs, setDateSugs] = useState<DateSuggestion[]>([]);
-  const [confirmDateRealloc, setConfirmDateRealloc] = useState<string | null>(null);
-  const router = useRouter();
-  const addNotification = useNotificationStore((s) => s.addNotification);
-
-  useEffect(() => {
-    setRequest(mockCapacityRequests.getForTask(taskId));
-    setShowRealloc(false);
-    setConfirmDateRealloc(null);
-  }, [taskId, capacityPending]);
-
-  if (!request) return null;
-
-  const allocatedBefore = request.liquid_hours + request.overflow_hours - request.projected_hours;
-
-  function computeSuggestions() {
-    if (!request) return;
-    const allTasks = mockTasksDb.listAll();
-    const boardAvg = loadBoardTypeAverages(request.board_id);
-
-    // Members of the team with capacity for this week
-    const members: MemberSuggestion[] = DEMO_MEMBERS
-      .filter((m) => m.id !== request!.assignee_id)
-      .map((m) => {
-        const cap = getUserWeekCapacity(m.id, request!.week_start, allTasks, request!.board_id, boardAvg);
-        const available = Math.max(0, cap.liquidHours - cap.allocatedHours);
-        return {
-          id: m.id, name: m.name, initials: m.initials,
-          available, liquidHours: cap.liquidHours, allocatedHours: cap.allocatedHours,
-          fits: cap.liquidHours > 0 && available >= request!.projected_hours,
-        };
-      })
-      .filter((m) => m.liquidHours > 0)
-      .sort((a, b) => b.available - a.available);
-    setMemberSugs(members);
-
-    // Alternative weeks for the same assignee where they fit
-    const dates: DateSuggestion[] = [];
-    const base = new Date(request.week_start + "T12:00:00Z");
-    for (let i = 1; i <= 10 && dates.length < 3; i++) {
-      const d = new Date(base);
-      d.setUTCDate(base.getUTCDate() + i * 7);
-      const ws = d.toISOString().slice(0, 10);
-      const cap = getUserWeekCapacity(request.assignee_id, ws, allTasks, request.board_id, boardAvg);
-      const available = Math.max(0, cap.liquidHours - cap.allocatedHours);
-      if (cap.liquidHours > 0 && available >= request.projected_hours) {
-        dates.push({ weekStart: ws, available, liquidHours: cap.liquidHours, allocatedHours: cap.allocatedHours });
-      }
-    }
-    setDateSugs(dates);
-  }
-
-  function handleApprove() {
-    mockCapacityRequests.resolve(request!.id, "approved", comment || undefined);
-    mockTasksDb.update(taskId, { capacity_pending: false });
-    useBoardStore.getState().updateTask(taskId, { capacity_pending: false } as any);
-    setRequest(null);
-  }
-
-  function handleOpenRealloc() {
-    computeSuggestions();
-    setShowRealloc(true);
-  }
-
-  function handleConfirmDecline() {
-    if (!request) return;
-    const taskData = mockTasksDb.get(taskId);
-    const leaderName = request.leader_id
-      ? (MOCK_MEMBER_NAMES[request.leader_id]?.name ?? "liderança do time")
-      : "liderança do time";
-
-    mockCapacityRequests.resolve(request.id, "declined", comment || undefined);
-    mockTasksDb.delete(taskId);
-    useBoardStore.getState().removeTask(taskId);
-
-    addNotification({
-      id: crypto.randomUUID(),
-      type: "task_assigned",
-      content: `A task "${taskData?.title ?? taskId}" foi excluída por decisão da liderança do time (${leaderName}). Motivo: falta de tempo líquido para ${MOCK_MEMBER_NAMES[request.assignee_id]?.name ?? request.assignee_id} naquela semana.${comment ? ` Comentário: ${comment}` : ""}`,
-      task_id: null,
-      from_user_id: request.leader_id ?? request.assignee_id,
-      read_at: null,
-      created_at: new Date().toISOString(),
-    });
-
-    setRequest(null);
-    onTaskDeleted?.();
-  }
-
-  function handleReallocMember(memberId: string) {
-    const memberName = MOCK_MEMBER_NAMES[memberId]?.name ?? memberId;
-    const taskData = mockTasksDb.get(taskId);
-
-    // Re-check capacity for the new member before confirming reallocation
-    if (taskData && taskData.desired_start_date) {
-      const allTasks = mockTasksDb.listAll();
-      const boardAvg = loadBoardTypeAverages(request!.board_id);
-      const taskForCheck = { ...taskData, assignee_id: memberId, capacity_pending: false };
-      const newOverflow = checkCapacityOverflow(taskForCheck as any, memberId, request!.board_id, allTasks, boardAvg);
-
-      if (newOverflow?.overflows) {
-        const leaderId = findTeamLeaderForUser(memberId);
-        // Create new request for the new member (supersedes old one automatically)
-        mockCapacityRequests.create({
-          task_id: taskId,
-          task_title: taskData.title,
-          assignee_id: memberId,
-          week_start: newOverflow.weekStart,
-          board_id: request!.board_id,
-          projected_hours: newOverflow.projectedHours,
-          liquid_hours: newOverflow.liquidHours,
-          overflow_hours: newOverflow.newTotalHours - newOverflow.liquidHours,
-          leader_id: leaderId,
-          comment: comment || null,
-        });
-        if (leaderId) {
-          addNotification({
-            id: crypto.randomUUID(),
-            type: "capacity_overflow",
-            content: `Overflow ao realocar para ${memberName} — ${newOverflow.newTotalHours.toFixed(1)}h/${newOverflow.liquidHours}h na semana`,
-            task_id: taskId,
-            from_user_id: memberId,
-            read_at: null,
-            created_at: new Date().toISOString(),
-          });
-        }
-        mockTasksDb.update(taskId, { assignee_id: memberId, capacity_pending: true });
-        useBoardStore.getState().updateTask(taskId, { assignee_id: memberId, capacity_pending: true } as any);
-        onTaskUpdated?.({ assignee_id: memberId, capacity_pending: true });
-        // Refresh banner to show new request for new member
-        setRequest(mockCapacityRequests.getForTask(taskId));
-        setShowRealloc(false);
-        return;
-      }
-    }
-
-    // New member has capacity — complete reallocation
-    mockTasksDb.update(taskId, { assignee_id: memberId, capacity_pending: false });
-    mockCapacityRequests.resolve(request!.id, "reallocated", `Realocado para ${memberName}${comment ? ` — ${comment}` : ""}`);
-    useBoardStore.getState().updateTask(taskId, { assignee_id: memberId, capacity_pending: false } as any);
-    onTaskUpdated?.({ assignee_id: memberId, capacity_pending: false });
-    setRequest(null);
-  }
-
-  function handleReallocDate(newWeekStart: string) {
-    setConfirmDateRealloc(newWeekStart);
-  }
-
-  function handleConfirmDateRealloc() {
-    if (!confirmDateRealloc || !request) return;
-    mockTasksDb.update(taskId, { desired_start_date: confirmDateRealloc, capacity_pending: false });
-    mockCapacityRequests.resolve(request.id, "reallocated", `Início movido para semana de ${confirmDateRealloc}${comment ? ` — ${comment}` : ""}`);
-    useBoardStore.getState().updateTask(taskId, { desired_start_date: confirmDateRealloc, capacity_pending: false } as any);
-    onTaskUpdated?.({ desired_start_date: confirmDateRealloc, capacity_pending: false });
-    setConfirmDateRealloc(null);
-    setRequest(null);
-  }
-
-  return (
-    <div className="mb-4 rounded-xl border border-amber-200 bg-amber-50 overflow-hidden">
-      {/* Header */}
-      <div className="flex items-start gap-3 p-4">
-        <span className="text-amber-500 text-base shrink-0 mt-0.5">⚡</span>
-        <div className="flex-1 min-w-0">
-          <p className="text-sm font-semibold text-amber-800">Overflow de capacidade</p>
-          <p className="text-xs text-amber-600 mt-0.5">
-            Esta task adiciona <strong>{request.projected_hours.toFixed(1)}h</strong>.
-            {" "}Capacidade: {request.liquid_hours}h/sem · Já alocado: {allocatedBefore.toFixed(1)}h · Total: <strong>{(allocatedBefore + request.projected_hours).toFixed(1)}h</strong>
-          </p>
-
-          {isAdmin && !showRealloc && (
-            <div className="mt-3 flex flex-col gap-2">
-              <input
-                value={comment}
-                onChange={(e) => setComment(e.target.value)}
-                placeholder="Comentário (opcional)"
-                className="text-xs border border-amber-200 rounded-lg px-2.5 py-1.5 bg-white w-full outline-none focus:border-amber-400"
-              />
-              <div className="flex gap-2">
-                <button onClick={handleApprove}
-                  className="px-3 py-1.5 text-xs font-semibold bg-green-500 text-white rounded-lg hover:bg-green-600 transition-colors">
-                  Aprovar
-                </button>
-                <button onClick={handleOpenRealloc}
-                  className="px-3 py-1.5 text-xs font-semibold bg-amber-100 text-amber-700 rounded-lg hover:bg-amber-200 transition-colors">
-                  Realocar / Recusar
-                </button>
-              </div>
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Reallocation panel */}
-      {isAdmin && showRealloc && (
-        <div className="border-t border-amber-200 bg-white p-4 space-y-4">
-          <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide">
-            Opções de realocação
-          </p>
-
-          {/* Member suggestions */}
-          {memberSugs.length > 0 && (
-            <div>
-              <p className="text-xs font-semibold text-neutral-600 mb-2">Manter a semana — trocar responsável</p>
-              <div className="space-y-1.5">
-                {memberSugs.map((m) => (
-                  <div key={m.id} className="flex items-center gap-2.5 py-1.5 px-2 rounded-lg hover:bg-neutral-50 group">
-                    <span className="w-7 h-7 rounded-full flex items-center justify-center text-[10px] font-bold text-white shrink-0"
-                      style={{ background: m.fits ? "#10b981" : "#94a3b8" }}>
-                      {m.initials}
-                    </span>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-xs font-medium text-neutral-700">{m.name}</p>
-                      <p className="text-[11px] text-neutral-400">
-                        {m.allocatedHours.toFixed(1)}h / {m.liquidHours}h alocado
-                        {m.fits
-                          ? <span className="ml-1 text-green-600 font-medium">· +{m.available.toFixed(1)}h livres ✓</span>
-                          : <span className="ml-1 text-red-400">· {m.available.toFixed(1)}h livres (insuficiente)</span>}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => handleReallocMember(m.id)}
-                      className={cn(
-                        "px-2.5 py-1 text-[11px] font-semibold rounded-lg transition-colors shrink-0",
-                        m.fits
-                          ? "bg-green-100 text-green-700 hover:bg-green-200"
-                          : "bg-neutral-100 text-neutral-500 hover:bg-neutral-200"
-                      )}>
-                      Realocar
-                    </button>
-                  </div>
-                ))}
-                {memberSugs.length === 0 && (
-                  <p className="text-xs text-neutral-400 italic">Nenhum membro com tempo configurado nesta semana.</p>
-                )}
-              </div>
-            </div>
-          )}
-
-          {/* Date suggestions */}
-          <div>
-            <p className="text-xs font-semibold text-neutral-600 mb-2">
-              Manter {MOCK_MEMBER_NAMES[request.assignee_id]?.name ?? request.assignee_id} — escolher outra semana
-            </p>
-            {dateSugs.length > 0 ? (
-              <div className="space-y-1.5">
-                {dateSugs.map((d) => (
-                  <div key={d.weekStart}>
-                    <div className={cn(
-                      "flex items-center gap-2.5 py-1.5 px-2 rounded-lg hover:bg-neutral-50",
-                      confirmDateRealloc === d.weekStart && "bg-brand-teal/5 ring-1 ring-brand-teal/30"
-                    )}>
-                      <span className="text-base shrink-0">📅</span>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-xs font-medium text-neutral-700">{weekLabel(d.weekStart)}</p>
-                        <p className="text-[11px] text-green-600 font-medium">
-                          {d.available.toFixed(1)}h livres de {d.liquidHours}h
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => handleReallocDate(confirmDateRealloc === d.weekStart ? null as any : d.weekStart)}
-                        className={cn(
-                          "px-2.5 py-1 text-[11px] font-semibold rounded-lg transition-colors shrink-0",
-                          confirmDateRealloc === d.weekStart
-                            ? "bg-brand-teal text-white"
-                            : "bg-brand-teal/10 text-brand-teal hover:bg-brand-teal/20"
-                        )}>
-                        {confirmDateRealloc === d.weekStart ? "Selecionada" : "Mover para cá"}
-                      </button>
-                    </div>
-                    {/* Inline confirmation popup */}
-                    {confirmDateRealloc === d.weekStart && (
-                      <div className="mt-1 mx-2 p-3 rounded-lg bg-brand-teal/5 border border-brand-teal/20 space-y-2">
-                        <p className="text-xs font-semibold text-brand-teal">Confirmar alteração de data</p>
-                        <p className="text-[11px] text-neutral-600">
-                          A data de início desejada será alterada para <strong>{weekLabel(d.weekStart)}</strong> (segunda-feira <strong>{new Date(d.weekStart + "T12:00:00Z").toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", timeZone: "UTC" })}</strong>).
-                        </p>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => setConfirmDateRealloc(null)}
-                            className="px-2.5 py-1 text-[11px] text-neutral-500 hover:text-neutral-700 hover:bg-white rounded-lg transition-colors border border-neutral-200">
-                            Cancelar
-                          </button>
-                          <button
-                            onClick={handleConfirmDateRealloc}
-                            className="px-2.5 py-1 text-[11px] font-semibold bg-brand-teal text-white rounded-lg hover:bg-brand-teal/90 transition-colors">
-                            Confirmar
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-neutral-400 italic">
-                Nenhuma semana livre nas próximas 10 semanas com capacidade suficiente.
-              </p>
-            )}
-          </div>
-
-          {/* Comment + confirm decline */}
-          <div className="pt-2 border-t border-neutral-100 space-y-2">
-            <input
-              value={comment}
-              onChange={(e) => setComment(e.target.value)}
-              placeholder="Comentário para o time (opcional)"
-              className="text-xs border border-neutral-200 rounded-lg px-2.5 py-1.5 bg-white w-full outline-none focus:border-red-300"
-            />
-            <div className="flex gap-2">
-              <button onClick={() => setShowRealloc(false)}
-                className="px-3 py-1.5 text-xs text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 rounded-lg transition-colors">
-                ← Voltar
-              </button>
-              <button onClick={handleConfirmDecline}
-                className="px-3 py-1.5 text-xs font-semibold bg-red-100 text-red-600 rounded-lg hover:bg-red-200 transition-colors">
-                Recusar sem realocar
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}

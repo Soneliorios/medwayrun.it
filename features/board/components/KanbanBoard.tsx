@@ -13,7 +13,6 @@ import {
 } from "@dnd-kit/sortable";
 import { Plus } from "lucide-react";
 import { createClient, createRawClient } from "@/lib/supabase/client";
-import { IS_MOCK, mockColumns, mockTasks } from "@/lib/mockDb";
 import { useBoardStore } from "../store/boardStore";
 import { useFilterStore } from "../store/filterStore";
 import { useTimerStore } from "@/features/timer/store/timerStore";
@@ -47,28 +46,6 @@ export function KanbanBoard({ projectId, onTaskOpen, onAddTask }: Props) {
 
   async function loadBoard(pid: string) {
     store.setLoading(true);
-
-    if (IS_MOCK) {
-      // Load from localStorage mock
-      const cols = mockColumns.listByProject(pid);
-      const tasks = mockTasks.listByProject(pid);
-
-      const tasksByColumn = new Map<string, TaskWithRelations[]>();
-      tasks.forEach((t) => {
-        const existing = tasksByColumn.get(t.column_id) ?? [];
-        existing.push(t as unknown as TaskWithRelations);
-        tasksByColumn.set(t.column_id, existing);
-      });
-
-      const columns: ColumnWithTasks[] = cols.map((col) => ({
-        ...col,
-        tasks: (tasksByColumn.get(col.id) ?? []).sort((a, b) => a.position - b.position),
-      }));
-
-      store.setColumns(columns);
-      store.setLoading(false);
-      return;
-    }
 
     const supabase = createClient();
 
@@ -147,17 +124,6 @@ export function KanbanBoard({ projectId, onTaskOpen, onAddTask }: Props) {
         ? store.columns[store.columns.length - 1].position
         : 0;
 
-    if (IS_MOCK) {
-      const col = mockColumns.create({
-        project_id: projectId,
-        name: "Nova coluna",
-        position: lastPosition + 1000,
-      });
-      store.addColumn({ ...col, tasks: [] } as any);
-      setAddingColumn(false);
-      return;
-    }
-
     const supabase = createRawClient();
     const { data } = await supabase
       .from("columns")
@@ -186,7 +152,7 @@ export function KanbanBoard({ projectId, onTaskOpen, onAddTask }: Props) {
   // full store data, so dragging/reordering still works while filtered.
   const displayColumns = applyBoardFilters(store.columns, filters, {
     activeTimerTaskId,
-    currentUserId: "mock-user",
+    currentUserId: undefined,
   });
 
   if (store.isLoading) {

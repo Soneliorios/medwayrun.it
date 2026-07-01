@@ -33,7 +33,6 @@ import { useFilterStore, useActiveFilterCount } from "@/features/board/store/fil
 import { useFilteredColumns } from "@/features/board/hooks/useFilteredColumns";
 import { useBoardStore } from "@/features/board/store/boardStore";
 import { useBoardProjectStore } from "@/features/board/store/boardProjectStore";
-import { IS_MOCK, mockTasks } from "@/lib/mockDb";
 import { encodeFilters, decodeFilters } from "@/lib/filterUtils";
 import { cn } from "@/lib/utils";
 import Link from "next/link";
@@ -75,43 +74,6 @@ export default function BoardPage({ params }: Props) {
   useEffect(() => { boardProjectStore.load(boardId); }, [boardId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useBoardRealtime(boardId);
-  // === FORM SYNC FIX: Sync tasks created by external forms to boardStore ===
-  const boardStoreRef = useBoardStore();
-  useEffect(() => {
-    function syncTasksFromStorage() {
-      try {
-        const store = useBoardStore.getState();
-        const allStoreTasks = new Set(store.columns.flatMap((c) => c.tasks.map((t) => t.id)));
-        const lsTasks: any[] = JSON.parse(localStorage.getItem('mwr_tasks') ?? '[]');
-        const boardTasks = lsTasks.filter((t) => t.project_id === boardId);
-        boardTasks.forEach((task) => {
-          if (!allStoreTasks.has(task.id)) {
-            store.addTask(task.column_id, task);
-          }
-        });
-      } catch (e) {
-        // ignore
-      }
-    }
-
-    function handleStorageEvent(e: StorageEvent) {
-      if (e.key === 'mwr_tasks') syncTasksFromStorage();
-    }
-
-    window.addEventListener('storage', handleStorageEvent);
-    
-    const _orig = localStorage.setItem.bind(localStorage);
-    localStorage.setItem = function (key: string, value: string) {
-      _orig(key, value);
-      if (key === 'mwr_tasks') setTimeout(syncTasksFromStorage, 100);
-    };
-
-    return () => {
-      window.removeEventListener('storage', handleStorageEvent);
-      localStorage.setItem = _orig;
-    };
-  }, [boardId]);
-  // === END FORM SYNC FIX ===
 
 
   // Load saved filters + hydrate filters from URL on mount.
@@ -305,7 +267,6 @@ function BoardCalendarView({ onTaskOpen }: { onTaskOpen: (id: string) => void })
   function rescheduleTask(taskId: string, date: Date) {
     const newDue = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
     calStore.updateTask(taskId, { due_date: newDue } as any);
-    if (IS_MOCK) mockTasks.update(taskId, { due_date: newDue });
     setDragTaskId(null);
   }
 

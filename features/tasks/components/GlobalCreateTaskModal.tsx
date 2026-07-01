@@ -25,10 +25,8 @@ import { useProjectStore } from "@/features/projects/store/projectStore";
 import { useBoardStore } from "@/features/board/store/boardStore";
 import { useAuthStore } from "@/features/auth/store/authStore";
 import { createRawClient } from "@/lib/supabase/client";
-import { IS_MOCK, mockColumns, mockTasks as mockTasksDb, mockCapacityRequests, mockTypeHistory, type MockTask } from "@/lib/mockDb";
-import { loadBoardTypes, checkCapacityOverflow, findTeamLeaderForUser, type OverflowCheckResult } from "@/lib/liquidTime";
-import { useNotificationStore } from "@/features/notifications/store/notificationStore";
 import { PRIORITY_LABELS, PRIORITY_COLORS } from "@/types";
+type OverflowCheckResult = null;
 import { getInitials } from "@/lib/utils";
 import { useBoardProjectStore } from "@/features/board/store/boardProjectStore";
 import type { Column } from "@/types";
@@ -108,7 +106,6 @@ export function GlobalCreateTaskModal() {
   const boardColumns = useBoardStore((s) => s.columns);
   const boardProjectStore = useBoardProjectStore();
   const { user } = useAuthStore();
-  const addNotification = useNotificationStore((s) => s.addNotification);
 
   // Listen for the global event from TopNav "Nova tarefa" button
   useEffect(() => {
@@ -163,16 +160,8 @@ export function GlobalCreateTaskModal() {
       return;
     }
 
-    // Otherwise fetch from mock or DB
+    // Otherwise fetch from DB
     setColumnsLoading(true);
-
-    if (IS_MOCK) {
-      const cols = mockColumns.listByProject(selectedProjectId) as unknown as Column[];
-      setColumns(cols);
-      if (!selectedColumnId) setSelectedColumnId(cols[0]?.id ?? null);
-      setColumnsLoading(false);
-      return;
-    }
 
     const supabase = createRawClient();
     supabase
@@ -199,8 +188,7 @@ export function GlobalCreateTaskModal() {
 
   // Load board task types for type_id resolution
   useEffect(() => {
-    if (!selectedProjectId || !IS_MOCK) { setBoardTaskTypes([]); return; }
-    setBoardTaskTypes(loadBoardTypes(selectedProjectId));
+    setBoardTaskTypes([]);
   }, [selectedProjectId]);
 
   // Auto-populate estimated hours: user avg (≥15 deliveries) > type default_hours
@@ -214,60 +202,15 @@ export function GlobalCreateTaskModal() {
 
     // Check history for the assignee (or current user if no assignee)
     const userId = assignees[0] || user?.id || "mock-user";
-    const history = IS_MOCK ? mockTypeHistory.listByBoard(selectedProjectId) : [];
-    const entry = history.find((h) => h.user_id === userId && h.type_name === taskType);
-    const userAvg = entry && entry.count >= 15 ? entry.total_hours / entry.count : 0;
+    const userAvg = 0;
 
     const resolved = userAvg > 0 ? userAvg : defaultHours > 0 ? defaultHours : null;
     setEstimatedHours(resolved !== null ? Math.round(resolved * 2) / 2 : null); // round to nearest 0.5h
   }, [taskType, boardTaskTypes, assignees, selectedProjectId, user?.id]);
 
-  // Live overflow check: runs whenever assignee, start date, hours, or type changes
+  // No live overflow check in Supabase mode
   useEffect(() => {
-    if (!IS_MOCK || !assignees[0] || !desiredStartDate || !selectedProjectId) {
-      setOverflowWarning(null);
-      return;
-    }
-    const matchedType = boardTaskTypes.find((t) => t.name === taskType);
-    const resolvedTypeId = matchedType?.id ?? null;
-    const allTasks = mockTasksDb.listAll();
-    const boardTypeAverages = Object.fromEntries(boardTaskTypes.map((t) => [t.name, t.default_hours ?? 0]));
-    const previewTask: MockTask = {
-      id: "__preview__",
-      project_id: selectedProjectId,
-      column_id: "",
-      org_id: "",
-      title: title || "Nova tarefa",
-      description: null,
-      priority: "medium",
-      position: 0,
-      assignee_id: assignees[0],
-      due_date: null,
-      estimated_hours: estimatedHours,
-      tracked_hours: 0,
-      created_by: null,
-      created_at: "",
-      updated_at: "",
-      is_urgent: false,
-      status: "open",
-      type_id: resolvedTypeId,
-      sla_minutes: null,
-      parent_task_id: null,
-      priority_number: null,
-      requesting_area_id: null,
-      requested_area_id: null,
-      desired_start_date: desiredStartDate,
-      start_date: null,
-      delivery_date: null,
-      reopen_count: 0,
-      reopen_history: null,
-      recurrence_config: null,
-      capacity_pending: false,
-      board_project_id: null,
-      delivery_link: null,
-      delivery_note: null,
-    };
-    setOverflowWarning(checkCapacityOverflow(previewTask, assignees[0], selectedProjectId, allTasks, boardTypeAverages));
+    setOverflowWarning(null);
   }, [assignees, desiredStartDate, estimatedHours, selectedProjectId, boardTaskTypes, taskType]); // eslint-disable-line react-hooks/exhaustive-deps
 
   function resetFields() {
@@ -324,8 +267,6 @@ export function GlobalCreateTaskModal() {
     const matchedType = boardTaskTypes.find((t) => t.name === taskType);
     const resolvedTypeId = matchedType?.id ?? undefined;
 
-    const capacityPending = IS_MOCK && !!overflowWarning?.overflows && !!assignees[0];
-
     const created: any = await taskService.create({
       project_id: selectedProjectId!,
       column_id: selectedColumnId!,
@@ -339,42 +280,9 @@ export function GlobalCreateTaskModal() {
       assignee_id: assignees[0] || undefined,
       board_project_id: boardProjectId || undefined,
       type_id: resolvedTypeId,
-      capacity_pending: capacityPending || undefined,
     } as any);
     const taskId: string | undefined = created?.id;
     if (!taskId) return null;
-
-    // Immediately sync the new task into the in-memory board store so it appears
-    // on the board without waiting for the async localStorage patch mechanism
-    if (IS_MOCK && created) {
-      try { useBoardStore.getState().addTask(created.column_id, created); } catch {}
-    }
-
-    // If overflow detected, create a capacity request and notify the team leader
-    if (capacityPending && overflowWarning) {
-      const leaderId = findTeamLeaderForUser(assignees[0]);
-      mockCapacityRequests.create({
-        task_id: taskId,
-        task_title: title.trim(),
-        assignee_id: assignees[0],
-        week_start: overflowWarning.weekStart,
-        board_id: selectedProjectId!,
-        projected_hours: overflowWarning.projectedHours,
-        liquid_hours: overflowWarning.liquidHours,
-        overflow_hours: overflowWarning.newTotalHours - overflowWarning.liquidHours,
-        leader_id: leaderId,
-        comment: null,
-      });
-      addNotification({
-        id: crypto.randomUUID(),
-        type: "capacity_overflow",
-        content: `Overflow: ${userName(assignees[0])} — ${overflowWarning.newTotalHours.toFixed(1)}h / ${overflowWarning.liquidHours}h na semana (criação)`,
-        task_id: taskId,
-        from_user_id: assignees[0],
-        read_at: null,
-        created_at: new Date().toISOString(),
-      });
-    }
 
     // is_urgent + type
     try { await taskService.update(taskId, { is_urgent: isUrgent } as any); } catch {}
@@ -382,18 +290,6 @@ export function GlobalCreateTaskModal() {
     // Checklist
     for (let i = 0; i < checklistItems.length; i++) {
       try { await taskService.addChecklistItem(taskId, checklistItems[i], i * 100); } catch {}
-    }
-
-    // Subtasks (created as tasks with parent_task_id)
-    if (IS_MOCK) {
-      const { mockTasks } = await import("@/lib/mockDb");
-      subtaskTitles.forEach((st) => {
-        const sub = mockTasks.create({ project_id: selectedProjectId!, column_id: selectedColumnId!, title: st, priority: "medium" });
-        mockTasks.update(sub.id, { parent_task_id: taskId });
-      });
-      // Tags + followers stored as task-scoped localStorage for demo persistence
-      if (tags.length) localStorage.setItem(`mwr_task_tags_${taskId}`, JSON.stringify(tags));
-      if (followers.length) localStorage.setItem(`mwr_task_followers_${taskId}`, JSON.stringify(followers.map(userName)));
     }
 
     // Attachments → localStorage with data URLs so TaskDetail can preview/download
@@ -1032,25 +928,6 @@ export function GlobalCreateTaskModal() {
               </div>
             </div>
 
-            {/* Overflow warning — live preview before submitting */}
-            {overflowWarning?.overflows && assignees[0] && (
-              <div className="mt-3 flex items-start gap-2.5 bg-amber-50 border border-amber-200 rounded-xl px-3 py-2.5">
-                <span className="text-amber-500 mt-0.5 shrink-0">⚡</span>
-                <div className="flex-1 min-w-0">
-                  <p className="text-xs font-semibold text-amber-800">
-                    Capacidade excedida — {userName(assignees[0])}
-                  </p>
-                  <p className="text-[11px] text-amber-700 mt-0.5">
-                    Já alocado: <strong>{overflowWarning.allocatedHours}h</strong> / {overflowWarning.liquidHours}h ·
-                    Esta tarefa: +<strong>{overflowWarning.projectedHours}h</strong> →
-                    total <strong>{overflowWarning.newTotalHours}h</strong>
-                  </p>
-                  <p className="text-[11px] text-amber-600 mt-0.5">
-                    A tarefa será criada com aviso de capacidade. O líder do time receberá uma notificação para aprovar.
-                  </p>
-                </div>
-              </div>
-            )}
 
             {/* Error */}
             {error && (

@@ -13,7 +13,6 @@ import { ColumnHeader } from "./ColumnHeader";
 import type { ColumnWithTasks } from "@/types";
 import { useBoardStore } from "../store/boardStore";
 import { createRawClient } from "@/lib/supabase/client";
-import { IS_MOCK, mockColumns } from "@/lib/mockDb";
 
 interface Props {
   column: ColumnWithTasks;
@@ -35,7 +34,6 @@ export function KanbanColumn({ column, onTaskOpen, onAddTask }: Props) {
   async function toggleMinimize() {
     const next = !minimized;
     setMinimized(next);
-    if (IS_MOCK) { mockColumns.update(column.id, { is_minimized: next }); return; }
     const supabase = createRawClient();
     await supabase.from("columns").update({ is_minimized: next }).eq("id", column.id);
   }
@@ -68,7 +66,6 @@ export function KanbanColumn({ column, onTaskOpen, onAddTask }: Props) {
   const handleRename = useCallback(
     async (newName: string) => {
       store.updateColumn(column.id, { name: newName }); // optimistic
-      if (IS_MOCK) { mockColumns.update(column.id, { name: newName }); return; }
       const supabase = createRawClient();
       const { error } = await supabase
         .from("columns")
@@ -84,14 +81,12 @@ export function KanbanColumn({ column, onTaskOpen, onAddTask }: Props) {
       if (!confirm(`A coluna "${column.name}" tem tarefas. Excluir mesmo assim?`)) return;
     }
     store.removeColumn(column.id); // optimistic
-    if (IS_MOCK) { mockColumns.delete(column.id); return; }
     const supabase = createRawClient();
     await supabase.from("columns").delete().eq("id", column.id);
   }, [column, store]);
 
   function handleSetWipLimit(limit: number | null) {
     store.updateColumn(column.id, { wip_limit: limit } as any); // optimistic
-    if (IS_MOCK) { mockColumns.update(column.id, { wip_limit: limit }); return; }
     const supabase = createRawClient();
     supabase.from("columns").update({ wip_limit: limit }).eq("id", column.id);
   }
@@ -105,14 +100,9 @@ export function KanbanColumn({ column, onTaskOpen, onAddTask }: Props) {
     // swap positions
     store.updateColumn(a.id, { position: b.position } as any);
     store.updateColumn(b.id, { position: a.position } as any);
-    if (IS_MOCK) {
-      mockColumns.update(a.id, { position: b.position });
-      mockColumns.update(b.id, { position: a.position });
-    } else {
-      const supabase = createRawClient();
-      supabase.from("columns").update({ position: b.position }).eq("id", a.id);
-      supabase.from("columns").update({ position: a.position }).eq("id", b.id);
-    }
+    const supabase = createRawClient();
+    supabase.from("columns").update({ position: b.position }).eq("id", a.id);
+    supabase.from("columns").update({ position: a.position }).eq("id", b.id);
   }
 
   const sortedCols = [...store.columns].sort((a, b) => a.position - b.position);

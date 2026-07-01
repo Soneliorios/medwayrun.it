@@ -56,19 +56,6 @@ export const useTimerStore = create<TimerState>()(
       const { activeTaskId } = get();
       const durationMinutes = await timerService.stop(userId);
       get().clearActive();
-      // Sync updated tracked_hours back to boardStore so UI updates immediately
-      if (activeTaskId && durationMinutes !== null && durationMinutes > 0) {
-        try {
-          const { useBoardStore } = await import("@/features/board/store/boardStore");
-          const { IS_MOCK, mockTasks } = await import("@/lib/mockDb");
-          if (IS_MOCK) {
-            const updated = mockTasks.get(activeTaskId);
-            if (updated) {
-              useBoardStore.getState().updateTask(activeTaskId, { tracked_hours: updated.tracked_hours });
-            }
-          }
-        } catch {}
-      }
     },
 
     loadActiveTimer: async (userId) => {

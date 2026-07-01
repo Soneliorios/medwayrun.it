@@ -10,7 +10,6 @@ import {
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { createRawClient } from "@/lib/supabase/client";
-import { IS_MOCK, mockTasks } from "@/lib/mockDb";
 import { useBoardStore, getDropPosition } from "../store/boardStore";
 import { useRole } from "@/features/auth/hooks/useRole";
 import { useAuthStore } from "@/features/auth/store/authStore";
@@ -45,9 +44,7 @@ export function useBoardDnd() {
       // Role check: user role can only drag tasks they are assigned to
       if (isUser) {
         const task = store.columns.flatMap((c) => c.tasks).find((t) => t.id === id);
-        const isAssignee = IS_MOCK
-          ? (task as any)?.assignee_id === "mock-user"
-          : (task as any)?.assignee_id === user?.id;
+        const isAssignee = (task as any)?.assignee_id === user?.id;
         if (!isAssignee) {
           dragAllowedRef.current = false;
           return;
@@ -173,11 +170,6 @@ async function persistTaskMove(
   columnId: string,
   position: number
 ) {
-  if (IS_MOCK) {
-    mockTasks.update(taskId, { column_id: columnId, position });
-    return;
-  }
-
   const { error } = await supabase
     .from("tasks")
     .update({ column_id: columnId, position })

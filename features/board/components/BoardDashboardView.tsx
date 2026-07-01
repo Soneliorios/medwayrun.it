@@ -1,13 +1,10 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { GripVertical, Plus, X, TrendingDown, TrendingUp, ChevronLeft, ChevronRight, ChevronDown } from "lucide-react";
+import { GripVertical, Plus, X, TrendingDown, TrendingUp } from "lucide-react";
 import { cn, formatHours } from "@/lib/utils";
 import { PRIORITY_LABELS, PRIORITY_COLORS } from "@/types";
 import { useFilteredColumns } from "../hooks/useFilteredColumns";
-import { MOCK_MEMBER_NAMES, DEMO_MEMBERS } from "@/lib/mockMembers";
-import { IS_MOCK, mockTasks as mockTasksDb, mockLiquidTime } from "@/lib/mockDb";
-import { getMondayOfWeek, getUserWeekCapacity, loadBoardTypeAverages } from "@/lib/liquidTime";
 
 // ── Metric registry ────────────────────────────────────────────────────────────
 
@@ -202,7 +199,7 @@ export function BoardDashboardView({ boardId }: { boardId: string }) {
   const byAssignee = useMemo(() => {
     const m = new Map<string, number>();
     allTasks.forEach((t) => {
-      const name = (t as any).assignee?.full_name ?? (t.assignees?.[0] as any)?.profile?.full_name ?? (t.assignee_id ? (MOCK_MEMBER_NAMES[t.assignee_id]?.name ?? t.assignee_id) : "Sem responsável");
+      const name = (t as any).assignee?.full_name ?? (t.assignees?.[0] as any)?.profile?.full_name ?? (t.assignee_id ?? "Sem responsável");
       m.set(name, (m.get(name) ?? 0) + 1);
     });
     const sorted = [...m.entries()].sort((a, b) => b[1] - a[1]);
@@ -314,93 +311,6 @@ export function BoardDashboardView({ boardId }: { boardId: string }) {
         })}
       </div>
 
-      {/* Capacidade */}
-      {IS_MOCK && <CapacidadeSection boardId={boardId} />}
-    </div>
-  );
-}
-
-// ── CapacidadeSection ─────────────────────────────────────────────────────────
-
-function CapacidadeSection({ boardId }: { boardId: string }) {
-  const [weekOffset, setWeekOffset] = useState(0);
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  const todayStr = new Date().toISOString().slice(0, 10);
-  const baseMondayDate = new Date(getMondayOfWeek(todayStr) + "T12:00:00Z");
-  baseMondayDate.setUTCDate(baseMondayDate.getUTCDate() + weekOffset * 7);
-  const weekStart = baseMondayDate.toISOString().slice(0, 10);
-
-  const friday = new Date(baseMondayDate);
-  friday.setUTCDate(baseMondayDate.getUTCDate() + 4);
-  const weekLabel = `${baseMondayDate.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })} – ${friday.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}`;
-
-  const boardTypeAverages = loadBoardTypeAverages(boardId);
-  const allTasks = mockTasksDb.listAll();
-
-  const memberData = DEMO_MEMBERS.map((m) => {
-    const result = getUserWeekCapacity(m.id, weekStart, allTasks, boardId, boardTypeAverages);
-    return { member: m, ...result };
-  }).filter((d) => d.liquidHours > 0 || d.allocatedHours > 0);
-
-  if (memberData.length === 0) return null;
-
-  return (
-    <div className="mt-6 bg-white rounded-xl border border-neutral-100 shadow-sm overflow-hidden">
-      <div className="flex items-center gap-3 px-5 py-3 border-b border-neutral-100">
-        <p className="text-sm font-semibold text-brand-navy flex-1">Capacidade da equipe</p>
-        <div className="flex items-center gap-1">
-          <button onClick={() => setWeekOffset((w) => w - 1)} className="w-6 h-6 flex items-center justify-center rounded hover:bg-neutral-100 text-neutral-400 transition-colors">
-            <ChevronLeft size={13} />
-          </button>
-          <span className="text-xs text-neutral-500 w-32 text-center">{weekLabel}</span>
-          <button onClick={() => setWeekOffset((w) => w + 1)} className="w-6 h-6 flex items-center justify-center rounded hover:bg-neutral-100 text-neutral-400 transition-colors">
-            <ChevronRight size={13} />
-          </button>
-        </div>
-      </div>
-      <div className="divide-y divide-neutral-50">
-        {memberData.map(({ member, liquidHours, allocatedHours, tasks }) => {
-          const ratio = liquidHours > 0 ? allocatedHours / liquidHours : 0;
-          const barColor = ratio < 0.7 ? "#01CFB5" : ratio < 1 ? "#FFB81C" : "#AC145A";
-          const isExpanded = expandedId === member.id;
-          return (
-            <div key={member.id}>
-              <div
-                className="flex items-center gap-3 px-5 py-3 hover:bg-neutral-50/60 cursor-pointer"
-                onClick={() => setExpandedId(isExpanded ? null : member.id)}
-              >
-                <div className="w-7 h-7 rounded-full bg-brand-navy/10 flex items-center justify-center text-[10px] font-bold text-brand-navy shrink-0">
-                  {member.initials}
-                </div>
-                <span className="text-xs font-medium text-neutral-700 w-24 truncate">{member.name}</span>
-                <div className="flex-1 h-2.5 bg-neutral-100 rounded-full overflow-hidden">
-                  <div
-                    className="h-full rounded-full transition-all duration-500"
-                    style={{ width: `${Math.min(ratio * 100, 100)}%`, background: barColor }}
-                  />
-                </div>
-                <span className="text-xs text-neutral-600 shrink-0 w-24 text-right">
-                  {allocatedHours.toFixed(1)}h / {liquidHours}h
-                  {ratio > 1 && <span className="text-destructive ml-1">+{(allocatedHours - liquidHours).toFixed(1)}h ⚠</span>}
-                </span>
-                <ChevronDown size={12} className={cn("text-neutral-400 transition-transform shrink-0", isExpanded && "rotate-180")} />
-              </div>
-              {isExpanded && tasks.length > 0 && (
-                <div className="px-5 pb-3 space-y-1 bg-neutral-50/40">
-                  {tasks.map(({ task, hours, source }) => (
-                    <div key={task.id} className="flex items-center gap-2 text-[11px] py-0.5">
-                      <span className="flex-1 truncate text-neutral-500">{task.title}</span>
-                      <span className="text-neutral-400 capitalize">{source === "tracked" ? "registrado" : source === "estimated" ? "estimado" : source === "user_avg" ? "média usuário" : source === "board_avg" ? "média quadro" : "—"}</span>
-                      <span className="font-medium text-neutral-700 w-10 text-right">{hours > 0 ? `${hours.toFixed(1)}h` : "—"}</span>
-                    </div>
-                  ))}
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
     </div>
   );
 }

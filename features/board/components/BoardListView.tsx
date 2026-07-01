@@ -21,7 +21,6 @@ import { PRIORITY_LABELS, PRIORITY_COLORS } from "@/types";
 import { useFilteredColumns } from "../hooks/useFilteredColumns";
 import { useSelectionStore } from "../store/selectionStore";
 import { useBoardStore } from "../store/boardStore";
-import { IS_MOCK, mockTaskApprovals, mockTasks } from "@/lib/mockDb";
 import { MoreHorizontal } from "lucide-react";
 import type { TaskWithRelations } from "@/types";
 
@@ -30,9 +29,8 @@ const APPROVAL_LABELS: Record<string, { label: string; color: string }> = {
   approved: { label: "Aprovada", color: "#01CFB5" },
   rejected: { label: "Rejeitada", color: "#AC145A" },
 };
-function approvalStatus(taskId: string): string | null {
-  if (!IS_MOCK) return null;
-  return mockTaskApprovals.getForTask(taskId)?.status ?? null;
+function approvalStatus(_taskId: string): string | null {
+  return null;
 }
 
 // ── Column registry ──────────────────────────────────────────────────────────
@@ -137,20 +135,14 @@ export function BoardListView({ boardId, onTaskOpen }: { boardId: string; onTask
 
   function moveTaskTo(taskId: string, colId: string) {
     boardStore.moveTask(taskId, colId, 1000);
-    if (IS_MOCK) mockTasks.update(taskId, { column_id: colId });
     setRowMenu(null);
   }
   function deleteTask(taskId: string) {
     if (!confirm("Excluir esta tarefa?")) return;
     boardStore.removeTask(taskId);
-    if (IS_MOCK) mockTasks.delete(taskId);
     setRowMenu(null);
   }
-  function duplicateTask(t: ListTask) {
-    if (IS_MOCK) {
-      const created = mockTasks.create({ project_id: t.project_id, column_id: t.column_id, title: `${t.title} (cópia)`, priority: t.priority ?? "medium" });
-      boardStore.addTask(t.column_id, created as any);
-    }
+  function duplicateTask(_t: ListTask) {
     setRowMenu(null);
   }
 

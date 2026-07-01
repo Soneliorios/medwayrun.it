@@ -11,10 +11,10 @@ import { useAuthStore } from "@/features/auth/store/authStore";
 import { useTimerStore } from "@/features/timer/store/timerStore";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
-import { IS_MOCK, mockTasks, mockTimeEntries, mockLiquidTime } from "@/lib/mockDb";
-import { getMondayOfWeek, recordDeliveryHistory } from "@/lib/liquidTime";
 import { PRIORITY_COLORS, PRIORITY_LABELS, formatElapsed } from "@/types";
-import type { MockTask } from "@/lib/mockDb";
+import type { TaskWithRelations } from "@/types";
+import { createClient, createRawClient } from "@/lib/supabase/client";
+import { taskService } from "@/features/tasks/services/taskService";
 import { useProjectStore } from "@/features/projects/store/projectStore";
 import { TaskDetail } from "@/features/tasks/components/TaskDetail";
 import { MyApprovals } from "@/features/tasks/components/ApprovalControls";
@@ -33,7 +33,7 @@ type SortBy = "due_date" | "priority" | "title" | "urgent";
 export default function MePage() {
   const [activeTab, setActiveTab] = useState("tasks");
   const { profile, user } = useAuthStore();
-  const [tasks, setTasks] = useState<MockTask[]>([]);
+  const [tasks, setTasks] = useState<TaskWithRelations[]>([]);
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
 
   // Sort/filter state (shared between tasks and created tabs)
@@ -44,28 +44,28 @@ export default function MePage() {
 
   const projects = useProjectStore((s) => s.projects);
 
-  const reloadTasks = useCallback(() => {
-    if (!IS_MOCK) return;
+  const userId = user?.id ?? "";
+
+  const reloadTasks = useCallback(async () => {
+    if (!userId) return;
     try {
-      const raw = localStorage.getItem("mwr_tasks");
-      const all = raw ? (JSON.parse(raw) as MockTask[]) : [];
-      setTasks(all.filter((t) => t.status !== "archived"));
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("tasks")
+        .select(`*, assignee:profiles!tasks_assignee_id_fkey(id, full_name, avatar_url)`)
+        .or(`assignee_id.eq.${userId},created_by.eq.${userId}`)
+        .neq("status", "archived")
+        .order("created_at", { ascending: false });
+      setTasks((data ?? []) as any);
     } catch { setTasks([]); }
-  }, []);
+  }, [userId]);
 
   useEffect(() => { reloadTasks(); }, [reloadTasks]);
 
-  const userId = user?.id ?? "mock-user";
+  const myTasks = tasks.filter((t) => (t as any).assignee_id === userId);
+  const createdByMe = tasks.filter((t) => (t as any).created_by === userId);
 
-  const myTasks = IS_MOCK
-    ? tasks
-    : tasks.filter((t) => t.assignee_id === userId);
-
-  const createdByMe = IS_MOCK
-    ? tasks
-    : tasks.filter((t) => t.created_by === userId);
-
-  function applySortAndFilter(tasksToShow: MockTask[]): MockTask[] {
+  function applySortAndFilter(tasksToShow: TaskWithRelations[]): TaskWithRelations[] {
     // Filter by project
     let result = filterProject
       ? tasksToShow.filter((t) => t.project_id === filterProject)
@@ -240,7 +240,7 @@ export default function MePage() {
         {activeTab === "calendar" && <MiniCalendar tasks={myTasks} />}
         {activeTab === "time" && (
           <>
-            {IS_MOCK && <LiquidTimeSummary />}
+            {null /* LiquidTimeSummary removed — migrated to Supabase */}
             <Timesheet />
           </>
         )}
@@ -263,7 +263,7 @@ function TaskList({
   onOpen,
   onChanged,
 }: {
-  tasks: MockTask[];
+  tasks: TaskWithRelations[];
   emptyText: string;
   showDelivered?: boolean;
   onOpen: (id: string) => void;
@@ -308,7 +308,7 @@ function TaskList({
   );
 }
 
-function TaskRow({ task: taskProp, onOpen, onChanged }: { task: MockTask; onOpen: (id: string) => void; onChanged: () => void }) {
+function TaskRow({ task: taskProp, onOpen, onChanged }: { task: TaskWithRelations; onOpen: (id: string) => void; onChanged: () => void }) {
   const [task, setTaskState] = useState(taskProp);
   const [adjustOpen, setAdjustOpen] = useState(false);
   const { user } = useAuthStore();
@@ -331,32 +331,36 @@ function TaskRow({ task: taskProp, onOpen, onChanged }: { task: MockTask; onOpen
   const ratio = est > 0 ? Math.min(tracked / est, 1) : 0;
   const ratioColor = ratio < 0.7 ? "#01CFB5" : ratio < 1 ? "#FFB81C" : "#AC145A";
 
-  function patch(updates: Partial<MockTask>) {
-    if (IS_MOCK) {
-      if (updates.status === "delivered") recordDeliveryHistory(task, task.project_id);
-      mockTasks.update(task.id, updates);
-    }
+  function patch(updates: Partial<TaskWithRelations>) {
     setTaskState((t) => ({ ...t, ...updates }));
     onChanged();
+    taskService.update(task.id, updates as any).catch(() => {});
   }
 
   async function toggleTimer(e: React.MouseEvent) {
     e.stopPropagation();
     if (isActive) {
       await stopTimer(userId);
-      const fresh = IS_MOCK ? mockTasks.get(task.id) : null;
-      if (fresh) setTaskState(fresh);
+      const supabase = createClient();
+      const { data } = await supabase.from("tasks").select("tracked_hours").eq("id", task.id).single();
+      if (data) setTaskState((t) => ({ ...t, tracked_hours: (data as any).tracked_hours }));
       onChanged();
     } else {
       await startTimer(userId, task.id);
     }
   }
 
-  function saveManual(minutes: number, date: string) {
-    if (IS_MOCK) {
-      mockTimeEntries.add(userId, task.id, minutes, date, "Manual");
-      mockTasks.update(task.id, { tracked_hours: tracked + minutes / 60 });
-    }
+  async function saveManual(minutes: number, date: string) {
+    const supabase = createRawClient();
+    await supabase.from("time_entries").insert({
+      task_id: task.id,
+      user_id: userId,
+      started_at: `${date}T00:00:00Z`,
+      ended_at: `${date}T00:00:00Z`,
+      duration_minutes: minutes,
+      note: "Manual",
+    });
+    taskService.update(task.id, { tracked_hours: tracked + minutes / 60 } as any).catch(() => {});
     setTaskState((t) => ({ ...t, tracked_hours: tracked + minutes / 60 }));
     setAdjustOpen(false);
     onChanged();
@@ -550,7 +554,7 @@ function ManualTimeModal({ taskTitle, onClose, onSave }: { taskTitle: string; on
   );
 }
 
-function MiniCalendar({ tasks }: { tasks: MockTask[] }) {
+function MiniCalendar({ tasks }: { tasks: TaskWithRelations[] }) {
   const today = new Date();
   const [monthOffset, setMonthOffset] = useState(0);
 
@@ -572,7 +576,7 @@ function MiniCalendar({ tasks }: { tasks: MockTask[] }) {
   });
 
   // Map tasks to due date strings "YYYY-MM-DD"
-  const tasksByDate = tasks.reduce<Record<string, MockTask[]>>((acc, t) => {
+  const tasksByDate = tasks.reduce<Record<string, TaskWithRelations[]>>((acc, t) => {
     if (!t.due_date) return acc;
     const key = t.due_date.slice(0, 10);
     if (!acc[key]) acc[key] = [];
@@ -672,95 +676,6 @@ function MiniCalendar({ tasks }: { tasks: MockTask[] }) {
   );
 }
 
-// ── LiquidTimeSummary ────────────────────────────────────────────────────────
-
-function LiquidTimeSummary() {
-  const { user } = useAuthStore();
-  const userId = user?.id ?? "mock-user";
-  const [weekOffset, setWeekOffset] = useState(0);
-
-  const today = new Date();
-  const todayStr = today.toISOString().slice(0, 10);
-  const baseMondayStr = getMondayOfWeek(todayStr);
-  const baseMondayDate = new Date(baseMondayStr + "T12:00:00Z");
-  baseMondayDate.setUTCDate(baseMondayDate.getUTCDate() + weekOffset * 7);
-  const weekStart = baseMondayDate.toISOString().slice(0, 10);
-
-  const config = mockLiquidTime.get(userId);
-  const liquidHours = config?.hours_per_week ?? 0;
-
-  const weekTasks = mockTasks.listAll().filter((t) => {
-    if (t.assignee_id !== userId) return false;
-    if (!t.desired_start_date) return false;
-    return getMondayOfWeek(t.desired_start_date) === weekStart;
-  });
-
-  const allocatedHours = weekTasks.reduce((sum, t) => {
-    if (t.tracked_hours > 0) return sum + t.tracked_hours;
-    return sum + (t.estimated_hours ?? 0);
-  }, 0);
-
-  const ratio = liquidHours > 0 ? allocatedHours / liquidHours : 0;
-  const barColor = ratio < 0.7 ? "#01CFB5" : ratio < 1 ? "#FFB81C" : "#AC145A";
-
-  const friday = new Date(baseMondayDate);
-  friday.setUTCDate(baseMondayDate.getUTCDate() + 4);
-  const weekLabel = `${baseMondayDate.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })} – ${friday.toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })}`;
-
-  return (
-    <div className="bg-white rounded-xl border border-neutral-100 p-5 mb-5">
-      <div className="flex items-center gap-3 mb-4">
-        <p className="text-sm font-semibold text-brand-navy flex-1">Tempo líquido da semana</p>
-        <div className="flex items-center gap-1">
-          <button onClick={() => setWeekOffset((w) => w - 1)} className="w-6 h-6 flex items-center justify-center rounded hover:bg-neutral-100 text-neutral-400 transition-colors">
-            <ChevronLeft size={13} />
-          </button>
-          <span className="text-xs text-neutral-500 w-36 text-center">{weekLabel}</span>
-          <button onClick={() => setWeekOffset((w) => w + 1)} className="w-6 h-6 flex items-center justify-center rounded hover:bg-neutral-100 text-neutral-400 transition-colors">
-            <ChevronRight size={13} />
-          </button>
-        </div>
-      </div>
-
-      {liquidHours === 0 ? (
-        <p className="text-xs text-neutral-400 italic">Tempo líquido não configurado. Peça ao seu líder para definir no Painel Admin &gt; Times.</p>
-      ) : (
-        <>
-          <div className="flex items-center gap-3 mb-3">
-            <div className="flex-1 h-3 bg-neutral-100 rounded-full overflow-hidden">
-              <div
-                className="h-full rounded-full transition-all duration-500"
-                style={{ width: `${Math.min(ratio * 100, 100)}%`, background: barColor }}
-              />
-            </div>
-            <span className="text-xs font-semibold text-neutral-700 shrink-0">
-              {allocatedHours.toFixed(1)}h / {liquidHours}h
-              {ratio > 1 && <span className="text-destructive ml-1">+{(allocatedHours - liquidHours).toFixed(1)}h</span>}
-            </span>
-          </div>
-          {weekTasks.length > 0 ? (
-            <div className="space-y-1.5">
-              {weekTasks.map((t) => {
-                const h = t.tracked_hours > 0 ? t.tracked_hours : (t.estimated_hours ?? 0);
-                const src = t.tracked_hours > 0 ? "registrado" : "estimado";
-                return (
-                  <div key={t.id} className="flex items-center gap-2 text-xs py-0.5">
-                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${t.capacity_pending ? "bg-amber-400" : "bg-neutral-300"}`} />
-                    <span className="flex-1 truncate text-neutral-600">{t.title}</span>
-                    <span className="text-neutral-400 shrink-0">{src}</span>
-                    <span className="font-medium text-neutral-700 shrink-0 w-10 text-right">{h > 0 ? `${h.toFixed(1)}h` : "—"}</span>
-                  </div>
-                );
-              })}
-            </div>
-          ) : (
-            <p className="text-xs text-neutral-400">Nenhuma tarefa com início previsto nesta semana.</p>
-          )}
-        </>
-      )}
-    </div>
-  );
-}
 
 const META_KEY = "mwr_timesheet_goal_mock-user";
 
@@ -772,15 +687,25 @@ function Timesheet() {
   const [minutesByDate, setMinutesByDate] = useState<Record<string, number>>({});
   const [adjustDate, setAdjustDate] = useState<string | null>(null);
 
-  const reload = useCallback(() => {
-    if (IS_MOCK) setMinutesByDate(mockTimeEntries.minutesByDate(userId));
+  const reload = useCallback(async () => {
+    const supabase = createClient();
+    const { data } = await supabase
+      .from("time_entries")
+      .select("started_at, duration_minutes")
+      .eq("user_id", userId);
+    const map: Record<string, number> = {};
+    (data ?? []).forEach((e: any) => {
+      const date = (e.started_at as string).slice(0, 10);
+      map[date] = (map[date] ?? 0) + (e.duration_minutes ?? 0);
+    });
+    setMinutesByDate(map);
   }, [userId]);
 
   useEffect(() => {
-    reload();
+    if (userId) reload();
     const g = parseFloat(localStorage.getItem(META_KEY) ?? "8");
     if (!isNaN(g)) setGoal(g);
-  }, [reload]);
+  }, [reload, userId]);
 
   function updateGoal(v: number) {
     setGoal(v);
@@ -809,8 +734,16 @@ function Timesheet() {
   const weekLabel = `${days[0].toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })} – ${days[6].toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" })}`;
   const maxBarHours = Math.max(goal, ...days.map(hoursFor), 1);
 
-  function saveManual(minutes: number, date: string) {
-    if (IS_MOCK) mockTimeEntries.add(userId, null, minutes, date, "Manual (timesheet)");
+  async function saveManual(minutes: number, date: string) {
+    const supabase = createRawClient();
+    await supabase.from("time_entries").insert({
+      task_id: null,
+      user_id: userId,
+      started_at: `${date}T00:00:00Z`,
+      ended_at: `${date}T00:00:00Z`,
+      duration_minutes: minutes,
+      note: "Manual (timesheet)",
+    });
     setAdjustDate(null);
     reload();
   }

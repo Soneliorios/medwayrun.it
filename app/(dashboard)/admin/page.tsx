@@ -4,25 +4,17 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   Shield, Users, LayoutGrid, ChevronDown, Check, Lock,
-  Plus, Trash2, Crown, X, UserPlus, Ban, ShieldCheck, ShieldOff, UserX,
+  Plus, Trash2, Crown, X, UserPlus, Ban, UserX,
   Loader2,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRole } from "@/features/auth/hooks/useRole";
-import { IS_MOCK, mockLiquidTime } from "@/lib/mockDb";
 import { useAuthStore } from "@/features/auth/store/authStore";
 import {
   type AppRole,
   ROLE_LABELS,
   ROLE_COLORS,
 } from "@/lib/roles";
-import {
-  type MockUser,
-  type MockUserRole,
-  getAllMockUsers,
-  updateMockUserRole,
-  removeMockUser,
-} from "@/lib/mockUsers";
 
 // ── Supabase user shape ─────────────────────────────────────────────────────────
 interface SupabaseOrgUser {
@@ -108,12 +100,11 @@ export default function AdminPage() {
 
   // ── Supabase mode: users loaded from API ──────────────────────────────────────
   const [sbUsers, setSbUsers] = useState<SupabaseOrgUser[]>([]);
-  const [sbUsersLoading, setSbUsersLoading] = useState(!IS_MOCK);
+  const [sbUsersLoading, setSbUsersLoading] = useState(true);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
 
   const loadSbUsers = useCallback(async () => {
-    if (IS_MOCK) return;
     setSbUsersLoading(true);
     try {
       const res = await fetch("/api/admin/users");
@@ -124,7 +115,7 @@ export default function AdminPage() {
   }, []);
 
   useEffect(() => {
-    if (!IS_MOCK) loadSbUsers();
+    loadSbUsers();
   }, [loadSbUsers]);
 
   async function handleSbRoleChange(userId: string, role: string) {
@@ -146,29 +137,6 @@ export default function AdminPage() {
     setActionLoading(null);
     await loadSbUsers();
   }
-
-  // ── Mock mode: users from localStorage ───────────────────────────────────────
-  const [mockUsers, setMockUsers] = useState<MockUser[]>(() =>
-    typeof window !== "undefined" ? getAllMockUsers() : []
-  );
-  const [confirmRevoke, setConfirmRevoke] = useState<string | null>(null);
-
-  function refreshMockUsers() { setMockUsers(getAllMockUsers()); }
-  function handleMockUserRole(id: string, role: MockUserRole) {
-    updateMockUserRole(id, role); refreshMockUsers(); setOpenPicker(null);
-  }
-  function handleRemoveMockUser(id: string) {
-    removeMockUser(id); setConfirmRevoke(null); refreshMockUsers();
-  }
-  function handleRevokeMockUser(id: string) {
-    updateMockUserRole(id, "revoked"); setConfirmRevoke(null); refreshMockUsers();
-  }
-
-  // Liquid time h/sem per member
-  const [liquidTimeMap, setLiquidTimeMap] = useState<Record<string, number>>(() => {
-    if (typeof window === "undefined") return {};
-    return Object.fromEntries(mockLiquidTime.list().map((e) => [e.user_id, e.hours_per_week]));
-  });
 
   // Teams state
   const [showNewTeam, setShowNewTeam] = useState(false);
@@ -273,17 +241,10 @@ export default function AdminPage() {
     setEditingTeamId(null);
   }
 
-  function saveLiquidHours(userId: string, raw: string) {
-    const hours = Math.max(0, parseFloat(raw) || 0);
-    mockLiquidTime.set(userId, hours);
-    setLiquidTimeMap((prev) => ({ ...prev, [userId]: hours }));
-  }
-
-  // ── Derived (use mockUsers — the real auth user store)
-  const activeUsers = mockUsers.filter((u) => u.role !== "revoked");
-  const byRole = (r: MockUserRole) => mockUsers.filter((u) => u.role === r);
-  const admins = activeUsers
-    .filter((u) => u.role === "admin" || u.role === "superadmin")
+  // ── Derived (use sbUsers for overview stats)
+  const activeUsers = sbUsers;
+  const admins = sbUsers
+    .filter((u) => u.role === "admin" || u.role === "owner")
     .map((u) => ({ id: u.id, name: u.full_name }));
   const visibleTeams = isSuperAdmin
     ? teams
@@ -341,9 +302,9 @@ export default function AdminPage() {
             {/* Stats */}
             <div className="grid grid-cols-3 gap-4">
               {([
-                { label: "Super Admins", count: byRole("superadmin").length, color: "text-violet-600", bg: "bg-violet-50" },
-                { label: "Admins",       count: byRole("admin").length,      color: "text-brand-teal", bg: "bg-brand-teal/5" },
-                { label: "Usuários",     count: byRole("user").length,       color: "text-neutral-600", bg: "bg-neutral-50" },
+                { label: "Super Admins", count: sbUsers.filter((u) => u.role === "owner").length,  color: "text-violet-600",  bg: "bg-violet-50" },
+                { label: "Admins",       count: sbUsers.filter((u) => u.role === "admin").length,   color: "text-brand-teal", bg: "bg-brand-teal/5" },
+                { label: "Usuários",     count: sbUsers.filter((u) => u.role === "member" || u.role === "viewer").length, color: "text-neutral-600", bg: "bg-neutral-50" },
               ]).map(({ label, count, color, bg }) => (
                 <div key={label} className={cn("rounded-xl border border-neutral-100 p-4", bg)}>
                   <p className={cn("text-2xl font-bold", color)}>{count}</p>
@@ -371,11 +332,9 @@ export default function AdminPage() {
                     </div>
                     <span className={cn(
                       "text-xs font-medium px-2.5 py-1 rounded-lg shrink-0",
-                      u.role === "superadmin" ? "bg-violet-100 text-violet-700" :
-                      u.role === "admin" ? "bg-brand-teal/10 text-brand-teal" :
-                      "bg-neutral-100 text-neutral-500"
+                      SB_ROLE_COLOR[u.role] ?? "bg-neutral-100 text-neutral-500"
                     )}>
-                      {ROLE_LABELS[u.role as AppRole] ?? u.role}
+                      {SB_ROLE_LABEL[u.role] ?? u.role}
                     </span>
                   </div>
                 ))}
@@ -458,111 +417,7 @@ export default function AdminPage() {
         {activeTab === "users" && isSuperAdmin && (
           <div className="space-y-5 pt-2">
 
-            {IS_MOCK ? (
-              /* ── MOCK MODE ── */
-              <>
-                <div className="grid grid-cols-4 gap-3">
-                  {([
-                    { label: "Super Admins", count: mockUsers.filter((u) => u.role === "superadmin").length, color: "text-violet-600", bg: "bg-violet-50" },
-                    { label: "Admins",       count: mockUsers.filter((u) => u.role === "admin").length,      color: "text-brand-teal", bg: "bg-brand-teal/5" },
-                    { label: "Usuários",     count: mockUsers.filter((u) => u.role === "user").length,       color: "text-neutral-600", bg: "bg-neutral-50" },
-                    { label: "Revogados",    count: mockUsers.filter((u) => u.role === "revoked").length,    color: "text-red-500",     bg: "bg-red-50" },
-                  ] as const).map(({ label, count, color, bg }) => (
-                    <div key={label} className={cn("rounded-xl border border-neutral-100 p-4", bg)}>
-                      <p className={cn("text-2xl font-bold", color)}>{count}</p>
-                      <p className="text-xs text-neutral-500 mt-0.5">{label}</p>
-                    </div>
-                  ))}
-                </div>
-
-                <section className="bg-white rounded-xl border border-neutral-100">
-                  <div className="flex items-center gap-2 px-5 py-3 border-b border-neutral-100">
-                    <Users size={15} className="text-neutral-400" />
-                    <h2 className="text-sm font-semibold text-brand-navy">Usuários registrados</h2>
-                    <span className="ml-auto text-xs text-neutral-400">
-                      {mockUsers.filter((u) => u.role !== "revoked").length} ativos
-                    </span>
-                  </div>
-                  {mockUsers.length === 0 ? (
-                    <div className="py-12 text-center">
-                      <Users size={28} className="mx-auto mb-3 text-neutral-200" />
-                      <p className="text-sm text-neutral-400">Nenhum usuário registrado ainda</p>
-                    </div>
-                  ) : (
-                    <div className="divide-y divide-neutral-50">
-                      {mockUsers.map((u) => {
-                        const isHardcoded = u.id === "superadmin-sonelio";
-                        const isRevoked = u.role === "revoked";
-                        const roleLabel: Record<MockUserRole, string> = { superadmin: "Super Admin", admin: "Admin", user: "Usuário", revoked: "Revogado" };
-                        const roleColor: Record<MockUserRole, string> = { superadmin: "bg-violet-100 text-violet-700", admin: "bg-brand-teal/10 text-brand-teal", user: "bg-neutral-100 text-neutral-500", revoked: "bg-red-100 text-red-600" };
-                        return (
-                          <div key={u.id} className={cn("flex items-center gap-3 px-5 py-3", isRevoked && "opacity-50")}>
-                            <div className={cn("w-9 h-9 rounded-full flex items-center justify-center text-xs font-bold shrink-0", isRevoked ? "bg-neutral-100 text-neutral-300" : "bg-brand-navy/10 text-brand-navy")}>
-                              {u.full_name.split(" ").slice(0, 2).map((w) => w[0]).join("").toUpperCase()}
-                            </div>
-                            <div className="flex-1 min-w-0">
-                              <p className="text-sm font-medium text-neutral-800 truncate">{u.full_name}</p>
-                              <p className="text-xs text-neutral-400 truncate">{u.email}</p>
-                            </div>
-                            {!isHardcoded && !isRevoked ? (
-                              <div className="relative shrink-0" data-picker-container>
-                                <button onClick={() => setOpenPicker(openPicker === `mu-${u.id}` ? null : `mu-${u.id}`)} className={cn("flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border-transparent border transition-colors", roleColor[u.role])}>
-                                  {roleLabel[u.role]}<ChevronDown size={11} />
-                                </button>
-                                {openPicker === `mu-${u.id}` && (
-                                  <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-xl shadow-xl border border-neutral-100 py-1 z-20">
-                                    {(["user", "admin", "superadmin"] as MockUserRole[]).map((r) => (
-                                      <button key={r} onClick={() => handleMockUserRole(u.id, r)} className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-neutral-50 transition-colors">
-                                        <span className={cn("text-[11px] font-medium px-1.5 py-0.5 rounded", roleColor[r])}>{roleLabel[r]}</span>
-                                        {u.role === r && <Check size={11} className="ml-auto text-brand-teal" />}
-                                      </button>
-                                    ))}
-                                    <div className="border-t border-neutral-100 mt-1 pt-1">
-                                      <button onClick={() => { setConfirmRevoke(u.id); setOpenPicker(null); }} className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left text-red-500 hover:bg-red-50 transition-colors"><Ban size={11} />Revogar acesso</button>
-                                      <button onClick={() => { handleRemoveMockUser(u.id); setOpenPicker(null); }} className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left text-red-600 hover:bg-red-50 transition-colors"><UserX size={11} />Remover usuário</button>
-                                    </div>
-                                  </div>
-                                )}
-                              </div>
-                            ) : isRevoked ? (
-                              <div className="flex items-center gap-2 shrink-0">
-                                <span className={cn("text-xs font-medium px-2.5 py-1.5 rounded-lg", roleColor.revoked)}>{roleLabel.revoked}</span>
-                                <button onClick={() => handleMockUserRole(u.id, "user")} className="text-xs text-neutral-400 hover:text-brand-teal transition-colors flex items-center gap-1"><ShieldCheck size={13} />Restaurar</button>
-                                <button onClick={() => handleRemoveMockUser(u.id)} className="text-xs text-neutral-300 hover:text-red-500 transition-colors"><Trash2 size={13} /></button>
-                              </div>
-                            ) : (
-                              <div className="flex items-center gap-1.5 shrink-0">
-                                <span className={cn("text-xs font-medium px-2.5 py-1.5 rounded-lg", roleColor.superadmin)}>{roleLabel.superadmin}</span>
-                                <ShieldOff size={12} className="text-neutral-300" />
-                              </div>
-                            )}
-                          </div>
-                        );
-                      })}
-                    </div>
-                  )}
-                </section>
-
-                {confirmRevoke && (() => {
-                  const u = mockUsers.find((x) => x.id === confirmRevoke);
-                  if (!u) return null;
-                  return (
-                    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40">
-                      <div className="bg-white rounded-2xl shadow-2xl p-6 w-80 space-y-4">
-                        <div className="flex items-center gap-2"><Ban size={18} className="text-red-500" /><p className="font-semibold text-neutral-800">Revogar acesso</p></div>
-                        <p className="text-sm text-neutral-500"><strong>{u.full_name}</strong> não conseguirá mais entrar na plataforma.</p>
-                        <div className="flex gap-2 justify-end">
-                          <button onClick={() => setConfirmRevoke(null)} className="px-4 py-2 text-sm text-neutral-500 hover:text-neutral-700 transition-colors">Cancelar</button>
-                          <button onClick={() => handleRevokeMockUser(confirmRevoke)} className="px-4 py-2 text-sm bg-red-500 text-white rounded-lg hover:bg-red-600 transition-colors">Revogar</button>
-                        </div>
-                      </div>
-                    </div>
-                  );
-                })()}
-              </>
-            ) : (
-              /* ── SUPABASE MODE ── */
-              <>
+            <>
                 {/* Stats */}
                 {!sbUsersLoading && (
                   <div className="grid grid-cols-3 gap-3">
@@ -693,8 +548,7 @@ export default function AdminPage() {
                   <a href="/register" className="text-brand-teal hover:underline">/register</a>{" "}
                   e precisam confirmar o email para aparecer aqui.
                 </p>
-              </>
-            )}
+            </>
           </div>
         )}
 
@@ -896,8 +750,8 @@ export default function AdminPage() {
                                       {getInitials(u.full_name)}
                                     </span>
                                     <span className="flex-1 truncate">{u.full_name}</span>
-                                    <span className={cn("text-[9px] px-1 py-0.5 rounded shrink-0", ROLE_COLORS[u.role as AppRole])}>
-                                      {ROLE_LABELS[u.role as AppRole] ?? u.role}
+                                    <span className={cn("text-[9px] px-1 py-0.5 rounded shrink-0", SB_ROLE_COLOR[u.role] ?? "bg-neutral-100 text-neutral-500")}>
+                                      {SB_ROLE_LABEL[u.role] ?? u.role}
                                     </span>
                                   </button>
                                 ))}
@@ -922,27 +776,15 @@ export default function AdminPage() {
                                   {getInitials(u.full_name)}
                                 </div>
                                 <span className="text-xs text-neutral-700 flex-1 truncate">{u.full_name}</span>
-                                <span className={cn("text-[9px] px-1 py-0.5 rounded shrink-0", ROLE_COLORS[u.role as AppRole])}>
-                                  {ROLE_LABELS[u.role as AppRole] ?? u.role}
+                                <span className={cn("text-[9px] px-1 py-0.5 rounded shrink-0", SB_ROLE_COLOR[u.role] ?? "bg-neutral-100 text-neutral-500")}>
+                                  {SB_ROLE_LABEL[u.role] ?? u.role}
                                 </span>
-                                {/* h/sem field */}
+                                {/* placeholder so the column doesn't collapse */}
                                 <div className="flex items-center gap-0.5 shrink-0">
                                   {canEdit ? (
-                                    <input
-                                      type="number"
-                                      min={0}
-                                      max={80}
-                                      step={1}
-                                      value={liquidTimeMap[u.id] ?? ""}
-                                      placeholder="0"
-                                      onChange={(e) => setLiquidTimeMap((prev) => ({ ...prev, [u.id]: parseFloat(e.target.value) || 0 }))}
-                                      onBlur={(e) => saveLiquidHours(u.id, e.target.value)}
-                                      onKeyDown={(e) => { if (e.key === "Enter") (e.target as HTMLInputElement).blur(); }}
-                                      className="w-10 text-[10px] text-center border border-neutral-200 rounded px-1 py-0.5 focus:outline-none focus:border-brand-teal bg-white text-neutral-600"
-                                      title="Horas líquidas por semana"
-                                    />
+                                    <span className="text-[10px] text-neutral-300">—</span>
                                   ) : (
-                                    <span className="text-[10px] text-neutral-400">{liquidTimeMap[u.id] ?? 0}</span>
+                                    <span className="text-[10px] text-neutral-400">—</span>
                                   )}
                                   <span className="text-[9px] text-neutral-300">h/sem</span>
                                 </div>

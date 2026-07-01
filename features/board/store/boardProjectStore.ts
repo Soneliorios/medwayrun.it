@@ -1,14 +1,21 @@
 "use client";
 
 import { create } from "zustand";
-import { boardProjectDb, type MockBoardProject } from "@/lib/mockDb";
+
+export interface BoardProject {
+  id: string;
+  board_id: string;
+  name: string;
+  color: string;
+  description?: string;
+}
 
 interface BoardProjectState {
-  projects: MockBoardProject[];
+  projects: BoardProject[];
   boardId: string | null;
   load: (boardId: string) => void;
-  create: (boardId: string, name: string, color: string, description?: string) => MockBoardProject;
-  update: (id: string, updates: Partial<Pick<MockBoardProject, "name" | "color" | "description">>) => void;
+  create: (boardId: string, name: string, color: string, description?: string) => BoardProject;
+  update: (id: string, updates: Partial<Pick<BoardProject, "name" | "color" | "description">>) => void;
   delete: (id: string) => void;
 }
 
@@ -17,26 +24,34 @@ export const useBoardProjectStore = create<BoardProjectState>((set, get) => ({
   boardId: null,
 
   load(boardId) {
-    set({ boardId, projects: boardProjectDb.listByBoard(boardId) });
+    set({ boardId, projects: [] });
+    // Supabase path: caller should fetch from supabase and call set({ projects })
   },
 
   create(boardId, name, color, description) {
-    const project = boardProjectDb.create({ board_id: boardId, name, color, description });
+    // Supabase path: caller is responsible for persisting; this is an optimistic stub
+    const project: BoardProject = {
+      id: crypto.randomUUID(),
+      board_id: boardId,
+      name,
+      color,
+      description,
+    };
     set((s) => ({ projects: [...s.projects, project] }));
     return project;
   },
 
   update(id, updates) {
-    const { boardId, projects } = get();
-    if (!boardId) return;
-    boardProjectDb.update(boardId, id, updates);
-    set({ projects: projects.map((p) => (p.id === id ? { ...p, ...updates } : p)) });
+    set((s) => ({
+      projects: s.projects.map((p) => (p.id === id ? { ...p, ...updates } : p)),
+    }));
+    // Supabase path: caller is responsible for persisting the update
   },
 
   delete(id) {
-    const { boardId, projects } = get();
-    if (!boardId) return;
-    boardProjectDb.delete(boardId, id);
-    set({ projects: projects.filter((p) => p.id !== id) });
+    set((s) => ({
+      projects: s.projects.filter((p) => p.id !== id),
+    }));
+    // Supabase path: caller is responsible for persisting the deletion
   },
 }));

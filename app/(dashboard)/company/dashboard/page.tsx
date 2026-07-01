@@ -3,7 +3,6 @@
 import { useState, useEffect } from "react";
 import { BarChart2, ListTodo, FolderKanban, Users, TrendingUp, Clock, AlertTriangle, CheckCircle2 } from "lucide-react";
 import { createRawClient } from "@/lib/supabase/client";
-import { IS_MOCK } from "@/lib/mockDb";
 import { useProjectStore } from "@/features/projects/store/projectStore";
 import { PRIORITY_COLORS, PRIORITY_LABELS } from "@/types";
 
@@ -26,20 +25,11 @@ export default function CompanyDashboardPage() {
   useEffect(() => {
     async function fetchStats() {
       try {
-        let tasks: any[] = [];
-
-        if (IS_MOCK) {
-          try {
-            const raw = localStorage.getItem("mwr_tasks");
-            tasks = raw ? JSON.parse(raw) : [];
-          } catch {}
-        } else {
-          const supabase = createRawClient();
-          const { data } = await supabase
-            .from("tasks")
-            .select("id, status, priority, is_urgent, due_date, project_id");
-          tasks = data ?? [];
-        }
+        const supabase = createRawClient();
+        const { data } = await supabase
+          .from("tasks")
+          .select("id, status, priority, is_urgent, due_date, project_id");
+        const tasks: any[] = data ?? [];
         const now = new Date();
 
         const tasksByProject: OrgStats["tasksByProject"] = projects

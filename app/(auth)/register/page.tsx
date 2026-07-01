@@ -8,8 +8,6 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { Loader2, Eye, EyeOff, Mail } from "lucide-react";
-import { IS_MOCK } from "@/lib/mockDb";
-import { mockHash, setPendingReg, getAllMockUsers } from "@/lib/mockUsers";
 import { createClient } from "@/lib/supabase/client";
 
 export default function RegisterPage() {
@@ -42,44 +40,6 @@ export default function RegisterPage() {
 
     setLoading(true);
 
-    if (IS_MOCK) {
-      const existing = getAllMockUsers().find(
-        (u) => u.email.toLowerCase() === email.toLowerCase()
-      );
-      if (existing && existing.role !== "revoked") {
-        setError("Este email já possui uma conta. Faça login.");
-        setLoading(false);
-        return;
-      }
-
-      const code = String(Math.floor(100000 + Math.random() * 900000));
-      setPendingReg({
-        email,
-        full_name: fullName.trim(),
-        _ph: mockHash(password),
-        code,
-        expiresAt: Date.now() + 10 * 60 * 1000,
-      });
-
-      let sent = false;
-      try {
-        const res = await fetch("/api/auth/send-code", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email, code }),
-        });
-        const data = await res.json();
-        sent = data.emailSent === true;
-      } catch {}
-
-      setLoading(false);
-      const params = new URLSearchParams({ email });
-      if (!sent) params.set("showCode", code);
-      router.push(`/register/verify?${params}`);
-      return;
-    }
-
-    // Supabase mode
     const supabase = createClient();
     const { error: signUpError } = await supabase.auth.signUp({
       email,
@@ -249,7 +209,7 @@ export default function RegisterPage() {
           {loading ? (
             <>
               <Loader2 size={16} className="mr-2 animate-spin" />
-              {IS_MOCK ? "Enviando código..." : "Criando conta..."}
+              Criando conta...
             </>
           ) : (
             "Continuar"

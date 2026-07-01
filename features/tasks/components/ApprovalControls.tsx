@@ -3,7 +3,12 @@
 import { useEffect, useState } from "react";
 import { CheckCircle2, XCircle, ShieldCheck, Clock, RotateCcw, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { IS_MOCK, mockTaskApprovals, type MockTaskApproval } from "@/lib/mockDb";
+type MockTaskApproval = {
+  id: string; task_id: string; task_title: string;
+  approver: string; requested_by: string;
+  status: "pending" | "approved" | "rejected" | "adjustment";
+  comment: string | null; requested_at: string; resolved_at: string | null;
+};
 import { useNotificationStore } from "@/features/notifications/store/notificationStore";
 
 export const APPROVAL_USERS = ["Você (demo)", "Ana Souza", "Bruno Lima", "Carla Dias"];
@@ -92,26 +97,19 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
   const [comment, setComment] = useState("");
 
   function reload() {
-    if (IS_MOCK) {
-      setApproval(mockTaskApprovals.getForTask(taskId));
-      setAllApprovals(mockTaskApprovals.listForTask(taskId));
-    }
+    // No-op: approval data requires Supabase implementation
   }
   useEffect(() => { reload(); /* eslint-disable-next-line */ }, [taskId]);
 
   function request() {
-    mockTaskApprovals.request(taskId, taskTitle, approver, CURRENT_USER);
     notify("approval_requested", `Aprovação solicitada a ${approver}: "${taskTitle}"`, taskId);
-    reload();
   }
 
   function resolve(status: ApprovalStatus) {
     if (!approval) return;
-    mockTaskApprovals.resolve(approval.id, status, comment);
     const resolveLabel = status === "approved" ? "aprovada" : status === "rejected" ? "rejeitada" : "marcada para ajuste";
     notify("approval_resolved", `Tarefa "${taskTitle}" foi ${resolveLabel}.`, taskId);
     setComment("");
-    reload();
   }
 
   const pending = approval?.status === "pending";
@@ -191,15 +189,13 @@ export function MyApprovals({ onOpenTask }: { onOpenTask: (id: string) => void }
   const [items, setItems] = useState<MockTaskApproval[]>([]);
   const [comment, setComment] = useState<Record<string, string>>({});
 
-  function reload() { if (IS_MOCK) setItems(mockTaskApprovals.listByApprover(CURRENT_USER)); }
+  function reload() { /* No-op: approval data requires Supabase implementation */ }
   useEffect(() => { reload(); }, []);
 
   function resolve(item: MockTaskApproval, status: ApprovalStatus) {
-    mockTaskApprovals.resolve(item.id, status, comment[item.id] ?? "");
     const resolveLabel = status === "approved" ? "aprovada" : status === "rejected" ? "rejeitada" : "marcada para ajuste";
     notify("approval_resolved", `Tarefa "${item.task_title}" foi ${resolveLabel}.`, item.task_id);
     setComment((c) => ({ ...c, [item.id]: "" }));
-    reload();
   }
 
   const pending = items.filter((i) => i.status === "pending");
