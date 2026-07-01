@@ -14,7 +14,7 @@ import {
 } from "lucide-react";
 import { useSelectionStore } from "../store/selectionStore";
 import { useBoardStore } from "../store/boardStore";
-import { createRawClient } from "@/services/supabase/client";
+import { createRawClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 
 export function BatchActionBar() {

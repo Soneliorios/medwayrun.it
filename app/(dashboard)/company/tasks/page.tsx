@@ -15,7 +15,7 @@ import {
   X,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
-import { createRawClient } from "@/services/supabase/client";
+import { createRawClient } from "@/lib/supabase/client";
 import { IS_MOCK } from "@/lib/mockDb";
 import { useProjectStore } from "@/features/projects/store/projectStore";
 import { PRIORITY_LABELS, PRIORITY_COLORS } from "@/types";

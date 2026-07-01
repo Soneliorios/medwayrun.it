@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { BarChart2, ListTodo, FolderKanban, Users, TrendingUp, Clock, AlertTriangle, CheckCircle2 } from "lucide-react";
-import { createRawClient } from "@/services/supabase/client";
+import { createRawClient } from "@/lib/supabase/client";
 import { IS_MOCK } from "@/lib/mockDb";
 import { useProjectStore } from "@/features/projects/store/projectStore";
 import { PRIORITY_COLORS, PRIORITY_LABELS } from "@/types";

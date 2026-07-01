@@ -2,7 +2,7 @@
 
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { createClient } from "@/services/supabase/client";
+import { createClient } from "@/lib/supabase/client";
 import { useAuthStore } from "../store/authStore";
 import { ORG_ID } from "@/lib/utils";
 import { IS_MOCK } from "@/lib/mockDb";

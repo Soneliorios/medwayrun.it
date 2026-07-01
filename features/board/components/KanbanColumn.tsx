@@ -12,7 +12,7 @@ import { TaskCard } from "./TaskCard";
 import { ColumnHeader } from "./ColumnHeader";
 import type { ColumnWithTasks } from "@/types";
 import { useBoardStore } from "../store/boardStore";
-import { createRawClient } from "@/services/supabase/client";
+import { createRawClient } from "@/lib/supabase/client";
 import { IS_MOCK, mockColumns } from "@/lib/mockDb";
 
 interface Props {

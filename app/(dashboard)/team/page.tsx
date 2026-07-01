@@ -21,7 +21,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { createClient, createRawClient } from "@/services/supabase/client";
+import { createClient, createRawClient } from "@/lib/supabase/client";
 import { ORG_ID, getInitials } from "@/lib/utils";
 import { useAuthStore } from "@/features/auth/store/authStore";
 import { UserPlus, Mail, Loader2, Shield, Eye, Pen, Crown } from "lucide-react";

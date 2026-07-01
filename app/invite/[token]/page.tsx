@@ -1,4 +1,4 @@
-import { createClient } from "@/services/supabase/server";
+import { createClient } from "@/lib/supabase/server";
 import { notFound } from "next/navigation";
 import { AcceptInviteForm } from "./AcceptInviteForm";
 import type { Invitation } from "@/types";

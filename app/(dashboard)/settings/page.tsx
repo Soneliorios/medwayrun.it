@@ -7,7 +7,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
-import { createRawClient } from "@/services/supabase/client";
+import { createRawClient } from "@/lib/supabase/client";
 import { useAuthStore } from "@/features/auth/store/authStore";
 import { getInitials } from "@/lib/utils";
 import { Loader2, Save } from "lucide-react";

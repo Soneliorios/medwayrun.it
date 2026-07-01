@@ -9,7 +9,7 @@ import {
   useSensors,
 } from "@dnd-kit/core";
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
-import { createRawClient } from "@/services/supabase/client";
+import { createRawClient } from "@/lib/supabase/client";
 import { IS_MOCK, mockTasks } from "@/lib/mockDb";
 import { useBoardStore, getDropPosition } from "../store/boardStore";
 import { useRole } from "@/features/auth/hooks/useRole";

@@ -24,7 +24,7 @@ import { taskService } from "../services/taskService";
 import { useProjectStore } from "@/features/projects/store/projectStore";
 import { useBoardStore } from "@/features/board/store/boardStore";
 import { useAuthStore } from "@/features/auth/store/authStore";
-import { createRawClient } from "@/services/supabase/client";
+import { createRawClient } from "@/lib/supabase/client";
 import { IS_MOCK, mockColumns, mockTasks as mockTasksDb, mockCapacityRequests, mockTypeHistory, type MockTask } from "@/lib/mockDb";
 import { loadBoardTypes, checkCapacityOverflow, findTeamLeaderForUser, type OverflowCheckResult } from "@/lib/liquidTime";
 import { useNotificationStore } from "@/features/notifications/store/notificationStore";

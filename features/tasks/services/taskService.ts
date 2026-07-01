@@ -1,4 +1,4 @@
-import { createClient, createRawClient } from "@/services/supabase/client";
+import { createClient, createRawClient } from "@/lib/supabase/client";
 import { ORG_ID } from "@/lib/utils";
 import { IS_MOCK, mockTasks, mockComments } from "@/lib/mockDb";
 import type { TaskWithRelations, InsertTask } from "@/types";

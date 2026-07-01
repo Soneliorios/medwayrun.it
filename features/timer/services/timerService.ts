@@ -1,4 +1,4 @@
-import { createRawClient } from "@/services/supabase/client";
+import { createRawClient } from "@/lib/supabase/client";
 import { IS_MOCK, mockTimers, mockTasks, mockTimeEntries } from "@/lib/mockDb";
 
 export const timerService = {

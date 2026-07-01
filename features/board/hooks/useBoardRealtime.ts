@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
-import { createClient } from "@/services/supabase/client";
+import { createClient } from "@/lib/supabase/client";
 import { useBoardStore } from "../store/boardStore";
 import type { TaskWithRelations, ColumnWithTasks } from "@/types";
 

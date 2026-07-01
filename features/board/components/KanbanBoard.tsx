@@ -12,7 +12,7 @@ import {
   horizontalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { Plus } from "lucide-react";
-import { createClient, createRawClient } from "@/services/supabase/client";
+import { createClient, createRawClient } from "@/lib/supabase/client";
 import { IS_MOCK, mockColumns, mockTasks } from "@/lib/mockDb";
 import { useBoardStore } from "../store/boardStore";
 import { useFilterStore } from "../store/filterStore";
