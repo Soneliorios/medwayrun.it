@@ -8,8 +8,12 @@
  * becomes a string literal in client code — the `process` object is never accessed at runtime.
  * The old `typeof process !== "undefined"` guard was incorrectly short-circuiting to false.
  */
+const _supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 export const IS_MOCK: boolean =
-  (process.env.NEXT_PUBLIC_SUPABASE_URL ?? "").includes("placeholder");
+  !_supabaseUrl ||
+  _supabaseUrl.includes("placeholder") ||
+  !(process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "") ||
+  (process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "").includes("placeholder");
 
 function uuid(): string {
   return "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, (c) => {

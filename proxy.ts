@@ -2,8 +2,14 @@ import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 
 const PUBLIC_ROUTES = ["/login", "/forgot-password", "/invite"];
-// DEV_PREVIEW: bypass auth when Supabase isn't configured yet
-const DEV_PREVIEW = process.env.NEXT_PUBLIC_SUPABASE_URL?.includes("placeholder");
+// Bypass auth when Supabase isn't configured (placeholder URL or missing env var)
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
+const supabaseKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
+const DEV_PREVIEW =
+  !supabaseUrl ||
+  supabaseUrl.includes("placeholder") ||
+  !supabaseKey ||
+  supabaseKey.includes("placeholder");
 
 export async function proxy(request: NextRequest) {
   // In mock/preview mode bypass auth entirely — no real Supabase to talk to.
