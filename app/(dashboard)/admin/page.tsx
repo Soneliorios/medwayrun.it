@@ -353,7 +353,7 @@ export default function AdminPage() {
             </div>
 
             {/* Members table */}
-            <section className="bg-white rounded-xl border border-neutral-100 overflow-hidden">
+            <section className="bg-white rounded-xl border border-neutral-100">
               <div className="flex items-center gap-2 px-5 py-3 border-b border-neutral-100">
                 <Users size={15} className="text-neutral-400" />
                 <h2 className="text-sm font-semibold text-brand-navy">Membros da organização</h2>
@@ -384,7 +384,7 @@ export default function AdminPage() {
 
             {/* Boards */}
             {boards.length > 0 && (
-              <section className="bg-white rounded-xl border border-neutral-100 overflow-hidden">
+              <section className="bg-white rounded-xl border border-neutral-100">
                 <div className="flex items-center gap-2 px-5 py-3 border-b border-neutral-100">
                   <LayoutGrid size={15} className="text-neutral-400" />
                   <h2 className="text-sm font-semibold text-brand-navy">Quadros da organização</h2>
@@ -404,7 +404,7 @@ export default function AdminPage() {
             )}
 
             {/* Permissions matrix */}
-            <section className="bg-white rounded-xl border border-neutral-100 overflow-hidden">
+            <section className="bg-white rounded-xl border border-neutral-100">
               <div className="flex items-center gap-2 px-5 py-3 border-b border-neutral-100">
                 <Lock size={15} className="text-neutral-400" />
                 <h2 className="text-sm font-semibold text-brand-navy">Matriz de permissões</h2>
@@ -475,7 +475,7 @@ export default function AdminPage() {
                   ))}
                 </div>
 
-                <section className="bg-white rounded-xl border border-neutral-100 overflow-hidden">
+                <section className="bg-white rounded-xl border border-neutral-100">
                   <div className="flex items-center gap-2 px-5 py-3 border-b border-neutral-100">
                     <Users size={15} className="text-neutral-400" />
                     <h2 className="text-sm font-semibold text-brand-navy">Usuários registrados</h2>
@@ -579,7 +579,7 @@ export default function AdminPage() {
                   </div>
                 )}
 
-                <section className="bg-white rounded-xl border border-neutral-100 overflow-hidden">
+                <section className="bg-white rounded-xl border border-neutral-100">
                   <div className="flex items-center gap-2 px-5 py-3 border-b border-neutral-100">
                     <Users size={15} className="text-neutral-400" />
                     <h2 className="text-sm font-semibold text-brand-navy">Usuários registrados</h2>
