@@ -1,9 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
-import { createClient } from "@/lib/supabase/client";
+import { signInAction } from "@/app/(auth)/login/actions";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
@@ -16,28 +15,19 @@ export function LoginForm() {
   const [showPassword, setShowPassword] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const router = useRouter();
-  const supabase = createClient();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     setLoading(true);
 
-    const { error } = await supabase.auth.signInWithPassword({ email, password });
+    const errorMsg = await signInAction(email, password);
 
-    if (error) {
-      setError(
-        error.message === "Invalid login credentials"
-          ? "Email ou senha incorretos."
-          : error.message
-      );
+    if (errorMsg) {
+      setError(errorMsg);
       setLoading(false);
-      return;
     }
-
-    router.push("/");
-    router.refresh();
+    // On success, signInAction redirects — no client-side navigation needed
   }
 
   return (
