@@ -7,8 +7,10 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
-import { Loader2, Eye, EyeOff } from "lucide-react";
+import { Loader2, Eye, EyeOff, Mail } from "lucide-react";
+import { IS_MOCK } from "@/lib/mockDb";
 import { mockHash, setPendingReg, getAllMockUsers } from "@/lib/mockUsers";
+import { createClient } from "@/lib/supabase/client";
 
 export default function RegisterPage() {
   const [fullName, setFullName] = useState("");
@@ -18,6 +20,7 @@ export default function RegisterPage() {
   const [showPw, setShowPw] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+  const [emailSent, setEmailSent] = useState(false);
   const router = useRouter();
 
   async function handleSubmit(e: React.FormEvent) {
@@ -37,47 +40,97 @@ export default function RegisterPage() {
       return;
     }
 
-    // Check if email already registered
-    const existing = getAllMockUsers().find(
-      (u) => u.email.toLowerCase() === email.toLowerCase()
-    );
-    if (existing && existing.role !== "revoked") {
-      setError("Este email já possui uma conta. Faça login.");
+    setLoading(true);
+
+    if (IS_MOCK) {
+      const existing = getAllMockUsers().find(
+        (u) => u.email.toLowerCase() === email.toLowerCase()
+      );
+      if (existing && existing.role !== "revoked") {
+        setError("Este email já possui uma conta. Faça login.");
+        setLoading(false);
+        return;
+      }
+
+      const code = String(Math.floor(100000 + Math.random() * 900000));
+      setPendingReg({
+        email,
+        full_name: fullName.trim(),
+        _ph: mockHash(password),
+        code,
+        expiresAt: Date.now() + 10 * 60 * 1000,
+      });
+
+      let sent = false;
+      try {
+        const res = await fetch("/api/auth/send-code", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, code }),
+        });
+        const data = await res.json();
+        sent = data.emailSent === true;
+      } catch {}
+
+      setLoading(false);
+      const params = new URLSearchParams({ email });
+      if (!sent) params.set("showCode", code);
+      router.push(`/register/verify?${params}`);
       return;
     }
 
-    setLoading(true);
-
-    // Generate 6-digit code
-    const code = String(Math.floor(100000 + Math.random() * 900000));
-
-    // Store pending registration
-    setPendingReg({
+    // Supabase mode
+    const supabase = createClient();
+    const { error: signUpError } = await supabase.auth.signUp({
       email,
-      full_name: fullName.trim(),
-      _ph: mockHash(password),
-      code,
-      expiresAt: Date.now() + 10 * 60 * 1000,
+      password,
+      options: {
+        data: { full_name: fullName.trim() },
+        emailRedirectTo: `${window.location.origin}/auth/callback`,
+      },
     });
-
-    // Try to send email (fire-and-forget)
-    let emailSent = false;
-    try {
-      const res = await fetch("/api/auth/send-code", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email, code }),
-      });
-      const data = await res.json();
-      emailSent = data.emailSent === true;
-    } catch {}
 
     setLoading(false);
 
-    // Navigate to verify page; pass emailSent so it knows whether to show the code
-    const params = new URLSearchParams({ email });
-    if (!emailSent) params.set("showCode", code);
-    router.push(`/register/verify?${params}`);
+    if (signUpError) {
+      if (signUpError.message.toLowerCase().includes("already registered")) {
+        setError("Este email já possui uma conta. Faça login.");
+      } else {
+        setError(signUpError.message);
+      }
+      return;
+    }
+
+    setEmailSent(true);
+  }
+
+  if (emailSent) {
+    return (
+      <div className="space-y-6 text-center">
+        <div className="w-14 h-14 rounded-full bg-brand-teal/10 flex items-center justify-center mx-auto">
+          <Mail size={26} className="text-brand-teal" />
+        </div>
+        <div className="space-y-1">
+          <h2 className="text-2xl font-bold text-brand-navy tracking-tight">
+            Verifique seu email
+          </h2>
+          <p className="text-sm text-neutral-500">
+            Enviamos um link de confirmação para <strong>{email}</strong>.
+            <br />Clique no link para ativar sua conta.
+          </p>
+        </div>
+        <p className="text-xs text-neutral-400">
+          Não recebeu? Verifique a pasta de spam ou{" "}
+          <button
+            onClick={() => setEmailSent(false)}
+            className="text-brand-teal hover:underline"
+          >
+            tente novamente
+          </button>
+          .
+        </p>
+      </div>
+    );
   }
 
   return (
@@ -196,7 +249,7 @@ export default function RegisterPage() {
           {loading ? (
             <>
               <Loader2 size={16} className="mr-2 animate-spin" />
-              Enviando código...
+              {IS_MOCK ? "Enviando código..." : "Criando conta..."}
             </>
           ) : (
             "Continuar"
