@@ -33,8 +33,7 @@ import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/features/auth/store/authStore";
 import { useSignOut } from "@/features/auth/hooks/useAuth";
 import { useRole } from "@/features/auth/hooks/useRole";
-import { IS_MOCK } from "@/lib/mockDb";
-import { setMockRole, ROLE_LABELS, ROLE_COLORS, type AppRole } from "@/lib/roles";
+import { ROLE_LABELS, ROLE_COLORS } from "@/lib/roles";
 import { useNotificationStore } from "@/features/notifications/store/notificationStore";
 import { useTimerStore } from "@/features/timer/store/timerStore";
 import { formatElapsed } from "@/types";
@@ -84,8 +83,6 @@ export function TopNav() {
   const { profile } = useAuthStore();
   const signOut = useSignOut();
   const { role, isSuperAdmin, isAdmin, can } = useRole();
-  const [roleSwitcherOpen, setRoleSwitcherOpen] = useState(false);
-  const roleSwitcherRef = useRef<HTMLDivElement>(null);
   const { unreadCount, notifications, markAllRead, markRead } = useNotificationStore();
   const hasUnreadOverflow = notifications.some((n) => n.type === "capacity_overflow" && !n.read_at);
 
@@ -130,9 +127,6 @@ export function TopNav() {
       }
       if (newTaskRef.current && !newTaskRef.current.contains(e.target as Node)) {
         setNewTaskOpen(false);
-      }
-      if (roleSwitcherRef.current && !roleSwitcherRef.current.contains(e.target as Node)) {
-        setRoleSwitcherOpen(false);
       }
     }
     document.addEventListener("mousedown", handler);
@@ -232,41 +226,6 @@ export function TopNav() {
 
       {/* Spacer */}
       <div className="flex-1" />
-
-      {/* Mock role switcher — only in demo/mock mode */}
-      {IS_MOCK && (
-        <div ref={roleSwitcherRef} className="relative mr-2">
-          <button
-            onClick={() => setRoleSwitcherOpen((v) => !v)}
-            className={cn(
-              "flex items-center gap-1.5 text-[11px] font-semibold px-2 py-1 rounded-md border transition-colors",
-              ROLE_COLORS[role],
-              "border-current/20 hover:opacity-90"
-            )}
-          >
-            <Shield size={10} />
-            {ROLE_LABELS[role]}
-            <ChevronDown size={9} className={cn("transition-transform", roleSwitcherOpen && "rotate-180")} />
-          </button>
-          {roleSwitcherOpen && (
-            <div className="absolute top-full right-0 mt-1 w-40 bg-white rounded-xl shadow-xl border border-neutral-100 py-1 z-50">
-              <p className="text-[10px] text-neutral-400 px-3 pt-1 pb-0.5 font-medium uppercase tracking-wide">Demo: trocar papel</p>
-              {(["superadmin", "admin", "user"] as AppRole[]).map((r) => (
-                <button
-                  key={r}
-                  onClick={() => { setMockRole(r); setRoleSwitcherOpen(false); }}
-                  className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-neutral-50"
-                >
-                  <span className={cn("text-[10px] font-medium px-1.5 py-0.5 rounded", ROLE_COLORS[r])}>
-                    {ROLE_LABELS[r]}
-                  </span>
-                  {role === r && <span className="ml-auto text-brand-teal text-xs">✓</span>}
-                </button>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
 
       {/* Search */}
       <div className="relative mr-1">

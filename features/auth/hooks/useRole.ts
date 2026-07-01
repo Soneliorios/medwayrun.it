@@ -1,23 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
 import { IS_MOCK } from "@/lib/mockDb";
-import { getMockRole, can, type AppRole, type Permission } from "@/lib/roles";
+import { can, type AppRole, type Permission } from "@/lib/roles";
 import { useAuthStore } from "../store/authStore";
 
 export function useRole() {
   const member = useAuthStore((s) => s.member);
+  const profile = useAuthStore((s) => s.profile);
 
-  const [mockRole, setMockRole] = useState<AppRole>(() =>
-    IS_MOCK ? getMockRole() : "user"
-  );
-
-  useEffect(() => {
-    if (!IS_MOCK) return;
-    const handler = () => setMockRole(getMockRole());
-    window.addEventListener("mwr_role_change", handler);
-    return () => window.removeEventListener("mwr_role_change", handler);
-  }, []);
+  // In mock mode, role comes from the MockUser stored in the auth store profile.
+  // (profile is populated by useAuthListener from the logged-in MockUser.)
+  const mockRole: AppRole = (() => {
+    if (!IS_MOCK) return "user";
+    const r = (profile as any)?.role as string | undefined;
+    if (r === "superadmin" || r === "admin" || r === "user") return r;
+    return "user";
+  })();
 
   const role: AppRole = IS_MOCK
     ? mockRole

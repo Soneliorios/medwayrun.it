@@ -8,13 +8,12 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useRole } from "@/features/auth/hooks/useRole";
-import { IS_MOCK, mockLiquidTime } from "@/lib/mockDb";
+import { mockLiquidTime } from "@/lib/mockDb";
+import { useAuthStore } from "@/features/auth/store/authStore";
 import {
   type AppRole,
   ROLE_LABELS,
   ROLE_COLORS,
-  getMockRole,
-  setMockRole,
 } from "@/lib/roles";
 import {
   type MockUser,
@@ -26,16 +25,7 @@ import {
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-const USERS_KEY = "mwr_admin_users";
 const TEAMS_KEY = "mwr_teams";
-
-interface AdminUser {
-  id: string;
-  name: string;
-  email: string;
-  role: AppRole;
-  avatar: string | null;
-}
 
 interface MockTeam {
   id: string;
@@ -56,30 +46,6 @@ function nanoid6() {
   return Math.random().toString(36).slice(2, 8);
 }
 
-// Users
-function loadUsers(): AdminUser[] {
-  if (typeof window === "undefined") return defaultUsers();
-  try {
-    const raw = localStorage.getItem(USERS_KEY);
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  const d = defaultUsers();
-  localStorage.setItem(USERS_KEY, JSON.stringify(d));
-  return d;
-}
-function defaultUsers(): AdminUser[] {
-  return [
-    { id: "mock-user", name: "Você (demo)", email: "voce@medway.com", role: "superadmin", avatar: null },
-    { id: "u-ana",     name: "Ana Souza",   email: "ana@medway.com",   role: "admin",      avatar: null },
-    { id: "u-bruno",   name: "Bruno Lima",  email: "bruno@medway.com", role: "admin",      avatar: null },
-    { id: "u-carla",   name: "Carla Dias",  email: "carla@medway.com", role: "user",       avatar: null },
-    { id: "u-diego",   name: "Diego Reis",  email: "diego@medway.com", role: "user",       avatar: null },
-  ];
-}
-function saveUsers(u: AdminUser[]) {
-  localStorage.setItem(USERS_KEY, JSON.stringify(u));
-}
-
 // Teams
 function loadTeams(): MockTeam[] {
   if (typeof window === "undefined") return defaultTeams();
@@ -92,11 +58,7 @@ function loadTeams(): MockTeam[] {
   return d;
 }
 function defaultTeams(): MockTeam[] {
-  return [
-    { id: "team-demo", name: "Meu Time (Demo)",    leader_id: "mock-user", member_ids: ["mock-user", "u-carla"] },
-    { id: "team-mkt",  name: "Time de Marketing",  leader_id: "u-ana",     member_ids: ["u-ana", "u-carla"]     },
-    { id: "team-prod", name: "Time de Produto",    leader_id: "u-bruno",   member_ids: ["u-bruno", "u-diego"]   },
-  ];
+  return [];
 }
 function saveTeams(t: MockTeam[]) {
   localStorage.setItem(TEAMS_KEY, JSON.stringify(t));
@@ -107,10 +69,8 @@ function saveTeams(t: MockTeam[]) {
 export default function AdminPage() {
   const router = useRouter();
   const { isSuperAdmin, isAdmin } = useRole();
+  const currentUserId = useAuthStore((s) => s.profile?.id ?? "");
 
-  const [users, setUsers] = useState<AdminUser[]>(() =>
-    typeof window !== "undefined" ? loadUsers() : []
-  );
   const [teams, setTeams] = useState<MockTeam[]>(() =>
     typeof window !== "undefined" ? loadTeams() : []
   );
@@ -121,7 +81,6 @@ export default function AdminPage() {
 
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
   const [openPicker, setOpenPicker] = useState<string | null>(null);
-  const [currentRole, setCurrentRole] = useState<AppRole>(() => IS_MOCK ? getMockRole() : "superadmin");
 
   // Real registered users (from mockUsers.ts)
   const [mockUsers, setMockUsers] = useState<MockUser[]>(() =>
@@ -165,21 +124,12 @@ export default function AdminPage() {
   const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
   const [editTeamNameValue, setEditTeamNameValue] = useState("");
 
-  // Redirect non-admins
-  useEffect(() => {
-    if (!isAdmin) router.replace("/boards");
-  }, [isAdmin, router]);
+  const authLoading = useAuthStore((s) => s.isLoading);
 
-  // Admin (non-super) lands on Times tab
+  // Redirect non-admins (wait for auth to load first)
   useEffect(() => {
-    if (!isSuperAdmin) setActiveTab("teams");
-  }, [isSuperAdmin]);
-
-  useEffect(() => {
-    const h = () => setCurrentRole(getMockRole());
-    window.addEventListener("mwr_role_change", h);
-    return () => window.removeEventListener("mwr_role_change", h);
-  }, []);
+    if (!authLoading && !isAdmin) router.replace("/boards");
+  }, [authLoading, isAdmin, router]);
 
   // Close pickers on outside click
   useEffect(() => {
@@ -198,19 +148,8 @@ export default function AdminPage() {
     return () => document.removeEventListener("mousedown", h);
   }, [openPicker, addMemberTeamId]);
 
+  if (authLoading) return null;
   if (!isAdmin) return null;
-
-  // Current user id (mock mode = "mock-user")
-  const currentUserId = IS_MOCK ? "mock-user" : "";
-
-  // ── Users actions
-  function changeRole(userId: string, role: AppRole) {
-    const updated = users.map((u) => u.id === userId ? { ...u, role } : u);
-    setUsers(updated);
-    saveUsers(updated);
-    setOpenPicker(null);
-    if (IS_MOCK && userId === "mock-user") setMockRole(role);
-  }
 
   // ── Teams actions
   function createTeam() {
@@ -286,10 +225,12 @@ export default function AdminPage() {
     setLiquidTimeMap((prev) => ({ ...prev, [userId]: hours }));
   }
 
-  // ── Derived
-  const byRole = (r: AppRole) => users.filter((u) => u.role === r);
-  const admins = users.filter((u) => u.role === "admin" || u.role === "superadmin");
-  // Admin sees only their team; superadmin sees all
+  // ── Derived (use mockUsers — the real auth user store)
+  const activeUsers = mockUsers.filter((u) => u.role !== "revoked");
+  const byRole = (r: MockUserRole) => mockUsers.filter((u) => u.role === r);
+  const admins = activeUsers
+    .filter((u) => u.role === "admin" || u.role === "superadmin")
+    .map((u) => ({ id: u.id, name: u.full_name }));
   const visibleTeams = isSuperAdmin
     ? teams
     : teams.filter((t) => t.leader_id === currentUserId);
@@ -313,24 +254,15 @@ export default function AdminPage() {
                 : "Gestão do seu time"}
             </p>
           </div>
-          {IS_MOCK && (
-            <div className="ml-auto flex items-center gap-2 text-xs text-neutral-400 bg-white border border-neutral-200 rounded-lg px-3 py-1.5">
-              <span>Sessão atual:</span>
-              <span className={cn("px-1.5 py-0.5 rounded font-medium", ROLE_COLORS[currentRole])}>
-                {ROLE_LABELS[currentRole]}
-              </span>
-            </div>
-          )}
         </div>
 
-        {/* Tab nav — only for superadmin */}
-        {isSuperAdmin && (
-          <div className="flex border-b border-neutral-200 -mb-2">
-            {([
-              { id: "overview" as AdminTab, label: "Visão Geral" },
-              { id: "users"    as AdminTab, label: "Usuários" },
-              { id: "teams"    as AdminTab, label: "Times" },
-            ]).map((tab) => (
+        {/* Tab nav */}
+        <div className="flex border-b border-neutral-200 -mb-2">
+          {([
+            { id: "overview" as AdminTab, label: "Visão Geral" },
+            { id: "users"    as AdminTab, label: "Usuários", superadminOnly: true },
+            { id: "teams"    as AdminTab, label: "Times" },
+          ]).filter((t) => !t.superadminOnly || isSuperAdmin).map((tab) => (
               <button
                 key={tab.id}
                 onClick={() => setActiveTab(tab.id)}
@@ -345,12 +277,11 @@ export default function AdminPage() {
               </button>
             ))}
           </div>
-        )}
 
         {/* ════════════════════════════════════════════════════════════════════ */}
         {/* TAB: Visão Geral                                                    */}
         {/* ════════════════════════════════════════════════════════════════════ */}
-        {activeTab === "overview" && isSuperAdmin && (
+        {activeTab === "overview" && (
           <div className="space-y-8 pt-2">
 
             {/* Stats */}
@@ -359,7 +290,7 @@ export default function AdminPage() {
                 { label: "Super Admins", count: byRole("superadmin").length, color: "text-violet-600", bg: "bg-violet-50" },
                 { label: "Admins",       count: byRole("admin").length,      color: "text-brand-teal", bg: "bg-brand-teal/5" },
                 { label: "Usuários",     count: byRole("user").length,       color: "text-neutral-600", bg: "bg-neutral-50" },
-              ] as const).map(({ label, count, color, bg }) => (
+              ]).map(({ label, count, color, bg }) => (
                 <div key={label} className={cn("rounded-xl border border-neutral-100 p-4", bg)}>
                   <p className={cn("text-2xl font-bold", color)}>{count}</p>
                   <p className="text-xs text-neutral-500 mt-0.5">{label}</p>
@@ -367,51 +298,31 @@ export default function AdminPage() {
               ))}
             </div>
 
-            {/* Users table */}
+            {/* Members table */}
             <section className="bg-white rounded-xl border border-neutral-100 overflow-hidden">
               <div className="flex items-center gap-2 px-5 py-3 border-b border-neutral-100">
                 <Users size={15} className="text-neutral-400" />
                 <h2 className="text-sm font-semibold text-brand-navy">Membros da organização</h2>
-                <span className="ml-auto text-xs text-neutral-400">{users.length} membros</span>
+                <span className="ml-auto text-xs text-neutral-400">{activeUsers.length} membros</span>
               </div>
               <div className="divide-y divide-neutral-50">
-                {users.map((u) => (
+                {activeUsers.map((u) => (
                   <div key={u.id} className="flex items-center gap-3 px-5 py-3">
                     <div className="w-8 h-8 rounded-full bg-brand-navy/10 flex items-center justify-center text-[11px] font-bold text-brand-navy shrink-0">
-                      {getInitials(u.name)}
+                      {getInitials(u.full_name)}
                     </div>
                     <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-neutral-800 truncate">{u.name}</p>
+                      <p className="text-sm font-medium text-neutral-800 truncate">{u.full_name}</p>
                       <p className="text-xs text-neutral-400 truncate">{u.email}</p>
                     </div>
-                    <div className="relative shrink-0" data-picker-container>
-                      <button
-                        onClick={() => setOpenPicker(openPicker === u.id ? null : u.id)}
-                        className={cn(
-                          "flex items-center gap-1.5 text-xs font-medium px-2.5 py-1.5 rounded-lg border transition-colors",
-                          ROLE_COLORS[u.role], "border-transparent hover:border-current/20"
-                        )}
-                      >
-                        {ROLE_LABELS[u.role]}
-                        <ChevronDown size={11} />
-                      </button>
-                      {openPicker === u.id && (
-                        <div className="absolute right-0 top-full mt-1 w-44 bg-white rounded-xl shadow-xl border border-neutral-100 py-1 z-20">
-                          {(["superadmin", "admin", "user"] as AppRole[]).map((r) => (
-                            <button
-                              key={r}
-                              onClick={() => changeRole(u.id, r)}
-                              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-neutral-50 transition-colors"
-                            >
-                              <span className={cn("text-[11px] font-medium px-1.5 py-0.5 rounded", ROLE_COLORS[r])}>
-                                {ROLE_LABELS[r]}
-                              </span>
-                              {u.role === r && <Check size={12} className="ml-auto text-brand-teal" />}
-                            </button>
-                          ))}
-                        </div>
-                      )}
-                    </div>
+                    <span className={cn(
+                      "text-xs font-medium px-2.5 py-1 rounded-lg shrink-0",
+                      u.role === "superadmin" ? "bg-violet-100 text-violet-700" :
+                      u.role === "admin" ? "bg-brand-teal/10 text-brand-teal" :
+                      "bg-neutral-100 text-neutral-500"
+                    )}>
+                      {ROLE_LABELS[u.role as AppRole] ?? u.role}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -767,9 +678,9 @@ export default function AdminPage() {
             {/* Team cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {visibleTeams.map((team) => {
-                const leader   = users.find((u) => u.id === team.leader_id);
-                const members  = users.filter((u) => team.member_ids.includes(u.id));
-                const nonMbrs  = users.filter((u) => !team.member_ids.includes(u.id));
+                const leader   = activeUsers.find((u) => u.id === team.leader_id);
+                const members  = activeUsers.filter((u) => team.member_ids.includes(u.id));
+                const nonMbrs  = activeUsers.filter((u) => !team.member_ids.includes(u.id));
                 const canEdit  = isSuperAdmin || team.leader_id === currentUserId;
 
                 return (
@@ -825,9 +736,9 @@ export default function AdminPage() {
                       {leader ? (
                         <div className="flex items-center gap-2">
                           <div className="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center text-[9px] font-bold text-amber-700 shrink-0">
-                            {getInitials(leader.name)}
+                            {getInitials(leader.full_name)}
                           </div>
-                          <span className="text-xs font-medium text-neutral-700 flex-1 truncate">{leader.name}</span>
+                          <span className="text-xs font-medium text-neutral-700 flex-1 truncate">{leader.full_name}</span>
                           <Crown size={11} className="text-amber-400 shrink-0" />
                           {isSuperAdmin && (
                             <div className="relative shrink-0" data-picker-container>
@@ -884,11 +795,11 @@ export default function AdminPage() {
                                     className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-neutral-50 transition-colors"
                                   >
                                     <span className="w-5 h-5 rounded-full bg-brand-navy/10 flex items-center justify-center text-[8px] font-bold text-brand-navy shrink-0">
-                                      {getInitials(u.name)}
+                                      {getInitials(u.full_name)}
                                     </span>
-                                    <span className="flex-1 truncate">{u.name}</span>
-                                    <span className={cn("text-[9px] px-1 py-0.5 rounded shrink-0", ROLE_COLORS[u.role])}>
-                                      {ROLE_LABELS[u.role]}
+                                    <span className="flex-1 truncate">{u.full_name}</span>
+                                    <span className={cn("text-[9px] px-1 py-0.5 rounded shrink-0", ROLE_COLORS[u.role as AppRole])}>
+                                      {ROLE_LABELS[u.role as AppRole] ?? u.role}
                                     </span>
                                   </button>
                                 ))}
@@ -910,11 +821,11 @@ export default function AdminPage() {
                                   "w-6 h-6 rounded-full flex items-center justify-center text-[9px] font-bold shrink-0",
                                   isLeader ? "bg-amber-100 text-amber-700" : "bg-brand-navy/10 text-brand-navy"
                                 )}>
-                                  {getInitials(u.name)}
+                                  {getInitials(u.full_name)}
                                 </div>
-                                <span className="text-xs text-neutral-700 flex-1 truncate">{u.name}</span>
-                                <span className={cn("text-[9px] px-1 py-0.5 rounded shrink-0", ROLE_COLORS[u.role])}>
-                                  {ROLE_LABELS[u.role]}
+                                <span className="text-xs text-neutral-700 flex-1 truncate">{u.full_name}</span>
+                                <span className={cn("text-[9px] px-1 py-0.5 rounded shrink-0", ROLE_COLORS[u.role as AppRole])}>
+                                  {ROLE_LABELS[u.role as AppRole] ?? u.role}
                                 </span>
                                 {/* h/sem field */}
                                 <div className="flex items-center gap-0.5 shrink-0">

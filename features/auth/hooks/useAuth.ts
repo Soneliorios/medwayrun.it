@@ -19,7 +19,7 @@ export function useAuthListener() {
       const mockUser = userId ? getMockUser(userId) : null;
       if (mockUser) {
         setUser({ id: mockUser.id, email: mockUser.email, created_at: new Date().toISOString() } as any);
-        setProfile({ id: mockUser.id, full_name: mockUser.full_name, avatar_url: mockUser.avatar_url, email: mockUser.email } as any);
+        setProfile({ id: mockUser.id, full_name: mockUser.full_name, avatar_url: mockUser.avatar_url, email: mockUser.email, role: mockUser.role } as any);
       } else {
         setUser(null);
         setProfile(null);
