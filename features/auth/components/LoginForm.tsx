@@ -9,6 +9,8 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { Loader2, Eye, EyeOff } from "lucide-react";
+import { IS_MOCK } from "@/lib/mockDb";
+import { checkMockCredentials, setMockSession } from "@/lib/mockUsers";
 
 export function LoginForm() {
   const [email, setEmail] = useState("");
@@ -23,6 +25,19 @@ export function LoginForm() {
     e.preventDefault();
     setError(null);
     setLoading(true);
+
+    if (IS_MOCK) {
+      const user = checkMockCredentials(email, password);
+      if (!user) {
+        setError("Email ou senha incorretos.");
+        setLoading(false);
+        return;
+      }
+      setMockSession(user.id);
+      router.push("/");
+      router.refresh();
+      return;
+    }
 
     const { error } = await supabase.auth.signInWithPassword({ email, password });
 

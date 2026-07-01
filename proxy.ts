@@ -12,8 +12,21 @@ const DEV_PREVIEW =
   supabaseKey.includes("placeholder");
 
 export async function proxy(request: NextRequest) {
-  // In mock/preview mode bypass auth entirely — no real Supabase to talk to.
   if (DEV_PREVIEW) {
+    const pathname = request.nextUrl.pathname;
+    const isPublic = PUBLIC_ROUTES.some((r) => pathname.startsWith(r));
+    const session = request.cookies.get("mwr_session")?.value;
+
+    if (!session && !isPublic) {
+      const loginUrl = request.nextUrl.clone();
+      loginUrl.pathname = "/login";
+      return NextResponse.redirect(loginUrl);
+    }
+    if (session && pathname === "/login") {
+      const homeUrl = request.nextUrl.clone();
+      homeUrl.pathname = "/";
+      return NextResponse.redirect(homeUrl);
+    }
     return NextResponse.next({ request });
   }
 
