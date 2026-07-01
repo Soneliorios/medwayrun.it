@@ -6,6 +6,11 @@ const PUBLIC_ROUTES = ["/login", "/forgot-password", "/invite"];
 const DEV_PREVIEW = process.env.NEXT_PUBLIC_SUPABASE_URL?.includes("placeholder");
 
 export async function proxy(request: NextRequest) {
+  // In mock/preview mode bypass auth entirely — no real Supabase to talk to.
+  if (DEV_PREVIEW) {
+    return NextResponse.next({ request });
+  }
+
   let supabaseResponse = NextResponse.next({ request });
 
   const supabase = createServerClient(
