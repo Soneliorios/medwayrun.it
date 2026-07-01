@@ -1,0 +1,97 @@
+import { createClient } from "@supabase/supabase-js";
+import { createServerClient } from "@supabase/ssr";
+import { cookies } from "next/headers";
+import { NextResponse, type NextRequest } from "next/server";
+
+const ORG_ID = process.env.NEXT_PUBLIC_ORG_ID ?? "00000000-0000-0000-0000-000000000001";
+
+async function getCallerInfo() {
+  const cookieStore = await cookies();
+  const supabase = createServerClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
+    {
+      cookies: {
+        getAll: () => cookieStore.getAll(),
+        setAll: (list) => list.forEach(({ name, value, options }) => cookieStore.set(name, value, options)),
+      },
+    }
+  );
+  const { data: { user } } = await supabase.auth.getUser();
+  if (!user) return null;
+  const { data: member } = await supabase
+    .from("members")
+    .select("role")
+    .eq("user_id", user.id)
+    .eq("org_id", ORG_ID)
+    .single();
+  return { userId: user.id, role: member?.role ?? null };
+}
+
+// PATCH /api/admin/users/[id] — change role
+export async function PATCH(
+  request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const caller = await getCallerInfo();
+  if (!caller || !["owner", "admin"].includes(caller.role ?? "")) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
+
+  const { id } = await params;
+  const { role } = await request.json() as { role: string };
+
+  if (!["member", "admin", "owner"].includes(role)) {
+    return NextResponse.json({ error: "Invalid role" }, { status: 400 });
+  }
+  // Only owner can promote to owner or demote an owner
+  if ((role === "owner") && caller.role !== "owner") {
+    return NextResponse.json({ error: "Only owner can promote to owner" }, { status: 403 });
+  }
+
+  const admin = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+
+  const { error } = await admin
+    .from("members")
+    .update({ role })
+    .eq("user_id", id)
+    .eq("org_id", ORG_ID);
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ ok: true });
+}
+
+// DELETE /api/admin/users/[id] — remove from org
+export async function DELETE(
+  _request: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const caller = await getCallerInfo();
+  if (!caller || caller.role !== "owner") {
+    return NextResponse.json({ error: "Only owner can remove users" }, { status: 403 });
+  }
+
+  const { id } = await params;
+
+  // Prevent self-removal
+  if (id === caller.userId) {
+    return NextResponse.json({ error: "Cannot remove yourself" }, { status: 400 });
+  }
+
+  const admin = createClient(
+    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    process.env.SUPABASE_SERVICE_ROLE_KEY!
+  );
+
+  const { error } = await admin
+    .from("members")
+    .delete()
+    .eq("user_id", id)
+    .eq("org_id", ORG_ID);
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ ok: true });
+}
