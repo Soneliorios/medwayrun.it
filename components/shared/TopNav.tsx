@@ -16,7 +16,6 @@ import {
   ChevronRight,
   FolderKanban,
   ListTodo,
-  Users2,
   BarChart2,
   FileText,
   Zap,
@@ -43,7 +42,6 @@ const EMPRESA_ITEMS = [
   { href: "/company/dashboard", label: "Dashboard", icon: BarChart2 },
   { href: "/company/projects", label: "Projetos", icon: FolderKanban },
   { href: "/company/tasks", label: "Tarefas", icon: ListTodo },
-  { href: "/teams", label: "Equipes", icon: Users2 },
   { href: "/company/forms", label: "Formulários", icon: FileText },
   { href: "/automations", label: "Automações", icon: Zap, badge: "NOVO" },
 ];
@@ -171,7 +169,7 @@ export function TopNav() {
               onClick={() => setEmpresaOpen((v) => !v)}
               className={cn(
                 "flex items-center gap-1 px-3 py-1.5 rounded-md text-sm font-medium transition-colors",
-                pathname.startsWith("/company") || pathname.startsWith("/automations") || pathname.startsWith("/teams")
+                pathname.startsWith("/company") || pathname.startsWith("/automations")
                   ? "bg-white/15 text-white"
                   : "text-white/70 hover:text-white hover:bg-white/10"
               )}
