@@ -7,7 +7,6 @@ import {
   LayoutGrid,
   Users,
   User,
-  MessageSquare,
   Search,
   HelpCircle,
   Bell,
@@ -49,7 +48,6 @@ const EMPRESA_ITEMS = [
 const TOP_LINKS = [
   { href: "/boards", label: "Quadros", icon: LayoutGrid },
   { href: "/me", label: "Eu", icon: User },
-  { href: "/mural", label: "Mural", icon: MessageSquare },
 ];
 
 /** Pulsing pill in the nav that shows when a timer is running */
