@@ -1,14 +1,13 @@
 "use client";
 
 import { useState } from "react";
-import { useRouter } from "next/navigation";
 import Link from "next/link";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { cn } from "@/lib/utils";
 import { Loader2, Eye, EyeOff, Mail } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
+import { signUpAction } from "./actions";
 
 export default function RegisterPage() {
   const [fullName, setFullName] = useState("");
@@ -19,7 +18,6 @@ export default function RegisterPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [emailSent, setEmailSent] = useState(false);
-  const router = useRouter();
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -39,28 +37,16 @@ export default function RegisterPage() {
     }
 
     setLoading(true);
-
-    const supabase = createClient();
-    const { error: signUpError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: {
-        data: { full_name: fullName.trim() },
-        emailRedirectTo: `${window.location.origin}/auth/callback`,
-      },
-    });
-
+    const errorMsg = await signUpAction(fullName, email, password);
     setLoading(false);
 
-    if (signUpError) {
-      if (signUpError.message.toLowerCase().includes("already registered")) {
-        setError("Este email já possui uma conta. Faça login.");
-      } else {
-        setError(signUpError.message);
-      }
+    if (errorMsg) {
+      setError(errorMsg);
       return;
     }
 
+    // signUpAction redirects on success, but if email confirmation is
+    // enabled Supabase doesn't create a session yet — show the email screen.
     setEmailSent(true);
   }
 

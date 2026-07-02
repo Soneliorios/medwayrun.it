@@ -1,7 +1,14 @@
 import Link from "next/link";
 import { LoginForm } from "@/features/auth/components/LoginForm";
+import { CheckCircle2 } from "lucide-react";
 
-export default function LoginPage() {
+interface Props {
+  searchParams: Promise<{ registered?: string }>;
+}
+
+export default async function LoginPage({ searchParams }: Props) {
+  const { registered } = await searchParams;
+
   return (
     <div className="space-y-6">
       <div className="space-y-1">
@@ -12,6 +19,13 @@ export default function LoginPage() {
           Entre com suas credenciais para acessar a plataforma.
         </p>
       </div>
+
+      {registered && (
+        <div className="flex items-center gap-2 text-sm text-green-700 bg-green-50 border border-green-200 px-3 py-2 rounded-md">
+          <CheckCircle2 size={15} className="shrink-0" />
+          Conta criada! Verifique seu email e faça login.
+        </div>
+      )}
 
       <LoginForm />
 
