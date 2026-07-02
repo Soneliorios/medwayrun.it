@@ -162,8 +162,8 @@ export function TopNav() {
           );
         })}
 
-        {/* Empresa dropdown — hidden for plain users */}
-        {can("manage_company") && (
+        {/* Empresa dropdown — visible to all roles; Painel Admin inside is guarded separately */}
+        {can("view_company") && (
           <div ref={empresaRef} className="relative">
             <button
               onClick={() => setEmpresaOpen((v) => !v)}

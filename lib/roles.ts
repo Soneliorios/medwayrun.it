@@ -7,6 +7,7 @@ export type Permission =
   | "manage_members"      // invite / remove / change roles
   | "manage_boards"       // create / delete / archive boards
   | "manage_company"      // company settings: automations, forms, clients, portals
+  | "view_company"        // see the Empresa nav section (all roles)
   | "view_all_data"       // company-wide dashboard, global task list
   | "manage_any_task"     // edit/delete tasks not assigned to them
   | "create_task"         // create new tasks
@@ -18,6 +19,7 @@ const PERMISSIONS: Record<AppRole, Set<Permission>> = {
     "manage_members",
     "manage_boards",
     "manage_company",
+    "view_company",
     "view_all_data",
     "manage_any_task",
     "create_task",
@@ -26,12 +28,14 @@ const PERMISSIONS: Record<AppRole, Set<Permission>> = {
   admin: new Set([
     "manage_boards",
     "manage_company",
+    "view_company",
     "view_all_data",
     "manage_any_task",
     "create_task",
     "use_timers",
   ]),
   user: new Set([
+    "view_company",
     "create_task",
     "use_timers",
   ]),
