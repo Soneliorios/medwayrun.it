@@ -85,34 +85,31 @@ export function KanbanColumn({ column, onTaskOpen, onAddTask }: Props) {
     await supabase.from("columns").delete().eq("id", column.id);
   }, [column, store]);
 
-  function handleSetWipLimit(limit: number | null) {
+  async function handleSetWipLimit(limit: number | null) {
     store.updateColumn(column.id, { wip_limit: limit } as any); // optimistic
     const supabase = createRawClient();
-    supabase.from("columns").update({ wip_limit: limit }).eq("id", column.id);
+    await supabase.from("columns").update({ wip_limit: limit }).eq("id", column.id);
   }
 
-  function handleSetColor(color: string | null) {
+  async function handleSetColor(color: string | null) {
     store.updateColumn(column.id, { color } as any);
     const supabase = createRawClient();
-    supabase.from("columns").update({ color }).eq("id", column.id);
+    const { error } = await supabase.from("columns").update({ color }).eq("id", column.id);
+    if (error) store.updateColumn(column.id, { color: column.color } as any);
   }
 
   async function handleSetFinal(isFinal: boolean) {
     const supabase = createRawClient();
-    // Only one column per board can be the final column — clear others first
     if (isFinal) {
       const boardId = (column as any).project_id;
-      await supabase
-        .from("columns")
-        .update({ is_done_column: false })
-        .eq("project_id", boardId);
+      await supabase.from("columns").update({ is_done_column: false }).eq("project_id", boardId);
       store.columns.forEach((c) => store.updateColumn(c.id, { is_done_column: false } as any));
     }
     store.updateColumn(column.id, { is_done_column: isFinal } as any);
-    supabase.from("columns").update({ is_done_column: isFinal }).eq("id", column.id);
+    await supabase.from("columns").update({ is_done_column: isFinal }).eq("id", column.id);
   }
 
-  function moveColumn(dir: -1 | 1) {
+  async function moveColumn(dir: -1 | 1) {
     const cols = [...store.columns].sort((a, b) => a.position - b.position);
     const idx = cols.findIndex((c) => c.id === column.id);
     const j = idx + dir;
@@ -122,8 +119,10 @@ export function KanbanColumn({ column, onTaskOpen, onAddTask }: Props) {
     store.updateColumn(a.id, { position: b.position } as any);
     store.updateColumn(b.id, { position: a.position } as any);
     const supabase = createRawClient();
-    supabase.from("columns").update({ position: b.position }).eq("id", a.id);
-    supabase.from("columns").update({ position: a.position }).eq("id", b.id);
+    await Promise.all([
+      supabase.from("columns").update({ position: b.position }).eq("id", a.id),
+      supabase.from("columns").update({ position: a.position }).eq("id", b.id),
+    ]);
   }
 
   const sortedCols = [...store.columns].sort((a, b) => a.position - b.position);
