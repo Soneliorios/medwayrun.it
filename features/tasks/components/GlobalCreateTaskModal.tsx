@@ -284,12 +284,12 @@ export function GlobalCreateTaskModal() {
     const taskId: string | undefined = created?.id;
     if (!taskId) return null;
 
-    // is_urgent + type
-    try { await taskService.update(taskId, { is_urgent: isUrgent } as any); } catch {}
+    // is_urgent
+    try { await taskService.update(taskId, { is_urgent: isUrgent } as any); } catch (e) { console.error("[createTask] is_urgent update error:", e); }
 
     // Checklist
     for (let i = 0; i < checklistItems.length; i++) {
-      try { await taskService.addChecklistItem(taskId, checklistItems[i], i * 100); } catch {}
+      try { await taskService.addChecklistItem(taskId, checklistItems[i], i * 100); } catch (e) { console.error("[createTask] checklist item error:", e); }
     }
 
     // Attachments → localStorage with data URLs so TaskDetail can preview/download

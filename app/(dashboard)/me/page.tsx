@@ -334,7 +334,7 @@ function TaskRow({ task: taskProp, onOpen, onChanged }: { task: TaskWithRelation
   function patch(updates: Partial<TaskWithRelations>) {
     setTaskState((t) => ({ ...t, ...updates }));
     onChanged();
-    taskService.update(task.id, updates as any).catch(() => {});
+    taskService.update(task.id, updates as any).catch((e) => console.error("[TaskRow.patch] update error:", e));
   }
 
   async function toggleTimer(e: React.MouseEvent) {
@@ -360,8 +360,13 @@ function TaskRow({ task: taskProp, onOpen, onChanged }: { task: TaskWithRelation
       duration_minutes: minutes,
       note: "Manual",
     });
-    taskService.update(task.id, { tracked_hours: tracked + minutes / 60 } as any).catch(() => {});
-    setTaskState((t) => ({ ...t, tracked_hours: tracked + minutes / 60 }));
+    // Fetch current value from DB to avoid stale-state accumulation bug
+    const { data: taskData } = await supabase.from("tasks").select("tracked_hours").eq("id", task.id).single();
+    const currentTracked = (taskData as any)?.tracked_hours ?? 0;
+    const newTracked = currentTracked + minutes / 60;
+    const { error } = await supabase.from("tasks").update({ tracked_hours: newTracked }).eq("id", task.id);
+    if (error) console.error("[saveManual] tracked_hours update error:", error);
+    setTaskState((t) => ({ ...t, tracked_hours: newTracked }));
     setAdjustOpen(false);
     onChanged();
   }

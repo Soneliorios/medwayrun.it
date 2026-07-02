@@ -59,19 +59,12 @@ export function getPositionBetween(
 }
 
 export function formatHours(hours: number | null | undefined): string {
-  if (!hours || hours < 0) return "0h";
-  const h = Math.floor(hours);
-  const totalMinutes = Math.round(hours * 60);
-  const m = totalMinutes % 60;
+  if (!hours || hours < 0) return "00:00:00";
   const totalSeconds = Math.round(hours * 3600);
-  
-  // Less than 1 minute: show seconds
-  if (totalSeconds > 0 && totalMinutes === 0) return `${totalSeconds}s`;
-  // Less than 1 hour: show minutes
-  if (h === 0) return `${m}m`;
-  // 1 hour+: show hours and minutes
-  if (m === 0) return `${h}h`;
-  return `${h}h ${m}m`;
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
 export const ORG_ID =

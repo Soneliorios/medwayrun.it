@@ -44,12 +44,16 @@ export const timerService = {
           .eq("id", active.task_id)
           .single();
         if (taskData) {
-          await supabase
+          const prev = (taskData as any).tracked_hours ?? 0;
+          const { error } = await supabase
             .from("tasks")
-            .update({ tracked_hours: (taskData as any).tracked_hours + durationMinutes / 60 })
+            .update({ tracked_hours: prev + durationMinutes / 60 })
             .eq("id", active.task_id);
+          if (error) console.error("[timerService.stop] tracked_hours update error:", error);
         }
-      } catch {}
+      } catch (e) {
+        console.error("[timerService.stop] error:", e);
+      }
     }
 
     await supabase.from("active_timers").delete().eq("user_id", userId);

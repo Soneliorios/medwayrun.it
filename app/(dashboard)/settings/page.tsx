@@ -22,13 +22,14 @@ export default function SettingsPage() {
     e.preventDefault();
     setSaving(true);
     const supabase = createRawClient();
-    await supabase
+    const { error } = await supabase
       .from("profiles")
       .update({ full_name: fullName })
       .eq("id", profile?.id ?? "");
 
-    if (profile) setProfile({ ...profile, full_name: fullName });
     setSaving(false);
+    if (error) { console.error("[settings] profile update error:", error); return; }
+    if (profile) setProfile({ ...profile, full_name: fullName });
     setSaved(true);
     setTimeout(() => setSaved(false), 2000);
   }

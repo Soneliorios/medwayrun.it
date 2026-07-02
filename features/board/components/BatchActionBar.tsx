@@ -42,10 +42,11 @@ export function BatchActionBar() {
     try {
       const supabase = createRawClient();
       const ids = [...selectedIds];
-      await supabase
+      const { error } = await supabase
         .from("tasks")
         .update({ status: "delivered" } as any)
         .in("id", ids);
+      if (error) { console.error("[BatchActionBar.deliver] error:", error); return; }
       ids.forEach((id) =>
         store.updateTask(id, { status: "delivered" } as any)
       );
@@ -61,11 +62,11 @@ export function BatchActionBar() {
     try {
       const supabase = createRawClient();
       const ids = [...selectedIds];
-      await supabase
+      const { error } = await supabase
         .from("tasks")
         .update({ column_id: columnId } as any)
         .in("id", ids);
-      // Optimistic: move each task to the new column with new positions
+      if (error) { console.error("[BatchActionBar.move] error:", error); return; }
       ids.forEach((id, i) => {
         const task = store.columns.flatMap((c) => c.tasks).find((t) => t.id === id);
         if (task) {
@@ -84,7 +85,8 @@ export function BatchActionBar() {
     try {
       const supabase = createRawClient();
       const ids = [...selectedIds];
-      await supabase.from("tasks").delete().in("id", ids);
+      const { error } = await supabase.from("tasks").delete().in("id", ids);
+      if (error) { console.error("[BatchActionBar.delete] error:", error); return; }
       ids.forEach((id) => store.removeTask(id));
       clearSelection();
     } finally {
