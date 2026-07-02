@@ -4,8 +4,8 @@ import Link from "next/link";
 import { FileText, Plus, Copy, Eye, Star, Globe, Lock, Users, MessageSquare, ChevronDown, Check, X, Calendar, Pencil } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
-
-const STAGES = ["A fazer", "Em andamento", "Revisão", "Concluído"];
+import { createRawClient } from "@/lib/supabase/client";
+import { ORG_ID } from "@/lib/utils";
 
 interface FormItem {
   id: string; name: string; description: string;
@@ -14,43 +14,110 @@ interface FormItem {
   external_access: boolean; portals: number; target_stage: string; created_at: string;
 }
 
-const SEED: FormItem[] = [
-  { id: "form-1", name: "Solicitação de nova tarefa", description: "Formulário padrão para solicitação de novas atividades", type: "internal", responses: 23, project: "Marketing Digital", is_active: true, is_favorite: true, internal_access: true, external_access: false, portals: 0, target_stage: "A fazer", created_at: "2026-01-15" },
-  { id: "form-2", name: "Pedido de suporte TI", description: "Solicitações de suporte técnico da equipe de TI", type: "external", responses: 47, project: "Suporte", is_active: true, is_favorite: false, internal_access: true, external_access: true, portals: 2, target_stage: "A fazer", created_at: "2026-02-03" },
-  { id: "form-3", name: "Feedback de cliente", description: "Coleta de feedback pós-atendimento", type: "external", responses: 8, project: "Comercial", is_active: false, is_favorite: false, internal_access: false, external_access: true, portals: 1, target_stage: "Revisão", created_at: "2026-03-20" },
-];
-
-function loadForms(): FormItem[] {
-  try { const raw = localStorage.getItem("mwr_forms"); if (raw) return JSON.parse(raw); } catch {}
-  localStorage.setItem("mwr_forms", JSON.stringify(SEED));
-  return SEED;
-}
-function saveForms(list: FormItem[]) { if (list) localStorage.setItem("mwr_forms", JSON.stringify(list)); }
-
 export default function FormsPage() {
   const [forms, setForms] = useState<FormItem[]>([]);
+  const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<"all" | "internal" | "external">("all");
   const [configId, setConfigId] = useState<string | null>(null);
   const [copied, setCopied] = useState<string | null>(null);
   const [showCreateModal, setShowCreateModal] = useState(false);
   const [showResponsesModal, setShowResponsesModal] = useState<FormItem | null>(null);
   const [newForm, setNewForm] = useState({ name: "", description: "", type: "internal" as "internal" | "external", target_stage: "A fazer", project: "" });
+  const [creating, setCreating] = useState(false);
 
-  useEffect(() => { setForms(loadForms()); }, []);
+  useEffect(() => {
+    async function load() {
+      setLoading(true);
+      const supabase = createRawClient();
+      const { data } = await (supabase as any)
+        .from("forms")
+        .select("id, name, description, is_active, internal_access, external_access, portals, responses, target_stage, created_at, board_id")
+        .eq("org_id", ORG_ID)
+        .order("created_at", { ascending: false });
+      if (data) {
+        setForms(
+          (data as any[]).map((f) => ({
+            id: f.id,
+            name: f.name,
+            description: f.description ?? "",
+            type: f.external_access ? "external" : "internal",
+            responses: f.responses ?? 0,
+            project: f.board_id ?? "",
+            is_active: f.is_active,
+            is_favorite: false,
+            internal_access: f.internal_access,
+            external_access: f.external_access,
+            portals: f.portals ?? 0,
+            target_stage: f.target_stage ?? "A fazer",
+            created_at: f.created_at?.slice(0, 10) ?? "",
+          }))
+        );
+      }
+      setLoading(false);
+    }
+    load();
+  }, []);
 
-  function patch(id: string, updates: Partial<FormItem>) {
-    setForms((prev) => { const next = prev.map((f) => (f.id === id ? { ...f, ...updates } : f)); saveForms(next); return next; });
+  async function patch(id: string, updates: Partial<FormItem>) {
+    const supabase = createRawClient();
+    const dbUpdates: Record<string, unknown> = {};
+    if ("is_active" in updates) dbUpdates.is_active = updates.is_active;
+    if ("internal_access" in updates) dbUpdates.internal_access = updates.internal_access;
+    if ("external_access" in updates) { dbUpdates.external_access = updates.external_access; dbUpdates.type = updates.external_access ? "external" : "internal"; }
+    if ("portals" in updates) dbUpdates.portals = updates.portals;
+    if ("target_stage" in updates) dbUpdates.target_stage = updates.target_stage;
+    if ("is_favorite" in updates) {} // not a DB column — local only
+    await (supabase as any).from("forms").update(dbUpdates).eq("id", id);
+    setForms((prev) => prev.map((f) => (f.id === id ? { ...f, ...updates } : f)));
   }
+
   function copyLink(id: string) { navigator.clipboard?.writeText(window.location.origin + "/forms/" + id); setCopied(id); setTimeout(() => setCopied(null), 2000); }
-  function createForm() {
-    if (!newForm.name.trim()) return;
+
+  async function createForm() {
+    if (!newForm.name.trim() || creating) return;
+    setCreating(true);
+    const supabase = createRawClient();
     const id = "form-" + Date.now();
-    const form: FormItem = { id, name: newForm.name.trim(), description: newForm.description.trim(), type: newForm.type, responses: 0, project: newForm.project.trim() || "Geral", is_active: true, is_favorite: false, internal_access: newForm.type === "internal", external_access: newForm.type === "external", portals: 0, target_stage: newForm.target_stage, created_at: new Date().toISOString().split("T")[0] };
-    setForms((prev) => { const next = [...prev, form]; saveForms(next); return next; });
+    const { data, error } = await (supabase as any)
+      .from("forms")
+      .insert({
+        id,
+        org_id: ORG_ID,
+        name: newForm.name.trim(),
+        description: newForm.description.trim() || null,
+        is_active: true,
+        internal_access: newForm.type === "internal",
+        external_access: newForm.type === "external",
+        target_stage: newForm.target_stage,
+        fields: [],
+        responses: 0,
+        portals: 0,
+      })
+      .select()
+      .single();
+    setCreating(false);
+    if (error) { console.error("[forms] create error:", error); return; }
+    const form: FormItem = {
+      id: data.id,
+      name: data.name,
+      description: data.description ?? "",
+      type: data.external_access ? "external" : "internal",
+      responses: 0,
+      project: "",
+      is_active: true,
+      is_favorite: false,
+      internal_access: data.internal_access,
+      external_access: data.external_access,
+      portals: 0,
+      target_stage: data.target_stage,
+      created_at: data.created_at?.slice(0, 10) ?? "",
+    };
+    setForms((prev) => [form, ...prev]);
     setNewForm({ name: "", description: "", type: "internal", target_stage: "A fazer", project: "" });
     setShowCreateModal(false);
   }
 
+  const STAGES = ["A fazer", "Em andamento", "Revisão", "Concluído"];
   const filtered = forms.filter((f) => tab === "all" || f.type === tab).sort((a, b) => (b.is_favorite ? 1 : 0) - (a.is_favorite ? 1 : 0));
 
   return (
@@ -84,7 +151,10 @@ export default function FormsPage() {
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((form) => (
+                {loading && (
+                  <tr><td colSpan={9} className="text-center py-12 text-neutral-400 text-sm">Carregando...</td></tr>
+                )}
+                {!loading && filtered.map((form) => (
                   <Fragment key={form.id}>
                     <tr className="border-b border-neutral-50 hover:bg-neutral-50/60">
                       <td className="px-3 py-2.5"><button onClick={() => patch(form.id, { is_favorite: !form.is_favorite })} title="Favoritar" className={cn(form.is_favorite ? "text-brand-yellow" : "text-neutral-200 hover:text-brand-yellow")}><Star size={14} fill={form.is_favorite ? "currentColor" : "none"} /></button></td>
@@ -114,7 +184,7 @@ export default function FormsPage() {
               </tbody>
             </table>
           </div>
-          {filtered.length === 0 && (<div className="text-center py-16 text-neutral-400"><FileText size={32} className="mx-auto mb-2 opacity-30" /><p className="text-sm">Nenhum formulário encontrado.</p></div>)}
+          {!loading && filtered.length === 0 && (<div className="text-center py-16 text-neutral-400"><FileText size={32} className="mx-auto mb-2 opacity-30" /><p className="text-sm">Nenhum formulário encontrado.</p></div>)}
         </div>
       </div>
 
@@ -131,7 +201,7 @@ export default function FormsPage() {
               </div>
               <div><label className="block text-xs font-medium text-neutral-600 mb-1">Tipo de acesso</label><div className="flex gap-2">{(["internal", "external"] as const).map((t) => (<button key={t} onClick={() => setNewForm((p) => ({ ...p, type: t }))} className={cn("flex-1 py-2 rounded-lg text-xs font-medium border transition-colors", newForm.type === t ? "bg-brand-navy text-white border-brand-navy" : "bg-white text-neutral-500 border-neutral-200 hover:border-brand-navy/40")}>{t === "internal" ? "🔒 Interno" : "🌐 Externo"}</button>))}</div></div>
             </div>
-            <div className="flex gap-2 mt-6"><Button variant="outline" size="sm" onClick={() => setShowCreateModal(false)} className="flex-1">Cancelar</Button><Button size="sm" onClick={createForm} disabled={!newForm.name.trim()} className="flex-1 bg-brand-navy hover:bg-brand-navy-light">Criar formulário</Button></div>
+            <div className="flex gap-2 mt-6"><Button variant="outline" size="sm" onClick={() => setShowCreateModal(false)} className="flex-1">Cancelar</Button><Button size="sm" onClick={createForm} disabled={!newForm.name.trim() || creating} className="flex-1 bg-brand-navy hover:bg-brand-navy-light">{creating ? "Criando..." : "Criar formulário"}</Button></div>
           </div>
         </div>
       )}

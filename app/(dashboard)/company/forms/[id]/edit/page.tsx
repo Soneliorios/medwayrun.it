@@ -49,18 +49,10 @@ interface Project { id: string; name: string; }
 interface Column { id: string; name: string; project_id: string; position: number; }
 interface OrgMember { id: string; user_id: string; name: string; }
 
-function fieldsKey(id: string) { return `mwr_form_fields_${id}`; }
-
-function loadFields(id: string): FormField[] {
-  try {
-    const r = localStorage.getItem(fieldsKey(id));
-    if (r) return JSON.parse(r);
-  } catch {}
-  return [
-    { id: 'f1', type: 'text', label: 'Título da solicitação', required: true, width: 'full', maps_to: 'title' },
-    { id: 'f2', type: 'textarea', label: 'Descrição / briefing', required: false, width: 'full', maps_to: 'description' },
-  ];
-}
+const DEFAULT_FIELDS: FormField[] = [
+  { id: 'f1', type: 'text', label: 'Título da solicitação', required: true, width: 'full', maps_to: 'title' },
+  { id: 'f2', type: 'textarea', label: 'Descrição / briefing', required: false, width: 'full', maps_to: 'description' },
+];
 
 function Cfg({ label, children }: { label: string; children: React.ReactNode }) {
   return (
@@ -124,8 +116,6 @@ export default function FormEditPage({ params }: { params: Promise<{ id: string 
 
   // Load projects + form config on mount
   useEffect(() => {
-    setFields(loadFields(id));
-
     async function loadData() {
       const supabase = createClient();
 
@@ -139,26 +129,34 @@ export default function FormEditPage({ params }: { params: Promise<{ id: string 
       const projs: Project[] = (projData ?? []) as Project[];
       setProjects(projs);
 
-      // Form config from localStorage
-      try {
-        const forms: any[] = JSON.parse(localStorage.getItem('mwr_forms') ?? '[]');
-        const f = forms.find((x: any) => x.id === id);
-        if (f) {
-          setName(f.name);
-          setDescription(f.description ?? '');
-          setStage(f.target_stage ?? '');
-          setActive(f.is_active);
-          setExternal(f.external_access);
-          setInternal(f.internal_access ?? true);
-          const boardId = f.board_id || f.project_id || projs[0]?.id || '';
-          setSelectedProjectId(boardId);
-          loadBoardProjects(boardId);
-          setAssigneeId(f.assignee_id || '');
-          setAssigneeName(f.assignee_name || '');
-        } else if (projs.length > 0) {
-          setSelectedProjectId(projs[0].id);
-        }
-      } catch {}
+      // Form config from Supabase
+      const { data: formData } = await (supabase as any)
+        .from('forms')
+        .select('*')
+        .eq('id', id)
+        .maybeSingle();
+
+      if (formData) {
+        setName(formData.name ?? 'Formulário');
+        setDescription(formData.description ?? '');
+        setStage(formData.target_stage ?? '');
+        setActive(formData.is_active ?? true);
+        setExternal(formData.external_access ?? false);
+        setInternal(formData.internal_access ?? true);
+        const boardId = formData.board_id || projs[0]?.id || '';
+        setSelectedProjectId(boardId);
+        if (boardId) loadBoardProjects(boardId);
+        setAssigneeId(formData.assignee_id || '');
+        setAssigneeName(formData.assignee_name || '');
+        const savedFields: FormField[] = Array.isArray(formData.fields) && formData.fields.length > 0
+          ? formData.fields
+          : DEFAULT_FIELDS;
+        setFields(savedFields);
+      } else {
+        // New form not yet saved — use defaults
+        setFields(DEFAULT_FIELDS);
+        if (projs.length > 0) setSelectedProjectId(projs[0].id);
+      }
     }
 
     loadData();
@@ -211,31 +209,30 @@ export default function FormEditPage({ params }: { params: Promise<{ id: string 
 
   function persist(next: FormField[]) {
     setFields(next);
-    localStorage.setItem(fieldsKey(id), JSON.stringify(next));
   }
 
-  function saveForm() {
+  async function saveForm() {
     try {
-      const forms: any[] = JSON.parse(localStorage.getItem('mwr_forms') ?? '[]');
-      const idx = forms.findIndex(x => x.id === id);
+      const supabase = createClient();
       const member = orgMembers.find(m => m.user_id === assigneeId);
-      const updatedForm = {
-        ...(idx >= 0 ? forms[idx] : { id, responses: 0, created_at: new Date().toISOString().slice(0,10) }),
-        name,
-        description,
-        target_stage: stage,
-        is_active: active,
-        external_access: external,
-        internal_access: internal,
-        type: external ? 'external' : 'internal',
-        board_id: selectedProjectId,
-        project_id: selectedProjectId,
-        assignee_id: assigneeId || null,
-        assignee_name: member?.name || null,
-      };
-      if (idx >= 0) forms[idx] = updatedForm;
-      else forms.push(updatedForm);
-      localStorage.setItem('mwr_forms', JSON.stringify(forms));
+      const { error } = await (supabase as any)
+        .from('forms')
+        .upsert({
+          id,
+          org_id: ORG_ID,
+          name,
+          description: description || null,
+          target_stage: stage,
+          is_active: active,
+          external_access: external,
+          internal_access: internal,
+          board_id: selectedProjectId || null,
+          assignee_id: assigneeId || null,
+          assignee_name: member?.name || null,
+          fields,
+          updated_at: new Date().toISOString(),
+        }, { onConflict: 'id' });
+      if (error) { console.error('[form editor] save error:', error); return; }
       setSaved(true);
       setTimeout(() => setSaved(false), 2000);
     } catch (err) {

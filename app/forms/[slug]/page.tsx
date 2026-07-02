@@ -48,52 +48,76 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
   const [notFound, setNotFound] = useState(false);
   const [boardProjects, setBoardProjects] = useState<{ id: string; name: string; color: string }[]>([]);
 
-  async function loadBoardProjects(boardId: string) {
-    try {
+  useEffect(() => {
+    async function loadForm() {
       const supabase = createRawClient();
-      const { data } = await (supabase as any)
-        .from('board_subprojects')
-        .select('id, name, color')
-        .eq('project_id', boardId)
-        .order('name');
-      if (data && data.length > 0) {
-        setBoardProjects(data);
+
+      // Load form from Supabase (anon SELECT policy covers active forms)
+      const { data: formData } = await (supabase as any)
+        .from('forms')
+        .select('*')
+        .eq('id', slug)
+        .maybeSingle();
+
+      if (formData) {
+        setMeta({
+          name: formData.name,
+          description: formData.description ?? '',
+          stage: formData.target_stage ?? 'A fazer',
+          project_id: formData.board_id,
+          board_id: formData.board_id,
+          assignee_id: formData.assignee_id,
+          assignee_name: formData.assignee_name,
+        });
+        const savedFields: FormField[] = Array.isArray(formData.fields) && formData.fields.length > 0
+          ? formData.fields
+          : [
+              { id: 'f_title', type: 'text', label: 'Título da solicitação', required: true, width: 'full', maps_to: 'title' },
+              { id: 'f_desc', type: 'textarea', label: 'Descrição / briefing', required: false, width: 'full', maps_to: 'description' },
+            ];
+        setFields(savedFields);
+
+        // Load board sub-projects
+        const boardId = formData.board_id;
+        if (boardId) {
+          const { data: bpData } = await (supabase as any)
+            .from('board_subprojects')
+            .select('id, name, color')
+            .eq('project_id', boardId)
+            .order('name');
+          if (bpData && bpData.length > 0) setBoardProjects(bpData);
+        }
         return;
       }
-    } catch {}
-    // Fallback to localStorage (dev / pre-migration)
-    try {
-      const bp = JSON.parse(localStorage.getItem(`mwr_board_projects_${boardId}`) ?? '[]');
-      setBoardProjects(bp);
-    } catch {}
-  }
 
-  useEffect(() => {
-    try {
-      const storedFields = JSON.parse(localStorage.getItem(`mwr_form_fields_${slug}`) ?? '[]');
-      setFields(storedFields);
-      const forms: any[] = JSON.parse(localStorage.getItem('mwr_forms') ?? '[]');
-      const form = forms.find((x: any) => x.id === slug);
-      if (form) {
-        setMeta({
-          name: form.name,
-          description: form.description ?? '',
-          stage: form.target_stage ?? 'A fazer',
-          project_id: form.project_id,
-          board_id: form.board_id,
-          assignee_id: form.assignee_id,
-          assignee_name: form.assignee_name,
-        });
-        const boardId = form.board_id || form.project_id;
-        if (boardId) loadBoardProjects(boardId);
-      } else if (storedFields.length === 0) {
+      // Fallback: try localStorage (forms created before migration)
+      try {
+        const storedFields = JSON.parse(localStorage.getItem(`mwr_form_fields_${slug}`) ?? '[]');
+        const forms: any[] = JSON.parse(localStorage.getItem('mwr_forms') ?? '[]');
+        const form = forms.find((x: any) => x.id === slug);
+        if (form) {
+          setFields(storedFields.length > 0 ? storedFields : [
+            { id: 'f_title', type: 'text', label: 'Título da solicitação', required: true, width: 'full', maps_to: 'title' },
+            { id: 'f_desc', type: 'textarea', label: 'Descrição / briefing', required: false, width: 'full', maps_to: 'description' },
+          ]);
+          setMeta({
+            name: form.name,
+            description: form.description ?? '',
+            stage: form.target_stage ?? 'A fazer',
+            project_id: form.project_id,
+            board_id: form.board_id,
+            assignee_id: form.assignee_id,
+            assignee_name: form.assignee_name,
+          });
+        } else {
+          setNotFound(true);
+        }
+      } catch {
         setNotFound(true);
-      } else {
-        setMeta({ name: 'Formulário', description: '', stage: 'A fazer' });
       }
-    } catch {
-      setNotFound(true);
     }
+
+    loadForm();
   }, [slug]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Default fields always shown if no custom fields configured
