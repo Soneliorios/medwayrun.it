@@ -5,7 +5,7 @@ import Link from 'next/link';
 import { ChevronLeft, Copy, Check, Plus, Trash2, ArrowUp, ArrowDown, GripVertical, User, Save } from 'lucide-react';
 import { Type, AlignLeft, CircleDot, CheckSquare, Calendar, Hash, Upload, Minus } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
-import { ORG_ID } from '@/lib/utils';
+import { cn, ORG_ID } from '@/lib/utils';
 
 const FIELD_TYPES = [
   { type: 'text', label: 'Texto curto', icon: Type },
@@ -258,7 +258,9 @@ export default function FormEditPage({ params }: { params: Promise<{ id: string 
   }
 
   function addPremapped(p: typeof PREMAPPED[0]) {
-    if (fields.some(f => f.maps_to === p.maps_to)) return; // already added
+    // If already in the form, select it so the user sees it highlighted
+    const existing = fields.find(f => f.maps_to === p.maps_to);
+    if (existing) { setSelected(existing.id); return; }
     const f: FormField = {
       id: Math.random().toString(36).slice(2),
       type: p.type,
@@ -269,6 +271,7 @@ export default function FormEditPage({ params }: { params: Promise<{ id: string 
       options: (p as any).options,
     };
     persist([...fields, f]);
+    setSelected(f.id);
   }
 
   function update(fid: string, u: Partial<FormField>) {
@@ -398,11 +401,28 @@ export default function FormEditPage({ params }: { params: Promise<{ id: string 
           <div className="pt-2">
             <p className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400 mb-2">Campos pré-mapeados</p>
             <div className="space-y-1">
-              {PREMAPPED.map(p => (
-                <button key={p.maps_to} onClick={() => addPremapped(p)} className="w-full flex items-center justify-between text-xs text-neutral-600 hover:bg-neutral-50 rounded px-2 py-1.5 border border-neutral-100">
-                  {p.label} <Plus size={11} className="text-brand-teal" />
-                </button>
-              ))}
+              {PREMAPPED.map(p => {
+                const alreadyAdded = fields.some(f => f.maps_to === p.maps_to);
+                return (
+                  <button
+                    key={p.maps_to}
+                    onClick={() => addPremapped(p)}
+                    className={cn(
+                      "w-full flex items-center justify-between text-xs rounded px-2 py-1.5 border transition-colors",
+                      alreadyAdded
+                        ? "border-brand-teal/30 bg-brand-teal/5 text-brand-teal cursor-pointer"
+                        : "border-neutral-100 text-neutral-600 hover:bg-neutral-50"
+                    )}
+                    title={alreadyAdded ? "Já adicionado — clique para selecionar" : "Adicionar campo"}
+                  >
+                    {p.label}
+                    {alreadyAdded
+                      ? <Check size={11} className="text-brand-teal shrink-0" />
+                      : <Plus size={11} className="text-brand-teal shrink-0" />
+                    }
+                  </button>
+                );
+              })}
             </div>
           </div>
 
