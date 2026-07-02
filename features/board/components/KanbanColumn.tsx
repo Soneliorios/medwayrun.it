@@ -91,6 +91,27 @@ export function KanbanColumn({ column, onTaskOpen, onAddTask }: Props) {
     supabase.from("columns").update({ wip_limit: limit }).eq("id", column.id);
   }
 
+  function handleSetColor(color: string | null) {
+    store.updateColumn(column.id, { color } as any);
+    const supabase = createRawClient();
+    supabase.from("columns").update({ color }).eq("id", column.id);
+  }
+
+  async function handleSetFinal(isFinal: boolean) {
+    const supabase = createRawClient();
+    // Only one column per board can be the final column — clear others first
+    if (isFinal) {
+      const boardId = (column as any).project_id;
+      await supabase
+        .from("columns")
+        .update({ is_done_column: false })
+        .eq("project_id", boardId);
+      store.columns.forEach((c) => store.updateColumn(c.id, { is_done_column: false } as any));
+    }
+    store.updateColumn(column.id, { is_done_column: isFinal } as any);
+    supabase.from("columns").update({ is_done_column: isFinal }).eq("id", column.id);
+  }
+
   function moveColumn(dir: -1 | 1) {
     const cols = [...store.columns].sort((a, b) => a.position - b.position);
     const idx = cols.findIndex((c) => c.id === column.id);
@@ -124,6 +145,8 @@ export function KanbanColumn({ column, onTaskOpen, onAddTask }: Props) {
         onAddTask={() => onAddTask(column.id)}
         onRename={handleRename}
         onDelete={handleDelete}
+        onSetColor={handleSetColor}
+        onSetFinal={handleSetFinal}
         onMinimize={toggleMinimize}
         onSetWipLimit={handleSetWipLimit}
         onMoveLeft={colIdx > 0 ? () => moveColumn(-1) : undefined}

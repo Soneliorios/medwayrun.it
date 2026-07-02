@@ -60,12 +60,12 @@ export function BoardDashboardView({ boardId }: { boardId: string }) {
   const now = new Date();
   const todayStr = now.toISOString().slice(0, 10);
 
-  // Last column = "done" column — matches TaskDetail's isDelivered logic:
-  // a task is only truly delivered when status="delivered" AND it's in the last column.
-  const lastColId = useMemo(
-    () => [...rawColumns].sort((a, b) => a.position - b.position).at(-1)?.id ?? null,
-    [rawColumns]
-  );
+  // Use is_done_column flag when set; otherwise fall back to rightmost column.
+  const lastColId = useMemo(() => {
+    const flagged = rawColumns.find((c) => (c as any).is_done_column);
+    if (flagged) return flagged.id;
+    return [...rawColumns].sort((a, b) => a.position - b.position).at(-1)?.id ?? null;
+  }, [rawColumns]);
   const isDeliveredTask = (t: any) => t.status === "delivered" && t.column_id === lastColId;
   const isAssigned = (t: any) => !!(t.assignee_id || t.assignees?.length);
   const isOpen = (t: any) => !isDeliveredTask(t) && t.status !== "archived";
