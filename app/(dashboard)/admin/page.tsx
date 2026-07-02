@@ -111,6 +111,7 @@ export default function AdminPage() {
   const [sbUsersLoading, setSbUsersLoading] = useState(true);
   const [confirmRemove, setConfirmRemove] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
+  const [userSearch, setUserSearch] = useState("");
 
   const loadSbUsers = useCallback(async () => {
     setSbUsersLoading(true);
@@ -462,10 +463,22 @@ export default function AdminPage() {
                 )}
 
                 <section className="bg-white rounded-xl border border-neutral-100">
-                  <div className="flex items-center gap-2 px-5 py-3 border-b border-neutral-100">
-                    <Users size={15} className="text-neutral-400" />
-                    <h2 className="text-sm font-semibold text-brand-navy">Usuários registrados</h2>
-                    <span className="ml-auto text-xs text-neutral-400">{sbUsers.length} membros</span>
+                  <div className="flex items-center gap-3 px-5 py-3 border-b border-neutral-100">
+                    <Users size={15} className="text-neutral-400 shrink-0" />
+                    <h2 className="text-sm font-semibold text-brand-navy shrink-0">Usuários registrados</h2>
+                    <input
+                      type="text"
+                      value={userSearch}
+                      onChange={(e) => setUserSearch(e.target.value)}
+                      placeholder="Buscar por nome ou email..."
+                      className="flex-1 text-sm border border-neutral-200 rounded-lg px-3 py-1.5 focus:outline-none focus:border-brand-teal min-w-0"
+                    />
+                    <span className="text-xs text-neutral-400 shrink-0">
+                      {sbUsers.filter(u => {
+                        const q = userSearch.toLowerCase();
+                        return !q || u.full_name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
+                      }).length} membros
+                    </span>
                   </div>
 
                   {sbUsersLoading ? (
@@ -480,7 +493,10 @@ export default function AdminPage() {
                     </div>
                   ) : (
                     <div className="divide-y divide-neutral-50">
-                      {sbUsers.map((u) => {
+                      {sbUsers.filter(u => {
+                        const q = userSearch.toLowerCase();
+                        return !q || u.full_name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
+                      }).map((u) => {
                         const isCurrentUser = u.id === currentUserId;
                         const isLoading = actionLoading === u.id;
                         return (
@@ -542,6 +558,14 @@ export default function AdminPage() {
                           </div>
                         );
                       })}
+                      {userSearch && sbUsers.filter(u => {
+                        const q = userSearch.toLowerCase();
+                        return u.full_name.toLowerCase().includes(q) || u.email.toLowerCase().includes(q);
+                      }).length === 0 && (
+                        <div className="py-8 text-center text-neutral-400 text-sm">
+                          Nenhum usuário encontrado para "{userSearch}"
+                        </div>
+                      )}
                     </div>
                   )}
                 </section>
