@@ -55,17 +55,11 @@ export const taskService = {
 
   async update(id: string, updates: Partial<TaskWithRelations>): Promise<void> {
     const supabase = createRawClient();
-    const {
-      title, description, priority, assignee_id, due_date,
-      estimated_hours, is_urgent, status, delivery_date,
-    } = updates as any;
-    const { error } = await supabase
-      .from("tasks")
-      .update({
-        title, description, priority, assignee_id, due_date,
-        estimated_hours, is_urgent, status, delivery_date,
-      })
-      .eq("id", id);
+    // Send only keys that were explicitly provided (strip undefined, keep null)
+    const payload = Object.fromEntries(
+      Object.entries(updates as Record<string, unknown>).filter(([, v]) => v !== undefined)
+    );
+    const { error } = await supabase.from("tasks").update(payload).eq("id", id);
     if (error) throw error;
   },
 
