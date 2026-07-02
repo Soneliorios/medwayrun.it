@@ -11,9 +11,11 @@ import { useProjectStore } from "@/features/projects/store/projectStore";
 import { useProjectActions } from "@/features/projects/hooks/useProjects";
 import { useBoardStore } from "@/features/board/store/boardStore";
 import { useBoardProjectStore } from "@/features/board/store/boardProjectStore";
+import { createClient } from "@/lib/supabase/client";
+import { ORG_ID } from "@/lib/utils";
 import {
   ArrowLeft, Archive, Loader2, Settings, Tag, Users, Layers,
-  LayoutList, Plus, Trash2, ChevronDown, Check, GripVertical, FolderKanban,
+  Plus, Trash2, ChevronDown, Check, GripVertical, FolderKanban,
 } from "lucide-react";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -27,21 +29,29 @@ const TYPE_COLORS = [
   "#407EC9", "#01CFB5", "#AC145A", "#FFB81C", "#3B3FB6", "#00205B", "#52575C",
 ];
 
-type SettingsTab = "general" | "types" | "members" | "stages" | "fields" | "projects";
+type SettingsTab = "general" | "types" | "members" | "stages" | "projects";
 
 const SETTINGS_TABS: { id: SettingsTab; label: string; icon: React.ElementType }[] = [
   { id: "general", label: "Geral", icon: Settings },
   { id: "types", label: "Tipos de tarefa", icon: Tag },
   { id: "members", label: "Membros", icon: Users },
   { id: "stages", label: "Req. por etapa", icon: Layers },
-  { id: "fields", label: "Campos extras", icon: LayoutList },
   { id: "projects", label: "Projetos", icon: FolderKanban },
 ];
 
+const STAGE_REQ_OPTIONS: { field: string; label: string }[] = [
+  { field: "title",           label: "Título preenchido" },
+  { field: "description",     label: "Descrição preenchida" },
+  { field: "due_date",        label: "Data de entrega definida" },
+  { field: "assignee_id",     label: "Responsável atribuído" },
+  { field: "estimated_hours", label: "Horas estimadas preenchidas" },
+  { field: "priority",        label: "Prioridade definida" },
+  { field: "type_id",         label: "Tipo de tarefa definido" },
+];
+
 interface TaskType { id: string; name: string; color: string; default_hours: number }
-interface Member { id: string; name: string; email: string; role: "admin" | "editor" | "viewer" }
+interface Member { id: string; name: string; role: string }
 interface StageReq { id: string; field: string; label: string }
-interface CustomField { id: string; name: string; type: "text" | "number" | "date" | "select"; required: boolean }
 
 interface Props {
   params: Promise<{ id: string }>;
@@ -102,26 +112,49 @@ export default function ProjectSettingsPage({ params }: Props) {
   const [newTypeHours, setNewTypeHours] = useState(2);
   const [newTypeColor, setNewTypeColor] = useState(TYPE_COLORS[0]);
 
-  // Members
-  const [members, setMembers] = useState<Member[]>([
-    { id: "1", name: "Você (demo)", email: "demo@medwayrun.it", role: "admin" },
-    { id: "2", name: "Ana Silva", email: "ana@medway.com.br", role: "editor" },
-    { id: "3", name: "Bruno Costa", email: "bruno@medway.com.br", role: "viewer" },
-  ]);
+  // Members — loaded from Supabase
+  const [members, setMembers] = useState<Member[]>([]);
+  const [membersLoading, setMembersLoading] = useState(false);
   const [inviteEmail, setInviteEmail] = useState("");
 
-  // Stage requirements (per column)
-  const [selectedColumn, setSelectedColumn] = useState<string>(columns[0]?.id ?? "");
-  const [stageReqs, setStageReqs] = useState<Record<string, StageReq[]>>({});
-  const [newReqLabel, setNewReqLabel] = useState("");
+  useEffect(() => {
+    async function fetchMembers() {
+      setMembersLoading(true);
+      const supabase = createClient();
+      const { data } = await supabase
+        .from("members")
+        .select("id, user_id, role, profiles(id, full_name)")
+        .eq("org_id", ORG_ID)
+        .order("joined_at", { ascending: true });
+      if (data) {
+        setMembers(
+          (data as any[]).map((m) => ({
+            id: m.id,
+            name: (m.profiles as any)?.full_name ?? m.user_id.slice(0, 8),
+            role: m.role,
+          }))
+        );
+      }
+      setMembersLoading(false);
+    }
+    fetchMembers();
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Custom fields
-  const [customFields, setCustomFields] = useState<CustomField[]>([
-    { id: "1", name: "Cliente", type: "text", required: false },
-    { id: "2", name: "Sprint", type: "number", required: false },
-  ]);
-  const [newFieldName, setNewFieldName] = useState("");
-  const [newFieldType, setNewFieldType] = useState<CustomField["type"]>("text");
+  // Stage requirements (per column) — persisted to localStorage
+  const STAGE_REQS_KEY = `mwr_stage_reqs_${projectId}`;
+  const [selectedColumn, setSelectedColumn] = useState<string>(columns[0]?.id ?? "");
+  const [stageReqs, setStageReqsRaw] = useState<Record<string, StageReq[]>>(() => {
+    if (typeof window === "undefined") return {};
+    try { const r = localStorage.getItem(STAGE_REQS_KEY); return r ? JSON.parse(r) : {}; } catch { return {}; }
+  });
+  function setStageReqs(fn: Record<string, StageReq[]> | ((p: Record<string, StageReq[]>) => Record<string, StageReq[]>)) {
+    setStageReqsRaw((prev) => {
+      const next = typeof fn === "function" ? fn(prev) : fn;
+      if (typeof window !== "undefined") localStorage.setItem(STAGE_REQS_KEY, JSON.stringify(next));
+      return next;
+    });
+  }
+  const [newReqField, setNewReqField] = useState<string>(STAGE_REQ_OPTIONS[0].field);
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
@@ -358,37 +391,29 @@ export default function ProjectSettingsPage({ params }: Props) {
                   <p className="text-sm text-neutral-400 mt-1">Gerencie quem tem acesso e com qual permissão.</p>
                 </div>
 
-                <div className="space-y-2">
-                  {members.map((member) => (
-                    <div key={member.id} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-neutral-100 shadow-sm">
-                      <div className="w-8 h-8 rounded-full bg-brand-navy/10 flex items-center justify-center text-xs font-bold text-brand-navy shrink-0">
-                        {member.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
+                {membersLoading ? (
+                  <p className="text-sm text-neutral-400">Carregando membros...</p>
+                ) : members.length === 0 ? (
+                  <p className="text-sm text-neutral-400">Nenhum membro encontrado.</p>
+                ) : (
+                  <div className="space-y-2">
+                    {members.map((member) => (
+                      <div key={member.id} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-neutral-100 shadow-sm">
+                        <div className="w-8 h-8 rounded-full bg-brand-navy/10 flex items-center justify-center text-xs font-bold text-brand-navy shrink-0">
+                          {member.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <p className="text-sm font-medium text-neutral-700 truncate">{member.name}</p>
+                          <p className="text-xs text-neutral-400">{
+                            member.role === "owner" ? "Proprietário" :
+                            member.role === "admin" ? "Admin" :
+                            member.role === "member" ? "Membro" : "Visualizador"
+                          }</p>
+                        </div>
                       </div>
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-neutral-700 truncate">{member.name}</p>
-                        <p className="text-xs text-neutral-400 truncate">{member.email}</p>
-                      </div>
-                      <select
-                        value={member.role}
-                        onChange={(e) => setMembers((prev) => prev.map((m) => m.id === member.id ? { ...m, role: e.target.value as Member["role"] } : m))}
-                        className="text-xs border border-neutral-200 rounded-lg px-2 py-1 outline-none focus:border-brand-teal bg-white"
-                        disabled={member.id === "1"}
-                      >
-                        <option value="admin">Admin</option>
-                        <option value="editor">Editor</option>
-                        <option value="viewer">Visualizador</option>
-                      </select>
-                      {member.id !== "1" && (
-                        <button
-                          onClick={() => setMembers((prev) => prev.filter((m) => m.id !== member.id))}
-                          className="w-6 h-6 flex items-center justify-center rounded-md text-neutral-300 hover:text-destructive hover:bg-destructive/5 transition-colors"
-                        >
-                          <Trash2 size={12} />
-                        </button>
-                      )}
-                    </div>
-                  ))}
-                </div>
+                    ))}
+                  </div>
+                )}
 
                 {/* Invite */}
                 <div className="bg-neutral-50 rounded-xl p-4 space-y-3 border border-neutral-100">
@@ -473,37 +498,30 @@ export default function ProjectSettingsPage({ params }: Props) {
                     </div>
 
                     <div className="flex gap-2">
-                      <input
-                        value={newReqLabel}
-                        onChange={(e) => setNewReqLabel(e.target.value)}
-                        placeholder="Ex: Data de entrega definida"
+                      <select
+                        value={newReqField}
+                        onChange={(e) => setNewReqField(e.target.value)}
                         className="flex-1 text-sm border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:border-brand-teal bg-white"
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && newReqLabel.trim()) {
-                            e.preventDefault();
-                            setStageReqs((prev) => ({
-                              ...prev,
-                              [selectedColumn]: [
-                                ...(prev[selectedColumn] ?? []),
-                                { id: Date.now().toString(), field: "custom", label: newReqLabel.trim() },
-                              ],
-                            }));
-                            setNewReqLabel("");
-                          }
-                        }}
-                      />
+                      >
+                        {STAGE_REQ_OPTIONS.filter((opt) =>
+                          !(currentReqs.some((r) => r.field === opt.field))
+                        ).map((opt) => (
+                          <option key={opt.field} value={opt.field}>{opt.label}</option>
+                        ))}
+                      </select>
                       <button
-                        disabled={!newReqLabel.trim()}
+                        disabled={STAGE_REQ_OPTIONS.filter((opt) => !(currentReqs.some((r) => r.field === opt.field))).length === 0}
                         onClick={() => {
-                          if (!newReqLabel.trim()) return;
+                          const opt = STAGE_REQ_OPTIONS.find((o) => o.field === newReqField);
+                          if (!opt) return;
+                          if (currentReqs.some((r) => r.field === opt.field)) return;
                           setStageReqs((prev) => ({
                             ...prev,
                             [selectedColumn]: [
                               ...(prev[selectedColumn] ?? []),
-                              { id: Date.now().toString(), field: "custom", label: newReqLabel.trim() },
+                              { id: Date.now().toString(), field: opt.field, label: opt.label },
                             ],
                           }));
-                          setNewReqLabel("");
                         }}
                         className="px-3 py-2 text-xs font-semibold bg-brand-teal text-white rounded-lg hover:bg-brand-teal/90 disabled:opacity-40 transition-colors"
                       >
@@ -512,76 +530,6 @@ export default function ProjectSettingsPage({ params }: Props) {
                     </div>
                   </>
                 )}
-              </div>
-            )}
-
-            {/* CUSTOM FIELDS */}
-            {activeTab === "fields" && (
-              <div className="space-y-5">
-                <div>
-                  <h2 className="text-base font-semibold text-brand-navy">Campos customizados</h2>
-                  <p className="text-sm text-neutral-400 mt-1">
-                    Adicione campos extras específicos deste quadro.
-                  </p>
-                </div>
-
-                <div className="space-y-2">
-                  {customFields.map((field) => (
-                    <div key={field.id} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-neutral-100 shadow-sm">
-                      <GripVertical size={14} className="text-neutral-300" />
-                      <div className="flex-1 min-w-0">
-                        <p className="text-sm font-medium text-neutral-700">{field.name}</p>
-                        <p className="text-xs text-neutral-400">
-                          Tipo: {field.type === "text" ? "Texto" : field.type === "number" ? "Número" : field.type === "date" ? "Data" : "Seleção"}
-                          {field.required && " · Obrigatório"}
-                        </p>
-                      </div>
-                      <button
-                        onClick={() => setCustomFields((prev) => prev.filter((f) => f.id !== field.id))}
-                        className="w-6 h-6 flex items-center justify-center rounded-md text-neutral-300 hover:text-destructive hover:bg-destructive/5 transition-colors"
-                      >
-                        <Trash2 size={12} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-
-                <div className="bg-neutral-50 rounded-xl p-4 space-y-3 border border-neutral-100">
-                  <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide">Novo campo</p>
-                  <div className="flex gap-2">
-                    <input
-                      value={newFieldName}
-                      onChange={(e) => setNewFieldName(e.target.value)}
-                      placeholder="Nome do campo"
-                      className="flex-1 text-sm border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:border-brand-teal bg-white"
-                    />
-                    <select
-                      value={newFieldType}
-                      onChange={(e) => setNewFieldType(e.target.value as CustomField["type"])}
-                      className="text-sm border border-neutral-200 rounded-lg px-2 py-2 outline-none focus:border-brand-teal bg-white"
-                    >
-                      <option value="text">Texto</option>
-                      <option value="number">Número</option>
-                      <option value="date">Data</option>
-                      <option value="select">Seleção</option>
-                    </select>
-                  </div>
-                  <button
-                    disabled={!newFieldName.trim()}
-                    onClick={() => {
-                      if (!newFieldName.trim()) return;
-                      setCustomFields((prev) => [
-                        ...prev,
-                        { id: Date.now().toString(), name: newFieldName.trim(), type: newFieldType, required: false },
-                      ]);
-                      setNewFieldName("");
-                    }}
-                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-teal text-white hover:bg-brand-teal/90 disabled:opacity-40 transition-colors"
-                  >
-                    <Plus size={11} />
-                    Adicionar campo
-                  </button>
-                </div>
               </div>
             )}
 

@@ -62,7 +62,7 @@ export function KanbanBoard({ projectId, onTaskOpen, onAddTask }: Props) {
     }
 
     const rawClient = createRawClient();
-    const { data: tasksData } = await rawClient
+    const { data: tasksData, error: tasksError } = await rawClient
       .from("tasks")
       .select(`
         *,
@@ -72,6 +72,8 @@ export function KanbanBoard({ projectId, onTaskOpen, onAddTask }: Props) {
       `)
       .eq("project_id", pid)
       .order("position", { ascending: true });
+
+    if (tasksError) console.error("[loadBoard] tasks error:", tasksError);
 
     const tasksByColumn = new Map<string, TaskWithRelations[]>();
     ((tasksData ?? []) as any[]).forEach((t: any) => {

@@ -46,7 +46,10 @@ export const taskService = {
       .select()
       .single();
 
-    if (error) throw error;
+    if (error) {
+      console.error("[taskService.create] insert error:", error);
+      throw error;
+    }
     return data as unknown as TaskWithRelations;
   },
 

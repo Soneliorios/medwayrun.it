@@ -1,7 +1,10 @@
 "use server";
 
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { redirect } from "next/navigation";
+
+const ORG_ID = process.env.NEXT_PUBLIC_ORG_ID ?? "00000000-0000-0000-0000-000000000001";
 
 export async function signUpAction(
   fullName: string,
@@ -10,7 +13,7 @@ export async function signUpAction(
 ): Promise<string | null> {
   const supabase = await createClient();
 
-  const { error } = await supabase.auth.signUp({
+  const { data, error } = await supabase.auth.signUp({
     email,
     password,
     options: {
@@ -33,6 +36,16 @@ export async function signUpAction(
       return "Senha muito fraca. Use pelo menos 8 caracteres com letras e números.";
     }
     return error.message;
+  }
+
+  // Auto-add new user to the org members table (requires service role to bypass RLS)
+  if (data.user?.id) {
+    const admin = createAdminClient();
+    await admin.from("members").insert({
+      org_id: ORG_ID,
+      user_id: data.user.id,
+      role: "member",
+    });
   }
 
   redirect("/login?registered=1");
