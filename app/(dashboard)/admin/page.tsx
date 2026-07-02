@@ -46,8 +46,9 @@ const TEAMS_KEY = "mwr_teams";
 interface MockTeam {
   id: string;
   name: string;
-  leader_id: string;
+  leader_ids: string[];
   member_ids: string[];
+  member_hours: Record<string, number>;
 }
 
 type AdminTab = "overview" | "users" | "teams";
@@ -67,7 +68,14 @@ function loadTeams(): MockTeam[] {
   if (typeof window === "undefined") return defaultTeams();
   try {
     const raw = localStorage.getItem(TEAMS_KEY);
-    if (raw) return JSON.parse(raw);
+    if (raw) {
+      return (JSON.parse(raw) as any[]).map((t) => ({
+        ...t,
+        // migrate old single-leader format
+        leader_ids: t.leader_ids ?? (t.leader_id ? [t.leader_id] : []),
+        member_hours: t.member_hours ?? {},
+      }));
+    }
   } catch {}
   const d = defaultTeams();
   localStorage.setItem(TEAMS_KEY, JSON.stringify(d));
@@ -145,6 +153,7 @@ export default function AdminPage() {
   const [addMemberTeamId, setAddMemberTeamId] = useState<string | null>(null);
   const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
   const [editTeamNameValue, setEditTeamNameValue] = useState("");
+  const [editingHours, setEditingHours] = useState<{ teamId: string; userId: string; value: string } | null>(null);
 
   const authLoading = useAuthStore((s) => s.isLoading);
 
@@ -179,8 +188,9 @@ export default function AdminPage() {
     const team: MockTeam = {
       id: "team-" + nanoid6(),
       name: newTeamName.trim(),
-      leader_id: newTeamLeaderId,
+      leader_ids: [newTeamLeaderId],
       member_ids: [newTeamLeaderId],
+      member_hours: {},
     };
     const updated = [...teams, team];
     setTeams(updated);
@@ -210,25 +220,42 @@ export default function AdminPage() {
   function removeMember(teamId: string, userId: string) {
     const updated = teams.map((t) =>
       t.id === teamId
-        ? { ...t, member_ids: t.member_ids.filter((id) => id !== userId) }
+        ? { ...t, member_ids: t.member_ids.filter((id) => id !== userId), leader_ids: t.leader_ids.filter((id) => id !== userId) }
         : t
     );
     setTeams(updated);
     saveTeams(updated);
   }
 
-  function changeLeader(teamId: string, userId: string) {
+  function addLeader(teamId: string, userId: string) {
     const updated = teams.map((t) => {
       if (t.id !== teamId) return t;
       return {
         ...t,
-        leader_id: userId,
+        leader_ids: t.leader_ids.includes(userId) ? t.leader_ids : [...t.leader_ids, userId],
         member_ids: t.member_ids.includes(userId) ? t.member_ids : [...t.member_ids, userId],
       };
     });
     setTeams(updated);
     saveTeams(updated);
     setOpenPicker(null);
+  }
+
+  function removeLeader(teamId: string, userId: string) {
+    const updated = teams.map((t) => {
+      if (t.id !== teamId || t.leader_ids.length <= 1) return t;
+      return { ...t, leader_ids: t.leader_ids.filter((id) => id !== userId) };
+    });
+    setTeams(updated);
+    saveTeams(updated);
+  }
+
+  function setMemberHours(teamId: string, userId: string, hours: number) {
+    const updated = teams.map((t) =>
+      t.id === teamId ? { ...t, member_hours: { ...t.member_hours, [userId]: hours } } : t
+    );
+    setTeams(updated);
+    saveTeams(updated);
   }
 
   function saveTeamName(teamId: string) {
@@ -248,7 +275,7 @@ export default function AdminPage() {
     .map((u) => ({ id: u.id, name: u.full_name }));
   const visibleTeams = isSuperAdmin
     ? teams
-    : teams.filter((t) => t.leader_id === currentUserId);
+    : teams.filter((t) => t.leader_ids.includes(currentUserId));
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -630,10 +657,11 @@ export default function AdminPage() {
             {/* Team cards */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {visibleTeams.map((team) => {
-                const leader   = activeUsers.find((u) => u.id === team.leader_id);
+                const leaders  = activeUsers.filter((u) => team.leader_ids.includes(u.id));
                 const members  = activeUsers.filter((u) => team.member_ids.includes(u.id));
                 const nonMbrs  = activeUsers.filter((u) => !team.member_ids.includes(u.id));
-                const canEdit  = isSuperAdmin || team.leader_id === currentUserId;
+                const nonLeaders = admins.filter((a) => !team.leader_ids.includes(a.id));
+                const canEdit  = isSuperAdmin || team.leader_ids.includes(currentUserId);
 
                 return (
                   <div key={team.id} className="bg-white rounded-xl border border-neutral-100 overflow-visible">
@@ -682,46 +710,60 @@ export default function AdminPage() {
                       )}
                     </div>
 
-                    {/* Leader row */}
+                    {/* Leaders section */}
                     <div className="px-4 py-2.5 border-b border-neutral-100/80">
-                      <p className="text-[10px] uppercase tracking-wider text-neutral-400 mb-1.5 font-semibold">Liderança</p>
-                      {leader ? (
-                        <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center text-[9px] font-bold text-amber-700 shrink-0">
-                            {getInitials(leader.full_name)}
+                      <div className="flex items-center mb-1.5">
+                        <p className="text-[10px] uppercase tracking-wider text-neutral-400 font-semibold flex-1">Liderança</p>
+                        {isSuperAdmin && nonLeaders.length > 0 && (
+                          <div className="relative shrink-0" data-picker-container>
+                            <button
+                              onClick={() => setOpenPicker(openPicker === `leader-${team.id}` ? null : `leader-${team.id}`)}
+                              className="flex items-center gap-1 text-[10px] text-brand-teal hover:text-brand-teal/80 font-medium transition-colors"
+                            >
+                              <Plus size={10} /> Adicionar líder
+                            </button>
+                            {openPicker === `leader-${team.id}` && (
+                              <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-xl shadow-xl border border-neutral-100 py-1 z-30">
+                                {nonLeaders.map((a) => (
+                                  <button
+                                    key={a.id}
+                                    onClick={() => addLeader(team.id, a.id)}
+                                    className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-neutral-50 transition-colors"
+                                  >
+                                    <span className="w-5 h-5 rounded-full bg-amber-100 flex items-center justify-center text-[8px] font-bold text-amber-700 shrink-0">
+                                      {getInitials(a.name)}
+                                    </span>
+                                    <span className="flex-1 truncate">{a.name}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            )}
                           </div>
-                          <span className="text-xs font-medium text-neutral-700 flex-1 truncate">{leader.full_name}</span>
-                          <Crown size={11} className="text-amber-400 shrink-0" />
-                          {isSuperAdmin && (
-                            <div className="relative shrink-0" data-picker-container>
-                              <button
-                                onClick={() => setOpenPicker(openPicker === `leader-${team.id}` ? null : `leader-${team.id}`)}
-                                className="text-[10px] text-neutral-400 hover:text-brand-teal transition-colors ml-1"
-                              >
-                                Trocar
-                              </button>
-                              {openPicker === `leader-${team.id}` && (
-                                <div className="absolute right-0 top-full mt-1 w-48 bg-white rounded-xl shadow-xl border border-neutral-100 py-1 z-30">
-                                  {admins.map((a) => (
-                                    <button
-                                      key={a.id}
-                                      onClick={() => changeLeader(team.id, a.id)}
-                                      className="w-full flex items-center gap-2 px-3 py-2 text-xs text-left hover:bg-neutral-50 transition-colors"
-                                    >
-                                      <span className="w-5 h-5 rounded-full bg-brand-navy/10 flex items-center justify-center text-[8px] font-bold text-brand-navy shrink-0">
-                                        {getInitials(a.name)}
-                                      </span>
-                                      <span className="flex-1 truncate">{a.name}</span>
-                                      {a.id === team.leader_id && <Check size={10} className="text-brand-teal shrink-0" />}
-                                    </button>
-                                  ))}
-                                </div>
+                        )}
+                      </div>
+                      {leaders.length === 0 ? (
+                        <span className="text-xs text-neutral-400 italic">Sem liderança definida</span>
+                      ) : (
+                        <div className="space-y-1">
+                          {leaders.map((leader) => (
+                            <div key={leader.id} className="flex items-center gap-2 group/leader">
+                              <div className="w-6 h-6 rounded-full bg-amber-100 flex items-center justify-center text-[9px] font-bold text-amber-700 shrink-0">
+                                {getInitials(leader.full_name)}
+                              </div>
+                              <span className="text-xs font-medium text-neutral-700 flex-1 truncate">{leader.full_name}</span>
+                              <Crown size={11} className="text-amber-400 shrink-0" />
+                              {isSuperAdmin && leaders.length > 1 && (
+                                <button
+                                  onClick={() => removeLeader(team.id, leader.id)}
+                                  className="w-4 h-4 flex items-center justify-center text-neutral-200 hover:text-destructive transition-colors shrink-0 opacity-0 group-hover/leader:opacity-100"
+                                  title="Remover da liderança"
+                                >
+                                  <X size={10} />
+                                </button>
                               )}
                             </div>
-                          )}
+                          ))}
                         </div>
-                      ) : (
-                        <span className="text-xs text-neutral-400 italic">Sem liderança definida</span>
                       )}
                     </div>
 
@@ -766,7 +808,9 @@ export default function AdminPage() {
                       ) : (
                         <div className="space-y-1.5">
                           {members.map((u) => {
-                            const isLeader = u.id === team.leader_id;
+                            const isLeader = team.leader_ids.includes(u.id);
+                            const isEditingH = editingHours?.teamId === team.id && editingHours?.userId === u.id;
+                            const currentHours = team.member_hours?.[u.id] ?? 0;
                             return (
                               <div key={u.id} className="flex items-center gap-2 py-0.5 group">
                                 <div className={cn(
@@ -779,14 +823,34 @@ export default function AdminPage() {
                                 <span className={cn("text-[9px] px-1 py-0.5 rounded shrink-0", SB_ROLE_COLOR[u.role] ?? "bg-neutral-100 text-neutral-500")}>
                                   {SB_ROLE_LABEL[u.role] ?? u.role}
                                 </span>
-                                {/* placeholder so the column doesn't collapse */}
+                                {/* h/sem editable */}
                                 <div className="flex items-center gap-0.5 shrink-0">
                                   {canEdit ? (
-                                    <span className="text-[10px] text-neutral-300">—</span>
+                                    isEditingH ? (
+                                      <input
+                                        autoFocus
+                                        type="number"
+                                        min={0}
+                                        max={168}
+                                        value={editingHours.value}
+                                        onChange={(e) => setEditingHours({ teamId: team.id, userId: u.id, value: e.target.value })}
+                                        onBlur={() => { setMemberHours(team.id, u.id, parseFloat(editingHours.value) || 0); setEditingHours(null); }}
+                                        onKeyDown={(e) => { if (e.key === "Enter" || e.key === "Escape") { setMemberHours(team.id, u.id, parseFloat(editingHours.value) || 0); setEditingHours(null); } }}
+                                        className="w-10 text-[10px] text-center border border-brand-teal rounded px-0.5 py-0.5 focus:outline-none"
+                                      />
+                                    ) : (
+                                      <button
+                                        onClick={() => setEditingHours({ teamId: team.id, userId: u.id, value: String(currentHours) })}
+                                        className="text-[10px] text-neutral-500 hover:text-brand-teal hover:underline transition-colors min-w-[18px] text-right"
+                                        title="Clique para editar horas semanais"
+                                      >
+                                        {currentHours || "—"}
+                                      </button>
+                                    )
                                   ) : (
-                                    <span className="text-[10px] text-neutral-400">—</span>
+                                    <span className="text-[10px] text-neutral-400 min-w-[18px] text-right">{currentHours || "—"}</span>
                                   )}
-                                  <span className="text-[9px] text-neutral-300">h/sem</span>
+                                  <span className="text-[9px] text-neutral-300 ml-0.5">h/sem</span>
                                 </div>
                                 {isLeader
                                   ? <Crown size={10} className="text-amber-400 shrink-0" />
