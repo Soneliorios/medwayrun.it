@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useMemo, use, useEffect } from "react";
+import { useState, useMemo, use, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -16,7 +16,9 @@ import { ORG_ID } from "@/lib/utils";
 import {
   ArrowLeft, Archive, Loader2, Settings, Tag, Users, Layers,
   Plus, Trash2, ChevronDown, Check, GripVertical, FolderKanban,
+  Globe, Lock, X,
 } from "lucide-react";
+import { getInitials } from "@/lib/utils";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
 
@@ -50,7 +52,8 @@ const STAGE_REQ_OPTIONS: { field: string; label: string }[] = [
 ];
 
 interface TaskType { id: string; name: string; color: string; default_hours: number }
-interface Member { id: string; name: string; role: string }
+interface OrgMember { id: string; user_id: string; name: string; role: string }
+interface ProjectMember { user_id: string; name: string; role: string }
 interface StageReq { id: string; field: string; label: string }
 
 interface Props {
@@ -112,14 +115,22 @@ export default function ProjectSettingsPage({ params }: Props) {
   const [newTypeHours, setNewTypeHours] = useState(2);
   const [newTypeColor, setNewTypeColor] = useState(TYPE_COLORS[0]);
 
-  // Members — loaded from Supabase
-  const [members, setMembers] = useState<Member[]>([]);
-  const [membersLoading, setMembersLoading] = useState(false);
-  const [inviteEmail, setInviteEmail] = useState("");
+  // All org members (source for adding to project)
+  const [orgMembers, setOrgMembers] = useState<OrgMember[]>([]);
+  const [orgMembersLoading, setOrgMembersLoading] = useState(false);
+
+  // Board privacy + explicit project members
+  const [isPrivate, setIsPrivate] = useState(false);
+  const [privacySaving, setPrivacySaving] = useState(false);
+  const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([]);
+  const [projectMembersLoading, setProjectMembersLoading] = useState(false);
+  const [memberSearch, setMemberSearch] = useState("");
+  const [memberDropOpen, setMemberDropOpen] = useState(false);
+  const memberSearchRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    async function fetchMembers() {
-      setMembersLoading(true);
+    async function fetchOrgMembers() {
+      setOrgMembersLoading(true);
       const supabase = createClient();
       const { data } = await supabase
         .from("members")
@@ -127,18 +138,98 @@ export default function ProjectSettingsPage({ params }: Props) {
         .eq("org_id", ORG_ID)
         .order("joined_at", { ascending: true });
       if (data) {
-        setMembers(
+        setOrgMembers(
           (data as any[]).map((m) => ({
             id: m.id,
+            user_id: m.user_id,
             name: (m.profiles as any)?.full_name ?? m.user_id.slice(0, 8),
             role: m.role,
           }))
         );
       }
-      setMembersLoading(false);
+      setOrgMembersLoading(false);
     }
-    fetchMembers();
+    fetchOrgMembers();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    async function fetchProjectAccess() {
+      setProjectMembersLoading(true);
+      const supabase = createClient();
+      // Load is_private from projects table
+      const { data: projData } = await supabase
+        .from("projects")
+        .select("is_private")
+        .eq("id", projectId)
+        .single();
+      if (projData) setIsPrivate((projData as any).is_private ?? false);
+
+      // Load project_members (table may not exist yet — catch gracefully)
+      try {
+        const { data: pmData } = await (supabase as any)
+          .from("project_members")
+          .select("user_id, role, profiles(id, full_name)")
+          .eq("project_id", projectId);
+        if (pmData) {
+          setProjectMembers(
+            (pmData as any[]).map((pm) => ({
+              user_id: pm.user_id,
+              name: (pm.profiles as any)?.full_name ?? pm.user_id.slice(0, 8),
+              role: pm.role,
+            }))
+          );
+        }
+      } catch {}
+      setProjectMembersLoading(false);
+    }
+    fetchProjectAccess();
+  }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Close member search dropdown on outside click
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (memberSearchRef.current && !memberSearchRef.current.contains(e.target as Node)) {
+        setMemberDropOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, []);
+
+  async function handleSetPrivacy(val: boolean) {
+    setIsPrivate(val);
+    setPrivacySaving(true);
+    const supabase = createClient();
+    await (supabase as any).from("projects").update({ is_private: val }).eq("id", projectId);
+    setPrivacySaving(false);
+  }
+
+  async function handleAddMember(member: OrgMember) {
+    setMemberSearch("");
+    setMemberDropOpen(false);
+    if (projectMembers.some((pm) => pm.user_id === member.user_id)) return;
+    const newPm: ProjectMember = { user_id: member.user_id, name: member.name, role: "member" };
+    setProjectMembers((prev) => [...prev, newPm]);
+    try {
+      const supabase = createClient();
+      await (supabase as any).from("project_members").insert({ project_id: projectId, user_id: member.user_id, role: "member" });
+    } catch (e) { console.error("[project_members] insert error:", e); }
+  }
+
+  async function handleRemoveMember(userId: string) {
+    setProjectMembers((prev) => prev.filter((pm) => pm.user_id !== userId));
+    try {
+      const supabase = createClient();
+      await (supabase as any).from("project_members").delete().eq("project_id", projectId).eq("user_id", userId);
+    } catch (e) { console.error("[project_members] delete error:", e); }
+  }
+
+  // Org members not yet in the project, filtered by search
+  const availableOrgMembers = orgMembers.filter(
+    (m) =>
+      !projectMembers.some((pm) => pm.user_id === m.user_id) &&
+      (memberSearch === "" || m.name.toLowerCase().includes(memberSearch.toLowerCase()))
+  );
 
   // Stage requirements (per column) — persisted to localStorage
   const STAGE_REQS_KEY = `mwr_stage_reqs_${projectId}`;
@@ -385,56 +476,179 @@ export default function ProjectSettingsPage({ params }: Props) {
 
             {/* MEMBERS */}
             {activeTab === "members" && (
-              <div className="space-y-5">
+              <div className="space-y-6">
                 <div>
-                  <h2 className="text-base font-semibold text-brand-navy">Membros do quadro</h2>
-                  <p className="text-sm text-neutral-400 mt-1">Gerencie quem tem acesso e com qual permissão.</p>
+                  <h2 className="text-base font-semibold text-brand-navy">Acesso ao quadro</h2>
+                  <p className="text-sm text-neutral-400 mt-1">Controle quem pode ver e trabalhar neste quadro.</p>
                 </div>
 
-                {membersLoading ? (
-                  <p className="text-sm text-neutral-400">Carregando membros...</p>
-                ) : members.length === 0 ? (
-                  <p className="text-sm text-neutral-400">Nenhum membro encontrado.</p>
-                ) : (
-                  <div className="space-y-2">
-                    {members.map((member) => (
-                      <div key={member.id} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-neutral-100 shadow-sm">
-                        <div className="w-8 h-8 rounded-full bg-brand-navy/10 flex items-center justify-center text-xs font-bold text-brand-navy shrink-0">
-                          {member.name.split(" ").map((n) => n[0]).join("").slice(0, 2).toUpperCase()}
+                {/* Visibility toggle */}
+                <div className="bg-white border border-neutral-100 rounded-xl overflow-hidden shadow-sm">
+                  <button
+                    onClick={() => handleSetPrivacy(false)}
+                    className={cn(
+                      "w-full flex items-start gap-3 p-4 transition-colors text-left border-b",
+                      !isPrivate
+                        ? "bg-brand-teal/5 border-brand-teal/20"
+                        : "border-neutral-100 hover:bg-neutral-50"
+                    )}
+                  >
+                    <div className={cn(
+                      "w-4 h-4 rounded-full border-2 mt-0.5 shrink-0 flex items-center justify-center",
+                      !isPrivate ? "border-brand-teal bg-brand-teal" : "border-neutral-300"
+                    )}>
+                      {!isPrivate && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                    </div>
+                    <Globe size={15} className={cn("mt-0.5 shrink-0", !isPrivate ? "text-brand-teal" : "text-neutral-400")} />
+                    <div>
+                      <p className="text-sm font-medium text-neutral-800">Público</p>
+                      <p className="text-xs text-neutral-400 mt-0.5">Todos os membros da organização têm acesso a este quadro.</p>
+                    </div>
+                    {privacySaving && !isPrivate && <Loader2 size={13} className="ml-auto mt-1 animate-spin text-neutral-400 shrink-0" />}
+                  </button>
+                  <button
+                    onClick={() => handleSetPrivacy(true)}
+                    className={cn(
+                      "w-full flex items-start gap-3 p-4 transition-colors text-left",
+                      isPrivate ? "bg-brand-teal/5" : "hover:bg-neutral-50"
+                    )}
+                  >
+                    <div className={cn(
+                      "w-4 h-4 rounded-full border-2 mt-0.5 shrink-0 flex items-center justify-center",
+                      isPrivate ? "border-brand-teal bg-brand-teal" : "border-neutral-300"
+                    )}>
+                      {isPrivate && <div className="w-1.5 h-1.5 rounded-full bg-white" />}
+                    </div>
+                    <Lock size={15} className={cn("mt-0.5 shrink-0", isPrivate ? "text-brand-teal" : "text-neutral-400")} />
+                    <div>
+                      <p className="text-sm font-medium text-neutral-800">Privado</p>
+                      <p className="text-xs text-neutral-400 mt-0.5">Apenas membros adicionados explicitamente podem acessar.</p>
+                    </div>
+                    {privacySaving && isPrivate && <Loader2 size={13} className="ml-auto mt-1 animate-spin text-neutral-400 shrink-0" />}
+                  </button>
+                </div>
+
+                {/* Project members list — only when private */}
+                {isPrivate && (
+                  <>
+                    <div>
+                      <h3 className="text-sm font-semibold text-brand-navy mb-3">
+                        Membros com acesso
+                        {projectMembers.length > 0 && (
+                          <span className="ml-2 text-xs font-normal text-neutral-400 bg-neutral-100 px-2 py-0.5 rounded-full">
+                            {projectMembers.length}
+                          </span>
+                        )}
+                      </h3>
+                      {projectMembersLoading ? (
+                        <p className="text-sm text-neutral-400">Carregando...</p>
+                      ) : projectMembers.length === 0 ? (
+                        <p className="text-sm text-neutral-400 py-2">Nenhum membro adicionado. Adicione abaixo.</p>
+                      ) : (
+                        <div className="space-y-2">
+                          {projectMembers.map((pm) => (
+                            <div key={pm.user_id} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-neutral-100 shadow-sm group">
+                              <div className="w-8 h-8 rounded-full bg-brand-navy/10 flex items-center justify-center text-xs font-bold text-brand-navy shrink-0">
+                                {getInitials(pm.name)}
+                              </div>
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm font-medium text-neutral-700 truncate">{pm.name}</p>
+                                <p className="text-xs text-neutral-400">
+                                  {pm.role === "admin" ? "Admin" : "Membro"}
+                                </p>
+                              </div>
+                              <button
+                                onClick={() => handleRemoveMember(pm.user_id)}
+                                className="opacity-0 group-hover:opacity-100 w-7 h-7 flex items-center justify-center rounded-lg text-neutral-300 hover:text-destructive hover:bg-destructive/5 transition-all"
+                                title="Remover acesso"
+                              >
+                                <X size={13} />
+                              </button>
+                            </div>
+                          ))}
                         </div>
-                        <div className="flex-1 min-w-0">
-                          <p className="text-sm font-medium text-neutral-700 truncate">{member.name}</p>
-                          <p className="text-xs text-neutral-400">{
-                            member.role === "owner" ? "Proprietário" :
-                            member.role === "admin" ? "Admin" :
-                            member.role === "member" ? "Membro" : "Visualizador"
-                          }</p>
-                        </div>
+                      )}
+                    </div>
+
+                    {/* Add member — searchable org list */}
+                    <div className="bg-neutral-50 rounded-xl p-4 space-y-3 border border-neutral-100">
+                      <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide">Adicionar membro</p>
+                      <div className="relative" ref={memberSearchRef}>
+                        <input
+                          value={memberSearch}
+                          onChange={(e) => { setMemberSearch(e.target.value); setMemberDropOpen(true); }}
+                          onFocus={() => setMemberDropOpen(true)}
+                          placeholder={orgMembersLoading ? "Carregando membros..." : "Buscar por nome..."}
+                          disabled={orgMembersLoading}
+                          className="w-full text-sm border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:border-brand-teal bg-white disabled:opacity-50"
+                        />
+                        {memberDropOpen && availableOrgMembers.length > 0 && (
+                          <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-neutral-100 py-1 z-20 max-h-52 overflow-y-auto">
+                            {availableOrgMembers.map((m) => (
+                              <button
+                                key={m.user_id}
+                                onClick={() => handleAddMember(m)}
+                                className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-neutral-50 transition-colors"
+                              >
+                                <div className="w-7 h-7 rounded-full bg-brand-navy/10 flex items-center justify-center text-xs font-bold text-brand-navy shrink-0">
+                                  {getInitials(m.name)}
+                                </div>
+                                <div className="flex-1 min-w-0">
+                                  <p className="text-sm font-medium text-neutral-700 truncate">{m.name}</p>
+                                  <p className="text-xs text-neutral-400">
+                                    {m.role === "owner" ? "Proprietário" : m.role === "admin" ? "Admin" : "Membro"}
+                                  </p>
+                                </div>
+                                <Plus size={13} className="text-brand-teal shrink-0" />
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        {memberDropOpen && availableOrgMembers.length === 0 && memberSearch !== "" && (
+                          <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-neutral-100 py-3 px-4 z-20">
+                            <p className="text-sm text-neutral-400">Nenhum membro encontrado.</p>
+                          </div>
+                        )}
                       </div>
-                    ))}
-                  </div>
+                    </div>
+                  </>
                 )}
 
-                {/* Invite */}
-                <div className="bg-neutral-50 rounded-xl p-4 space-y-3 border border-neutral-100">
-                  <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide">Convidar membro</p>
-                  <div className="flex gap-2">
-                    <input
-                      type="email"
-                      value={inviteEmail}
-                      onChange={(e) => setInviteEmail(e.target.value)}
-                      placeholder="email@empresa.com.br"
-                      className="flex-1 text-sm border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:border-brand-teal bg-white"
-                    />
-                    <button
-                      disabled={!inviteEmail.includes("@")}
-                      onClick={() => { alert(`Convite enviado para ${inviteEmail}! (modo demo)`); setInviteEmail(""); }}
-                      className="px-4 py-2 text-xs font-semibold bg-brand-teal text-white rounded-lg hover:bg-brand-teal/90 disabled:opacity-40 transition-colors"
-                    >
-                      Convidar
-                    </button>
+                {/* When public, show current org members as read-only info */}
+                {!isPrivate && (
+                  <div>
+                    <h3 className="text-sm font-semibold text-brand-navy mb-3">
+                      Membros da organização
+                      {orgMembers.length > 0 && (
+                        <span className="ml-2 text-xs font-normal text-neutral-400 bg-neutral-100 px-2 py-0.5 rounded-full">
+                          {orgMembers.length}
+                        </span>
+                      )}
+                    </h3>
+                    {orgMembersLoading ? (
+                      <p className="text-sm text-neutral-400">Carregando...</p>
+                    ) : (
+                      <div className="space-y-2">
+                        {orgMembers.map((m) => (
+                          <div key={m.user_id} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-neutral-100 shadow-sm opacity-80">
+                            <div className="w-8 h-8 rounded-full bg-brand-navy/10 flex items-center justify-center text-xs font-bold text-brand-navy shrink-0">
+                              {getInitials(m.name)}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-neutral-700 truncate">{m.name}</p>
+                              <p className="text-xs text-neutral-400">
+                                {m.role === "owner" ? "Proprietário" : m.role === "admin" ? "Admin" : "Membro"}
+                              </p>
+                            </div>
+                            <span className="text-[10px] text-brand-teal bg-brand-teal/10 px-2 py-0.5 rounded-full font-medium shrink-0">
+                              Acesso via org
+                            </span>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                </div>
+                )}
               </div>
             )}
 
