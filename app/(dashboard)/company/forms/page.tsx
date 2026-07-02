@@ -1,7 +1,7 @@
 "use client";
 import { Fragment, useEffect, useState } from "react";
 import Link from "next/link";
-import { FileText, Plus, Copy, Eye, Star, Globe, Lock, Users, MessageSquare, ChevronDown, Check, X, Calendar, Pencil } from "lucide-react";
+import { FileText, Plus, Copy, Eye, Star, Globe, Lock, Users, MessageSquare, ChevronDown, Check, X, Calendar, Pencil, Trash2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { createRawClient } from "@/lib/supabase/client";
@@ -72,6 +72,14 @@ export default function FormsPage() {
   }
 
   function copyLink(id: string) { navigator.clipboard?.writeText(window.location.origin + "/forms/" + id); setCopied(id); setTimeout(() => setCopied(null), 2000); }
+
+  async function deleteForm(id: string, name: string) {
+    if (!confirm(`Excluir o formulário "${name}"? Esta ação não pode ser desfeita.`)) return;
+    const supabase = createRawClient();
+    const { error } = await (supabase as any).from("forms").delete().eq("id", id);
+    if (error) { console.error("[forms] delete error:", error); return; }
+    setForms((prev) => prev.filter((f) => f.id !== id));
+  }
 
   async function createForm() {
     if (!newForm.name.trim() || creating) return;
@@ -169,6 +177,7 @@ export default function FormsPage() {
                         <button onClick={() => setShowResponsesModal(form)} title="Ver respostas" className="w-6 h-6 flex items-center justify-center rounded text-neutral-400 hover:text-brand-teal"><Eye size={13} /></button>
                         {form.external_access && (<button onClick={() => copyLink(form.id)} title="Copiar link externo" className="w-6 h-6 flex items-center justify-center rounded text-neutral-400 hover:text-brand-teal">{copied === form.id ? <Check size={13} className="text-green-500" /> : <Copy size={13} />}</button>)}
                         <button onClick={() => setConfigId(configId === form.id ? null : form.id)} title="Configurar" className="w-6 h-6 flex items-center justify-center rounded text-neutral-400 hover:text-brand-navy"><ChevronDown size={13} /></button>
+                        <button onClick={() => deleteForm(form.id, form.name)} title="Excluir formulário" className="w-6 h-6 flex items-center justify-center rounded text-neutral-300 hover:text-destructive hover:bg-destructive/5 transition-colors"><Trash2 size={13} /></button>
                       </div></td>
                     </tr>
                     {configId === form.id && (
