@@ -1,7 +1,9 @@
 'use client';
 
 import { use, useEffect, useState } from 'react';
-import { CheckCircle2 } from 'lucide-react';
+import { CheckCircle2, Loader2 } from 'lucide-react';
+import { createRawClient } from '@/lib/supabase/client';
+import { submitFormToSupabase } from './actions';
 
 const FIELD_TYPES_WITH_LABEL: Record<string, string> = {
   text: 'Texto curto',
@@ -42,8 +44,29 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
   const [meta, setMeta] = useState<FormMeta | null>(null);
   const [values, setValues] = useState<Record<string, string>>({});
   const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
   const [notFound, setNotFound] = useState(false);
   const [boardProjects, setBoardProjects] = useState<{ id: string; name: string; color: string }[]>([]);
+
+  async function loadBoardProjects(boardId: string) {
+    try {
+      const supabase = createRawClient();
+      const { data } = await (supabase as any)
+        .from('board_subprojects')
+        .select('id, name, color')
+        .eq('project_id', boardId)
+        .order('name');
+      if (data && data.length > 0) {
+        setBoardProjects(data);
+        return;
+      }
+    } catch {}
+    // Fallback to localStorage (dev / pre-migration)
+    try {
+      const bp = JSON.parse(localStorage.getItem(`mwr_board_projects_${boardId}`) ?? '[]');
+      setBoardProjects(bp);
+    } catch {}
+  }
 
   useEffect(() => {
     try {
@@ -61,14 +84,8 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
           assignee_id: form.assignee_id,
           assignee_name: form.assignee_name,
         });
-        // Load board projects for board_project field type
         const boardId = form.board_id || form.project_id;
-        if (boardId) {
-          try {
-            const bp = JSON.parse(localStorage.getItem(`mwr_board_projects_${boardId}`) ?? '[]');
-            setBoardProjects(bp);
-          } catch {}
-        }
+        if (boardId) loadBoardProjects(boardId);
       } else if (storedFields.length === 0) {
         setNotFound(true);
       } else {
@@ -77,7 +94,7 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
     } catch {
       setNotFound(true);
     }
-  }, [slug]);
+  }, [slug]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Default fields always shown if no custom fields configured
   const effectiveFields: FormField[] = fields.length > 0 ? fields : [
@@ -97,14 +114,14 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
-  function submit(e: React.FormEvent) {
+  async function submit(e: React.FormEvent) {
     e.preventDefault();
+    setSubmitting(true);
     try {
       const titleField = effectiveFields.find(f => f.maps_to === 'title');
       const title = (titleField && values[titleField.id]) || meta?.name || 'Solicitação via formulário';
 
-      // Separate fields into: native task fields vs custom (go to description)
-      const nativeExtras: Record<string, any> = {};
+      const nativeExtras: Record<string, unknown> = {};
       let plainDescription: string | null = null;
       const customLines: string[] = [];
 
@@ -114,10 +131,8 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
         if (!val) return;
 
         if (f.maps_to === 'description') {
-          // Goes as plain briefing text (no label prefix)
           plainDescription = val;
         } else if (f.maps_to && NATIVE_MAPS.has(f.maps_to)) {
-          // Map directly to task field
           if (f.maps_to === 'desired_delivery_date') {
             nativeExtras.due_date = val;
           } else if (f.maps_to === 'desired_start_date') {
@@ -130,12 +145,10 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
             nativeExtras[f.maps_to] = val;
           }
         } else {
-          // Custom field — build HTML label: value line for description
           customLines.push(`<p><strong>${escapeHtml(f.label)}:</strong> ${escapeHtml(val)}</p>`);
         }
       });
 
-      // Combine description: briefing first (if any), then custom fields
       let description: string | null = null;
       const pd = plainDescription as string | null;
       const briefingHtml = pd
@@ -149,84 +162,22 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
         description = customLines.join('');
       }
 
-      const projects: any[] = JSON.parse(localStorage.getItem('mwr_projects') ?? '[]');
-      const columns: any[] = JSON.parse(localStorage.getItem('mwr_columns') ?? '[]');
-
-      // Determine project: prefer board_id, then project_id, then first available
-      const project_id = meta?.board_id || meta?.project_id || projects[0]?.id;
-
-      if (project_id) {
-        // Find target column by stage name within the correct project
-        const col = columns.find(c => c.project_id === project_id && c.name === meta?.stage)
-          ?? columns.find(c => c.project_id === project_id);
-
-        const tasks: any[] = JSON.parse(localStorage.getItem('mwr_tasks') ?? '[]');
-        const now = new Date().toISOString();
-
-        // extraFields alias kept for due_date compat below
-        const extraFields = nativeExtras;
-
-        // Apply automation: assignee from form config
-        const assignee_id = meta?.assignee_id || null;
-
-        tasks.push({
-          id: 'task-form-' + Math.random().toString(36).slice(2, 9),
-          project_id,
-          column_id: col?.id ?? 'col-0',
-          org_id: '00000000-0000-0000-0000-000000000001',
+      const boardId = meta?.board_id || meta?.project_id;
+      if (boardId) {
+        await submitFormToSupabase({
           title,
           description,
-          // Defaults — overridden below by nativeExtras
-          priority: 'medium',
-          position: Date.now() % 100000,
-          assignee_id,
-          due_date: null,
-          estimated_hours: null,
-          tracked_hours: 0,
-          created_by: null,
-          created_at: now,
-          updated_at: now,
-          is_urgent: false,
-          status: 'open',
-          type_id: null,
-          sla_minutes: null,
-          parent_task_id: null,
-          priority_number: null,
-          requesting_area_id: null,
-          requested_area_id: null,
-          desired_start_date: null,
-          start_date: null,
-          delivery_date: null,
-          recurrence_config: null,
+          board_id: boardId,
+          stage_name: meta?.stage ?? 'A fazer',
+          assignee_id: meta?.assignee_id ?? null,
           form_id: slug,
-          form_source: 'external',
-          // Native form fields override defaults
-          ...nativeExtras,
+          nativeExtras,
         });
-        localStorage.setItem('mwr_tasks', JSON.stringify(tasks));
-
-        // Save form response
-        const responses: any[] = JSON.parse(localStorage.getItem(`mwr_form_responses_${slug}`) ?? '[]');
-        responses.push({
-          id: 'resp-' + Math.random().toString(36).slice(2, 9),
-          form_id: slug,
-          submitted_at: now,
-          values,
-          task_id: tasks[tasks.length - 1]?.id,
-        });
-        localStorage.setItem(`mwr_form_responses_${slug}`, JSON.stringify(responses));
-
-        // Update response count on the form
-        const forms: any[] = JSON.parse(localStorage.getItem('mwr_forms') ?? '[]');
-        const formIdx = forms.findIndex(f => f.id === slug);
-        if (formIdx >= 0) {
-          forms[formIdx].responses = (forms[formIdx].responses || 0) + 1;
-          localStorage.setItem('mwr_forms', JSON.stringify(forms));
-        }
       }
     } catch (err) {
       console.error('Error creating task from form:', err);
     }
+    setSubmitting(false);
     setSubmitted(true);
   }
 
@@ -345,9 +296,11 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
 
         <button
           type="submit"
-          className="mt-6 bg-brand-navy text-white text-sm font-medium rounded-lg px-5 py-2.5 hover:opacity-90 transition"
+          disabled={submitting}
+          className="mt-6 bg-brand-navy text-white text-sm font-medium rounded-lg px-5 py-2.5 hover:opacity-90 transition disabled:opacity-60 flex items-center gap-2"
         >
-          Enviar solicitação
+          {submitting && <Loader2 size={14} className="animate-spin" />}
+          {submitting ? 'Enviando...' : 'Enviar solicitação'}
         </button>
       </form>
     </div>

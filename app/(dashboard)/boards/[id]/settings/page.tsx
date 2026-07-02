@@ -69,13 +69,79 @@ export default function ProjectSettingsPage({ params }: Props) {
   const { updateProject, archiveProject } = useProjectActions();
   const router = useRouter();
   const boardProjectStore = useBoardProjectStore();
-  useEffect(() => { boardProjectStore.load(projectId); }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  useEffect(() => {
+    boardProjectStore.load(projectId);
+    async function loadBoardProjectsFromDb() {
+      const supabase = createClient();
+      const { data } = await (supabase as any)
+        .from("board_subprojects")
+        .select("id, project_id, name, color, description")
+        .eq("project_id", projectId)
+        .order("name");
+      if (data) {
+        useBoardProjectStore.setState({
+          projects: data.map((d: any) => ({
+            id: d.id,
+            board_id: d.project_id,
+            name: d.name,
+            color: d.color,
+            description: d.description ?? undefined,
+          })),
+        });
+      }
+    }
+    loadBoardProjectsFromDb();
+  }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Board projects form state
   const [bpName, setBpName] = useState("");
   const [bpColor, setBpColor] = useState("#01CFB5");
   const [bpDesc, setBpDesc] = useState("");
   const [bpEditId, setBpEditId] = useState<string | null>(null);
+  const [bpSaving, setBpSaving] = useState(false);
+
+  async function handleCreateBp() {
+    if (!bpName.trim() || bpSaving) return;
+    setBpSaving(true);
+    const supabase = createClient();
+    const { data, error } = await (supabase as any)
+      .from("board_subprojects")
+      .insert({ project_id: projectId, org_id: ORG_ID, name: bpName.trim(), color: bpColor, description: bpDesc || null })
+      .select()
+      .single();
+    setBpSaving(false);
+    if (error) { console.error("[settings] board project create error:", error); return; }
+    useBoardProjectStore.setState((s) => ({
+      projects: [...s.projects, { id: data.id, board_id: projectId, name: data.name, color: data.color, description: data.description ?? undefined }],
+    }));
+    setBpName(""); setBpDesc(""); setBpColor("#01CFB5");
+  }
+
+  async function handleUpdateBp(id: string) {
+    if (!bpName.trim() || bpSaving) return;
+    setBpSaving(true);
+    const supabase = createClient();
+    const { error } = await (supabase as any)
+      .from("board_subprojects")
+      .update({ name: bpName.trim(), color: bpColor, description: bpDesc || null })
+      .eq("id", id);
+    setBpSaving(false);
+    if (error) { console.error("[settings] board project update error:", error); return; }
+    boardProjectStore.update(id, { name: bpName.trim(), color: bpColor, description: bpDesc || undefined });
+    setBpEditId(null); setBpName(""); setBpDesc(""); setBpColor("#01CFB5");
+  }
+
+  async function handleDeleteBp(id: string, name: string) {
+    if (!confirm(`Excluir "${name}"?`)) return;
+    const supabase = createClient();
+    const { error } = await (supabase as any)
+      .from("board_subprojects")
+      .delete()
+      .eq("id", id);
+    if (error) { console.error("[settings] board project delete error:", error); return; }
+    boardProjectStore.delete(id);
+  }
 
   const [activeTab, setActiveTab] = useState<SettingsTab>("general");
   const [name, setName] = useState(project?.name ?? "");
@@ -785,12 +851,8 @@ export default function ProjectSettingsPage({ params }: Props) {
                           </div>
                           <div className="flex gap-2">
                             <button
-                              disabled={!bpName.trim()}
-                              onClick={() => {
-                                if (!bpName.trim()) return;
-                                boardProjectStore.update(bp.id, { name: bpName.trim(), color: bpColor, description: bpDesc || undefined });
-                                setBpEditId(null); setBpName(""); setBpDesc(""); setBpColor("#01CFB5");
-                              }}
+                              disabled={!bpName.trim() || bpSaving}
+                              onClick={() => handleUpdateBp(bp.id)}
                               className="px-3 py-1.5 text-xs font-semibold bg-brand-teal text-white rounded-lg hover:bg-brand-teal/90 disabled:opacity-40"
                             >Salvar</button>
                             <button onClick={() => { setBpEditId(null); setBpName(""); setBpDesc(""); }} className="px-3 py-1.5 text-xs text-neutral-500 hover:text-neutral-700">Cancelar</button>
@@ -810,7 +872,7 @@ export default function ProjectSettingsPage({ params }: Props) {
                             <Check size={12} />
                           </button>
                           <button
-                            onClick={() => { if (confirm(`Excluir "${bp.name}"?`)) boardProjectStore.delete(bp.id); }}
+                            onClick={() => handleDeleteBp(bp.id, bp.name)}
                             className="opacity-0 group-hover:opacity-100 w-6 h-6 flex items-center justify-center rounded-md text-neutral-300 hover:text-destructive hover:bg-destructive/5 transition-colors"
                           >
                             <Trash2 size={12} />
@@ -848,15 +910,11 @@ export default function ProjectSettingsPage({ params }: Props) {
                       ))}
                     </div>
                     <button
-                      disabled={!bpName.trim()}
-                      onClick={() => {
-                        if (!bpName.trim()) return;
-                        boardProjectStore.create(projectId, bpName.trim(), bpColor, bpDesc || undefined);
-                        setBpName(""); setBpDesc(""); setBpColor("#01CFB5");
-                      }}
+                      disabled={!bpName.trim() || bpSaving}
+                      onClick={handleCreateBp}
                       className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-teal text-white hover:bg-brand-teal/90 disabled:opacity-40 transition-colors"
                     >
-                      <Plus size={11} /> Adicionar projeto
+                      <Plus size={11} /> {bpSaving ? "Salvando..." : "Adicionar projeto"}
                     </button>
                   </div>
                 )}
