@@ -4,6 +4,8 @@ import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
 import { ChevronLeft, Copy, Check, Plus, Trash2, ArrowUp, ArrowDown, GripVertical, User, Save } from 'lucide-react';
 import { Type, AlignLeft, CircleDot, CheckSquare, Calendar, Hash, Upload, Minus } from 'lucide-react';
+import { createClient } from '@/lib/supabase/client';
+import { ORG_ID } from '@/lib/utils';
 
 const FIELD_TYPES = [
   { type: 'text', label: 'Texto curto', icon: Type },
@@ -32,8 +34,6 @@ const PREMAPPED = [
   { label: 'Data de início desejada', maps_to: 'desired_start_date', type: 'date' },
 ];
 
-const STAGES = ['A fazer', 'Em andamento', 'Revisão', 'Concluído'];
-
 interface FormField {
   id: string;
   type: string;
@@ -46,7 +46,8 @@ interface FormField {
 }
 
 interface Project { id: string; name: string; }
-interface Column { id: string; name: string; project_id: string; }
+interface Column { id: string; name: string; project_id: string; position: number; }
+interface OrgMember { id: string; user_id: string; name: string; }
 
 function fieldsKey(id: string) { return `mwr_form_fields_${id}`; }
 
@@ -89,7 +90,7 @@ export default function FormEditPage({ params }: { params: Promise<{ id: string 
   const { id } = use(params);
   const [name, setName] = useState('Formulário');
   const [description, setDescription] = useState('');
-  const [stage, setStage] = useState(STAGES[0]);
+  const [stage, setStage] = useState('');
   const [active, setActive] = useState(true);
   const [internal, setInternal] = useState(true);
   const [external, setExternal] = useState(false);
@@ -106,50 +107,107 @@ export default function FormEditPage({ params }: { params: Promise<{ id: string 
   const [assigneeName, setAssigneeName] = useState<string>('');
   const [boardProjects, setBoardProjects] = useState<{ id: string; name: string; color: string }[]>([]);
 
-  // Mock team members (in a real app, fetch from API)
-  const TEAM_MEMBERS = [
-    { id: 'mock-user', name: 'Você (usuário atual)' },
-    { id: 'user-ana', name: 'Ana Souza' },
-    { id: 'user-carlos', name: 'Carlos Mendes' },
-    { id: 'user-paula', name: 'Paula Lima' },
-    { id: 'user-roberto', name: 'Roberto Alves' },
-  ];
+  const [orgMembers, setOrgMembers] = useState<OrgMember[]>([]);
 
-  function loadBoardProjects(boardId: string) {
+  async function loadBoardProjects(boardId: string) {
+    if (!boardId) { setBoardProjects([]); return; }
     try {
-      const bp = JSON.parse(localStorage.getItem(`mwr_board_projects_${boardId}`) ?? '[]');
-      setBoardProjects(bp);
+      const supabase = createClient();
+      const { data } = await (supabase as any)
+        .from('board_subprojects')
+        .select('id, name, color')
+        .eq('project_id', boardId)
+        .order('name');
+      setBoardProjects((data ?? []) as { id: string; name: string; color: string }[]);
     } catch { setBoardProjects([]); }
   }
 
+  // Load projects + form config on mount
   useEffect(() => {
     setFields(loadFields(id));
-    // Load projects and columns
-    const projs: Project[] = JSON.parse(localStorage.getItem('mwr_projects') ?? '[]');
-    const cols: Column[] = JSON.parse(localStorage.getItem('mwr_columns') ?? '[]');
-    setProjects(projs);
-    setColumns(cols);
 
-    try {
-      const forms: any[] = JSON.parse(localStorage.getItem('mwr_forms') ?? '[]');
-      const f = forms.find(x => x.id === id);
-      if (f) {
-        setName(f.name);
-        setDescription(f.description ?? '');
-        setStage(f.target_stage ?? STAGES[0]);
-        setActive(f.is_active);
-        setExternal(f.external_access);
-        setInternal(f.internal_access ?? true);
-        const boardId = f.board_id || f.project_id || projs[0]?.id || '';
-        setSelectedProjectId(boardId);
-        loadBoardProjects(boardId);
-        setAssigneeId(f.assignee_id || '');
-        setAssigneeName(f.assignee_name || '');
-      } else if (projs.length > 0) {
-        setSelectedProjectId(projs[0].id);
+    async function loadData() {
+      const supabase = createClient();
+
+      // Projects from Supabase
+      const { data: projData } = await supabase
+        .from('projects')
+        .select('id, name')
+        .eq('org_id', ORG_ID)
+        .eq('is_archived', false)
+        .order('name');
+      const projs: Project[] = (projData ?? []) as Project[];
+      setProjects(projs);
+
+      // Form config from localStorage
+      try {
+        const forms: any[] = JSON.parse(localStorage.getItem('mwr_forms') ?? '[]');
+        const f = forms.find((x: any) => x.id === id);
+        if (f) {
+          setName(f.name);
+          setDescription(f.description ?? '');
+          setStage(f.target_stage ?? '');
+          setActive(f.is_active);
+          setExternal(f.external_access);
+          setInternal(f.internal_access ?? true);
+          const boardId = f.board_id || f.project_id || projs[0]?.id || '';
+          setSelectedProjectId(boardId);
+          loadBoardProjects(boardId);
+          setAssigneeId(f.assignee_id || '');
+          setAssigneeName(f.assignee_name || '');
+        } else if (projs.length > 0) {
+          setSelectedProjectId(projs[0].id);
+        }
+      } catch {}
+    }
+
+    loadData();
+  }, [id]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load columns from Supabase whenever selected project changes
+  useEffect(() => {
+    if (!selectedProjectId) { setColumns([]); return; }
+
+    async function loadColumns() {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('columns')
+        .select('id, name, project_id, position')
+        .eq('project_id', selectedProjectId)
+        .order('position');
+      const cols = (data ?? []) as Column[];
+      setColumns(cols);
+      // Reset stage to first column if current value isn't valid for this board
+      if (cols.length > 0) {
+        setStage((prev: string) => cols.some((c) => c.name === prev) ? prev : cols[0].name);
       }
-    } catch {}
-  }, [id]);
+    }
+
+    loadColumns();
+    loadBoardProjects(selectedProjectId);
+  }, [selectedProjectId]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Load org members from Supabase
+  useEffect(() => {
+    async function loadOrgMembers() {
+      const supabase = createClient();
+      const { data } = await supabase
+        .from('members')
+        .select('id, user_id, profiles(id, full_name)')
+        .eq('org_id', ORG_ID)
+        .order('joined_at');
+      if (data) {
+        setOrgMembers(
+          (data as any[]).map((m) => ({
+            id: m.id,
+            user_id: m.user_id,
+            name: (m.profiles as any)?.full_name ?? m.user_id.slice(0, 8),
+          }))
+        );
+      }
+    }
+    loadOrgMembers();
+  }, []);
 
   function persist(next: FormField[]) {
     setFields(next);
@@ -160,7 +218,7 @@ export default function FormEditPage({ params }: { params: Promise<{ id: string 
     try {
       const forms: any[] = JSON.parse(localStorage.getItem('mwr_forms') ?? '[]');
       const idx = forms.findIndex(x => x.id === id);
-      const member = TEAM_MEMBERS.find(m => m.id === assigneeId);
+      const member = orgMembers.find(m => m.user_id === assigneeId);
       const updatedForm = {
         ...(idx >= 0 ? forms[idx] : { id, responses: 0, created_at: new Date().toISOString().slice(0,10) }),
         name,
@@ -286,10 +344,11 @@ export default function FormEditPage({ params }: { params: Promise<{ id: string 
               value={stage}
               onChange={e => setStage(e.target.value)}
               className="w-full text-sm border border-neutral-200 rounded-lg px-3 py-1.5 outline-none focus:border-brand-teal"
+              disabled={projectColumns.length === 0}
             >
-              {projectColumns.length > 0
-                ? projectColumns.map(c => <option key={c.id} value={c.name}>{c.name}</option>)
-                : STAGES.map(s => <option key={s} value={s}>{s}</option>)
+              {projectColumns.length === 0
+                ? <option value="">Selecione um quadro primeiro...</option>
+                : projectColumns.map(c => <option key={c.id} value={c.name}>{c.name}</option>)
               }
             </select>
           </Cfg>
@@ -304,13 +363,13 @@ export default function FormEditPage({ params }: { params: Promise<{ id: string 
               value={assigneeId}
               onChange={e => {
                 setAssigneeId(e.target.value);
-                const m = TEAM_MEMBERS.find(m => m.id === e.target.value);
+                const m = orgMembers.find(m => m.user_id === e.target.value);
                 setAssigneeName(m?.name || '');
               }}
               className="w-full text-sm border border-neutral-200 rounded-lg px-3 py-1.5 outline-none focus:border-brand-teal bg-white"
             >
               <option value="">Ninguém (sem atribuição automática)</option>
-              {TEAM_MEMBERS.map(m => <option key={m.id} value={m.id}>{m.name}</option>)}
+              {orgMembers.map(m => <option key={m.user_id} value={m.user_id}>{m.name}</option>)}
             </select>
             {assigneeId && (
               <p className="text-[11px] text-brand-teal">✓ Tarefas serão atribuídas a {assigneeName}</p>
