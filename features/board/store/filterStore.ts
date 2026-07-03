@@ -106,7 +106,10 @@ export const useFilterStore = create<FilterState>()(
     setFilter: (key, value) =>
       set((s) => ({
         activeSavedId: null,
-        filters: isEmptyValue(value)
+        // Only `undefined` / `false` remove the key. Empty string and empty
+        // array are valid "enabled but not yet filled" states — stripping them
+        // here would make the row's enable toggle appear to do nothing.
+        filters: value === undefined || value === false
           ? (({ [key]: _omit, ...rest }) => rest)(s.filters)
           : { ...s.filters, [key]: value },
       })),

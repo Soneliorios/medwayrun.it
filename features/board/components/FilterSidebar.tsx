@@ -315,7 +315,7 @@ export function FilterSidebar({ onClose, boardId, options }: Props) {
             </AdvancedRow>
 
             {/* Boolean toggles */}
-            <div className="pt-1 space-y-1">
+            <div className="space-y-1">
               <FilterCheckbox label="Urgentes" checked={filters.isUrgent ?? false}
                 onChange={(v) => setFilter("isUrgent", v || undefined)} />
               <FilterCheckbox label="Atrasadas" checked={filters.isOverdue ?? false}
@@ -510,14 +510,18 @@ function FilterCheckbox({ label, checked, onChange }: {
   label: string; checked: boolean; onChange: (v: boolean) => void;
 }) {
   return (
-    <label className="flex items-center gap-2 cursor-pointer">
-      <input
-        type="checkbox"
-        checked={checked}
-        onChange={(e) => onChange(e.target.checked)}
-        className="w-3 h-3 accent-brand-teal"
-      />
-      <span className="text-xs text-neutral-600">{label}</span>
-    </label>
+    <div className="border-b border-neutral-50 pb-1.5">
+      <label className="flex items-center gap-2 cursor-pointer py-1">
+        <input
+          type="checkbox"
+          checked={checked}
+          onChange={(e) => onChange(e.target.checked)}
+          className="w-3.5 h-3.5 accent-brand-navy"
+        />
+        <span className={cn("text-xs font-medium", checked ? "text-brand-navy" : "text-neutral-500")}>
+          {label}
+        </span>
+      </label>
+    </div>
   );
 }
