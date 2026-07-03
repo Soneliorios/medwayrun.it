@@ -29,30 +29,77 @@ export default function FormsPage() {
     async function load() {
       setLoading(true);
       const supabase = createRawClient();
-      const { data } = await (supabase as any)
-        .from("forms")
-        .select("id, name, description, is_active, internal_access, external_access, portals, responses, target_stage, created_at, board_id")
-        .eq("org_id", ORG_ID)
-        .order("created_at", { ascending: false });
-      if (data) {
-        setForms(
-          (data as any[]).map((f) => ({
-            id: f.id,
-            name: f.name,
-            description: f.description ?? "",
-            type: f.external_access ? "external" : "internal",
-            responses: f.responses ?? 0,
-            project: f.board_id ?? "",
-            is_active: f.is_active,
-            is_favorite: false,
-            internal_access: f.internal_access,
-            external_access: f.external_access,
-            portals: f.portals ?? 0,
-            target_stage: f.target_stage ?? "A fazer",
-            created_at: f.created_at?.slice(0, 10) ?? "",
-          }))
-        );
+
+      async function fetchRows(): Promise<any[]> {
+        const { data } = await (supabase as any)
+          .from("forms")
+          .select("id, name, description, is_active, internal_access, external_access, portals, responses, target_stage, created_at, board_id")
+          .eq("org_id", ORG_ID)
+          .order("created_at", { ascending: false });
+        return (data as any[]) ?? [];
       }
+
+      let rows = await fetchRows();
+
+      // One-time migration: forms created before the Supabase migration still
+      // live only in this browser's localStorage (e.g. "form-1"). Push any that
+      // aren't in Supabase yet into the table so they show up here and work
+      // cross-device. Runs once per browser.
+      if (typeof window !== "undefined" && !localStorage.getItem("mwr_forms_migrated_v1")) {
+        try {
+          const legacy: any[] = JSON.parse(localStorage.getItem("mwr_forms") ?? "[]");
+          const existing = new Set(rows.map((r) => r.id));
+          const isUuid = (v: unknown) =>
+            typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
+          let migrated = 0;
+          for (const f of legacy) {
+            if (!f?.id || existing.has(f.id)) continue;
+            let fields: any[] = [];
+            try { fields = JSON.parse(localStorage.getItem(`mwr_form_fields_${f.id}`) ?? "[]"); } catch {}
+            const boardId = isUuid(f.board_id) ? f.board_id : isUuid(f.project_id) ? f.project_id : null;
+            const { error } = await (supabase as any).from("forms").upsert({
+              id: f.id,
+              org_id: ORG_ID,
+              name: f.name ?? "Formulário",
+              description: f.description ?? null,
+              is_active: f.is_active ?? true,
+              internal_access: f.internal_access ?? true,
+              external_access: f.external_access ?? false,
+              target_stage: f.target_stage ?? "A fazer",
+              board_id: boardId,
+              assignee_id: isUuid(f.assignee_id) ? f.assignee_id : null,
+              assignee_name: f.assignee_name ?? null,
+              portals: f.portals ?? 0,
+              responses: f.responses ?? 0,
+              fields,
+            }, { onConflict: "id" });
+            if (error) console.error("[forms] migrate error:", f.id, error);
+            else migrated++;
+          }
+          localStorage.setItem("mwr_forms_migrated_v1", "1");
+          if (migrated > 0) rows = await fetchRows();
+        } catch (e) {
+          console.error("[forms] legacy migration failed:", e);
+        }
+      }
+
+      setForms(
+        rows.map((f) => ({
+          id: f.id,
+          name: f.name,
+          description: f.description ?? "",
+          type: f.external_access ? "external" : "internal",
+          responses: f.responses ?? 0,
+          project: f.board_id ?? "",
+          is_active: f.is_active,
+          is_favorite: false,
+          internal_access: f.internal_access,
+          external_access: f.external_access,
+          portals: f.portals ?? 0,
+          target_stage: f.target_stage ?? "A fazer",
+          created_at: f.created_at?.slice(0, 10) ?? "",
+        }))
+      );
       setLoading(false);
     }
     load();
