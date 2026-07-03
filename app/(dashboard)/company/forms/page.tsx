@@ -24,6 +24,19 @@ export default function FormsPage() {
   const [showResponsesModal, setShowResponsesModal] = useState<FormItem | null>(null);
   const [newForm, setNewForm] = useState({ name: "", description: "", type: "internal" as "internal" | "external", target_stage: "A fazer", project: "" });
   const [creating, setCreating] = useState(false);
+  const [editingNameId, setEditingNameId] = useState<string | null>(null);
+  const [editNameValue, setEditNameValue] = useState("");
+
+  function startRename(id: string, current: string) {
+    setEditingNameId(id);
+    setEditNameValue(current);
+  }
+  function saveName(id: string) {
+    const trimmed = editNameValue.trim();
+    if (trimmed) patch(id, { name: trimmed });
+    setEditingNameId(null);
+    setEditNameValue("");
+  }
 
   useEffect(() => {
     async function load() {
@@ -108,6 +121,7 @@ export default function FormsPage() {
   async function patch(id: string, updates: Partial<FormItem>) {
     const supabase = createRawClient();
     const dbUpdates: Record<string, unknown> = {};
+    if ("name" in updates) dbUpdates.name = updates.name;
     if ("is_active" in updates) dbUpdates.is_active = updates.is_active;
     if ("internal_access" in updates) dbUpdates.internal_access = updates.internal_access;
     if ("external_access" in updates) { dbUpdates.external_access = updates.external_access; dbUpdates.type = updates.external_access ? "external" : "internal"; }
@@ -213,7 +227,33 @@ export default function FormsPage() {
                   <Fragment key={form.id}>
                     <tr className="border-b border-neutral-50 hover:bg-neutral-50/60">
                       <td className="px-3 py-2.5"><button onClick={() => patch(form.id, { is_favorite: !form.is_favorite })} title="Favoritar" className={cn(form.is_favorite ? "text-brand-yellow" : "text-neutral-200 hover:text-brand-yellow")}><Star size={14} fill={form.is_favorite ? "currentColor" : "none"} /></button></td>
-                      <td className="px-3 py-2.5"><Link href={"/company/forms/" + form.id + "/edit"} className="text-sm font-medium text-brand-navy hover:text-brand-teal">{form.name}</Link><p className="text-[10px] text-neutral-400 truncate max-w-[260px]">{form.description}</p></td>
+                      <td className="px-3 py-2.5">
+                        {editingNameId === form.id ? (
+                          <input
+                            autoFocus
+                            value={editNameValue}
+                            onChange={(e) => setEditNameValue(e.target.value)}
+                            onBlur={() => saveName(form.id)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") saveName(form.id);
+                              if (e.key === "Escape") { setEditingNameId(null); setEditNameValue(""); }
+                            }}
+                            className="text-sm font-medium text-brand-navy border border-brand-teal rounded px-1.5 py-0.5 outline-none w-full max-w-[260px]"
+                          />
+                        ) : (
+                          <div className="flex items-center gap-1.5 group/name">
+                            <Link href={"/company/forms/" + form.id + "/edit"} className="text-sm font-medium text-brand-navy hover:text-brand-teal">{form.name}</Link>
+                            <button
+                              onClick={() => startRename(form.id, form.name)}
+                              title="Renomear"
+                              className="opacity-0 group-hover/name:opacity-100 w-5 h-5 flex items-center justify-center rounded text-neutral-300 hover:text-brand-teal transition-all"
+                            >
+                              <Pencil size={11} />
+                            </button>
+                          </div>
+                        )}
+                        <p className="text-[10px] text-neutral-400 truncate max-w-[260px]">{form.description}</p>
+                      </td>
                       <td className="px-3 py-2.5"><button onClick={() => patch(form.id, { is_active: !form.is_active })} className={cn("w-7 h-3.5 rounded-full relative transition-all", form.is_active ? "bg-brand-teal" : "bg-neutral-200")}><span className={cn("absolute top-0.5 w-2.5 h-2.5 rounded-full bg-white shadow transition-all", form.is_active ? "left-[15px]" : "left-0.5")} /></button></td>
                       <td className="px-3 py-2.5"><Users size={14} className={form.internal_access ? "text-brand-navy" : "text-neutral-200"} /></td>
                       <td className="px-3 py-2.5"><span title={form.external_access ? "Público via link" : "Privado"}>{form.external_access ? <Globe size={14} className="text-brand-teal" /> : <Lock size={14} className="text-neutral-300" />}</span></td>
