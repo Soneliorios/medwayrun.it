@@ -188,6 +188,19 @@ export default function FormEditPage({ params }: { params: Promise<{ id: string 
   // Load org members from Supabase
   useEffect(() => {
     async function loadOrgMembers() {
+      // Primary source: the admin API (service role → real names, no RLS gaps).
+      try {
+        const res = await fetch('/api/admin/users');
+        if (res.ok) {
+          const users = (await res.json()) as { id: string; full_name: string }[];
+          if (Array.isArray(users) && users.length > 0) {
+            setOrgMembers(users.map((u) => ({ id: u.id, user_id: u.id, name: u.full_name })));
+            return;
+          }
+        }
+      } catch { /* fall through to direct query */ }
+
+      // Fallback: direct members + profiles join.
       const supabase = createClient();
       const { data } = await supabase
         .from('members')
