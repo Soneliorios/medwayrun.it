@@ -220,10 +220,14 @@ export function FilterSidebar({ onClose, boardId, options }: Props) {
               />
             </AdvancedRow>
 
-            {/* Multi-select rows */}
+            {/* Multi-select rows — only show rows that actually have options,
+                so the panel never shows dead "no options" filters. */}
             {MULTI_ROWS.map(({ key, optionKey }) => {
               const opts = (options[optionKey] as FilterOption[] | undefined) ?? [];
               const selected = (filters[key] as string[] | undefined) ?? [];
+              // Hide the row entirely when there's nothing to pick and nothing is
+              // already selected (keeps an active filter visible so it can be cleared).
+              if (opts.length === 0 && selected.length === 0) return null;
               return (
                 <AdvancedRow
                   key={key}

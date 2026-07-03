@@ -83,6 +83,10 @@ export const FILTER_KEY_LABELS: Record<keyof BoardFilters, string> = {
   boardProjectIds: "Projeto",
 };
 
+function savedFiltersKey(boardId: string) {
+  return `mwr_saved_filters_${boardId}`;
+}
+
 function isEmptyValue(v: unknown): boolean {
   return (
     v === undefined ||
@@ -121,19 +125,44 @@ export const useFilterStore = create<FilterState>()(
 
     applyFilters: (filters) => set({ filters, activeSavedId: null }),
 
-    loadSavedFilters: (_boardId) => {
-      // Supabase path: populated externally via server action / query
+    loadSavedFilters: (boardId) => {
+      if (typeof window === "undefined") return;
+      try {
+        const raw = localStorage.getItem(savedFiltersKey(boardId));
+        set({ savedFilters: raw ? JSON.parse(raw) : [] });
+      } catch {
+        set({ savedFilters: [] });
+      }
     },
 
-    saveCurrentFilter: (_name, _boardId) => {
-      // Supabase path: persisted externally via server action / mutation
+    saveCurrentFilter: (name, boardId) => {
+      const item: SavedFilterItem = {
+        id: `sf-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
+        board_id: boardId,
+        name,
+        filters: { ...get().filters },
+      };
+      set((s) => {
+        const next = [...s.savedFilters, item];
+        if (typeof window !== "undefined") {
+          localStorage.setItem(savedFiltersKey(boardId), JSON.stringify(next));
+        }
+        return { savedFilters: next, activeSavedId: item.id };
+      });
     },
 
     deleteSavedFilter: (id) => {
-      set((s) => ({
-        savedFilters: s.savedFilters.filter((f) => f.id !== id),
-        activeSavedId: s.activeSavedId === id ? null : s.activeSavedId,
-      }));
+      set((s) => {
+        const target = s.savedFilters.find((f) => f.id === id);
+        const next = s.savedFilters.filter((f) => f.id !== id);
+        if (typeof window !== "undefined" && target?.board_id) {
+          localStorage.setItem(savedFiltersKey(target.board_id), JSON.stringify(next));
+        }
+        return {
+          savedFilters: next,
+          activeSavedId: s.activeSavedId === id ? null : s.activeSavedId,
+        };
+      });
     },
 
     applySavedFilter: (id) => {

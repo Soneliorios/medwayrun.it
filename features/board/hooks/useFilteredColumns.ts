@@ -4,6 +4,7 @@ import { useMemo } from "react";
 import { useBoardStore } from "../store/boardStore";
 import { useFilterStore } from "../store/filterStore";
 import { useTimerStore } from "@/features/timer/store/timerStore";
+import { useAuthStore } from "@/features/auth/store/authStore";
 import { applyBoardFilters, extractFilterOptions } from "@/lib/filterUtils";
 import type { ColumnWithTasks } from "@/types";
 
@@ -20,10 +21,11 @@ export function useFilteredColumns(): {
   const rawColumns = useBoardStore((s) => s.columns);
   const filters = useFilterStore((s) => s.filters);
   const activeTimerTaskId = useTimerStore((s) => s.activeTaskId);
+  const currentUserId = useAuthStore((s) => s.profile?.id ?? null);
 
   const columns = useMemo(
-    () => applyBoardFilters(rawColumns, filters, { activeTimerTaskId, currentUserId: "mock-user" }),
-    [rawColumns, filters, activeTimerTaskId]
+    () => applyBoardFilters(rawColumns, filters, { activeTimerTaskId, currentUserId }),
+    [rawColumns, filters, activeTimerTaskId, currentUserId]
   );
 
   const options = useMemo(() => extractFilterOptions(rawColumns), [rawColumns]);

@@ -16,6 +16,7 @@ import { createClient, createRawClient } from "@/lib/supabase/client";
 import { useBoardStore } from "../store/boardStore";
 import { useFilterStore } from "../store/filterStore";
 import { useTimerStore } from "@/features/timer/store/timerStore";
+import { useAuthStore } from "@/features/auth/store/authStore";
 import { applyBoardFilters } from "@/lib/filterUtils";
 import { useBoardDnd } from "../hooks/useBoardDnd";
 import { KanbanColumn } from "./KanbanColumn";
@@ -37,6 +38,7 @@ export function KanbanBoard({ projectId, onTaskOpen, onAddTask }: Props) {
   const store = useBoardStore();
   const filters = useFilterStore((s) => s.filters);
   const activeTimerTaskId = useTimerStore((s) => s.activeTaskId);
+  const currentUserId = useAuthStore((s) => s.profile?.id ?? null);
   const { sensors, handleDragStart, handleDragOver, handleDragEnd } = useBoardDnd();
   const [addingColumn, setAddingColumn] = useState(false);
 
@@ -154,7 +156,7 @@ export function KanbanBoard({ projectId, onTaskOpen, onAddTask }: Props) {
   // full store data, so dragging/reordering still works while filtered.
   const displayColumns = applyBoardFilters(store.columns, filters, {
     activeTimerTaskId,
-    currentUserId: undefined,
+    currentUserId,
   });
 
   if (store.isLoading) {
