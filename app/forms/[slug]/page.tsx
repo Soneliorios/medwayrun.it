@@ -45,6 +45,7 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
   const [values, setValues] = useState<Record<string, string>>({});
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState<string | null>(null);
   const [notFound, setNotFound] = useState(false);
   const [boardProjects, setBoardProjects] = useState<{ id: string; name: string; color: string }[]>([]);
 
@@ -141,6 +142,7 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
+    setSubmitError(null);
     try {
       const titleField = effectiveFields.find(f => f.maps_to === 'title');
       const title = (titleField && values[titleField.id]) || meta?.name || 'Solicitação via formulário';
@@ -187,19 +189,27 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
       }
 
       const boardId = meta?.board_id || meta?.project_id;
-      if (boardId) {
-        await submitFormToSupabase({
-          title,
-          description,
-          board_id: boardId,
-          stage_name: meta?.stage ?? 'A fazer',
-          assignee_id: meta?.assignee_id ?? null,
-          form_id: slug,
-          nativeExtras,
-        });
+      if (!boardId) {
+        throw new Error('Este formulário não está vinculado a um quadro. Configure o quadro no editor do formulário.');
       }
+      await submitFormToSupabase({
+        title,
+        description,
+        board_id: boardId,
+        stage_name: meta?.stage ?? 'A fazer',
+        assignee_id: meta?.assignee_id ?? null,
+        form_id: slug,
+        nativeExtras,
+      });
     } catch (err) {
       console.error('Error creating task from form:', err);
+      setSubmitError(
+        err instanceof Error && err.message.includes('quadro')
+          ? err.message
+          : 'Não foi possível registrar sua solicitação. Tente novamente ou avise o responsável pelo formulário.'
+      );
+      setSubmitting(false);
+      return;
     }
     setSubmitting(false);
     setSubmitted(true);
@@ -317,6 +327,12 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
             );
           })}
         </div>
+
+        {submitError && (
+          <p className="mt-4 text-sm text-destructive bg-destructive/5 border border-destructive/20 rounded-lg px-3 py-2">
+            {submitError}
+          </p>
+        )}
 
         <button
           type="submit"
