@@ -2,6 +2,8 @@
 
 import { create } from "zustand";
 import { subscribeWithSelector } from "zustand/middleware";
+import { createRawClient } from "@/lib/supabase/client";
+import { useAuthStore } from "@/features/auth/store/authStore";
 
 export interface BoardFilters {
   subtasks?: "all" | "hide" | "only";
@@ -26,13 +28,11 @@ export interface BoardFilters {
   isOverdue?: boolean;
   isRunning?: boolean;
   hasOpenParts?: boolean;
-  createdByMe?: boolean;
   boardProjectIds?: string[];
 }
 
 export interface SavedFilterItem {
   id: string;
-  board_id: string | null;
   name: string;
   filters: BoardFilters;
 }
@@ -50,9 +50,9 @@ interface FilterState {
   setSidebarVisible: (v: boolean) => void;
   applyFilters: (filters: BoardFilters) => void;
 
-  // Saved filters (persisted via Supabase by the caller through these actions)
-  loadSavedFilters: (boardId: string) => void;
-  saveCurrentFilter: (name: string, boardId: string) => void;
+  // Saved filters — per user, available on every board (Supabase-backed)
+  loadSavedFilters: () => void;
+  saveCurrentFilter: (name: string) => void;
   deleteSavedFilter: (id: string) => void;
   applySavedFilter: (id: string) => void;
 }
@@ -81,13 +81,8 @@ export const FILTER_KEY_LABELS: Record<keyof BoardFilters, string> = {
   isOverdue: "Atrasadas",
   isRunning: "Em execução",
   hasOpenParts: "Minhas partes abertas",
-  createdByMe: "Criadas por mim",
   boardProjectIds: "Projeto",
 };
-
-function savedFiltersKey(boardId: string) {
-  return `mwr_saved_filters_${boardId}`;
-}
 
 function isEmptyValue(v: unknown): boolean {
   return (
@@ -130,44 +125,41 @@ export const useFilterStore = create<FilterState>()(
 
     applyFilters: (filters) => set({ filters, activeSavedId: null }),
 
-    loadSavedFilters: (boardId) => {
-      if (typeof window === "undefined") return;
-      try {
-        const raw = localStorage.getItem(savedFiltersKey(boardId));
-        set({ savedFilters: raw ? JSON.parse(raw) : [] });
-      } catch {
-        set({ savedFilters: [] });
-      }
+    loadSavedFilters: async () => {
+      const userId = useAuthStore.getState().profile?.id;
+      if (!userId) { set({ savedFilters: [] }); return; }
+      const sb = createRawClient();
+      const { data, error } = await (sb as any)
+        .from("saved_filters")
+        .select("id, name, filters")
+        .eq("user_id", userId)
+        .order("created_at");
+      if (error) { console.error("[filters] load error:", error); return; }
+      set({ savedFilters: (data ?? []) as SavedFilterItem[] });
     },
 
-    saveCurrentFilter: (name, boardId) => {
-      const item: SavedFilterItem = {
-        id: `sf-${Date.now()}-${Math.random().toString(36).slice(2, 6)}`,
-        board_id: boardId,
-        name,
-        filters: { ...get().filters },
-      };
-      set((s) => {
-        const next = [...s.savedFilters, item];
-        if (typeof window !== "undefined") {
-          localStorage.setItem(savedFiltersKey(boardId), JSON.stringify(next));
-        }
-        return { savedFilters: next, activeSavedId: item.id };
-      });
+    saveCurrentFilter: async (name) => {
+      const userId = useAuthStore.getState().profile?.id;
+      if (!userId) return;
+      const filters = { ...get().filters };
+      const sb = createRawClient();
+      const { data, error } = await (sb as any)
+        .from("saved_filters")
+        .insert({ user_id: userId, name, filters })
+        .select("id, name, filters")
+        .single();
+      if (error) { console.error("[filters] save error:", error); return; }
+      set((s) => ({ savedFilters: [...s.savedFilters, data as SavedFilterItem], activeSavedId: data.id }));
     },
 
-    deleteSavedFilter: (id) => {
-      set((s) => {
-        const target = s.savedFilters.find((f) => f.id === id);
-        const next = s.savedFilters.filter((f) => f.id !== id);
-        if (typeof window !== "undefined" && target?.board_id) {
-          localStorage.setItem(savedFiltersKey(target.board_id), JSON.stringify(next));
-        }
-        return {
-          savedFilters: next,
-          activeSavedId: s.activeSavedId === id ? null : s.activeSavedId,
-        };
-      });
+    deleteSavedFilter: async (id) => {
+      set((s) => ({
+        savedFilters: s.savedFilters.filter((f) => f.id !== id),
+        activeSavedId: s.activeSavedId === id ? null : s.activeSavedId,
+      }));
+      const sb = createRawClient();
+      const { error } = await (sb as any).from("saved_filters").delete().eq("id", id);
+      if (error) console.error("[filters] delete error:", error);
     },
 
     applySavedFilter: (id) => {

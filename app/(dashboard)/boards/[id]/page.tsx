@@ -31,6 +31,8 @@ import { useProjectStore } from "@/features/projects/store/projectStore";
 import { useBoardRealtime } from "@/features/board/hooks/useBoardRealtime";
 import { useBoardData } from "@/features/board/hooks/useBoardData";
 import { useBoardAccess } from "@/lib/boardAccess";
+import { useOrgMembers } from "@/lib/useOrgMembers";
+import { useAuthStore } from "@/features/auth/store/authStore";
 import { useSelectionStore } from "@/features/board/store/selectionStore";
 import { useFilterStore, useActiveFilterCount } from "@/features/board/store/filterStore";
 import { useFilteredColumns } from "@/features/board/hooks/useFilteredColumns";
@@ -77,14 +79,21 @@ export default function BoardPage({ params }: Props) {
   useEffect(() => { boardProjectStore.load(boardId); }, [boardId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const { access, loading: accessLoading } = useBoardAccess(boardId);
+  const orgMembers = useOrgMembers();
 
   useBoardData(boardId);
   useBoardRealtime(boardId);
 
 
-  // Load saved filters + hydrate filters from URL on mount.
+  // Load the user's saved filters (per-user, all boards) once the profile is ready.
+  const currentUserId = useAuthStore((s) => s.profile?.id);
   useEffect(() => {
-    loadSavedFilters(boardId);
+    if (currentUserId) loadSavedFilters();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUserId]);
+
+  // Hydrate filters from URL on mount / board change.
+  useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const encoded = params.get("f");
     if (encoded) {
@@ -106,15 +115,17 @@ export default function BoardPage({ params }: Props) {
   }, [filters]);
 
   // Filter options: board-derived + projects from the project store.
+  // "Criado por" lists ALL org members (not only users who already created tasks).
   const filterOptions = useMemo(
     () => ({
       ...derivedOptions,
+      creators: orgMembers.map((m) => ({ value: m.id, label: m.full_name })),
       projects: projects.map((p) => ({ value: p.id, label: p.name, color: p.color })),
       boardProjects: boardProjectStore.projects.map((p) => ({ value: p.id, label: p.name, color: p.color })),
       clients: [],
       teams: [],
     }),
-    [derivedOptions, projects, boardProjectStore.projects]
+    [derivedOptions, orgMembers, projects, boardProjectStore.projects]
   );
 
   // Block access to private boards the user can't view

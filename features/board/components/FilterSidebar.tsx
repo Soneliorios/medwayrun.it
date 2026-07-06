@@ -322,8 +322,6 @@ export function FilterSidebar({ onClose, boardId, options }: Props) {
                 onChange={(v) => setFilter("isOverdue", v || undefined)} />
               <FilterCheckbox label="Em execução" checked={filters.isRunning ?? false}
                 onChange={(v) => setFilter("isRunning", v || undefined)} />
-              <FilterCheckbox label="Criadas por mim" checked={filters.createdByMe ?? false}
-                onChange={(v) => setFilter("createdByMe", v || undefined)} />
               <FilterCheckbox label="Minhas partes abertas" checked={filters.hasOpenParts ?? false}
                 onChange={(v) => setFilter("hasOpenParts", v || undefined)} />
             </div>
@@ -343,7 +341,7 @@ export function FilterSidebar({ onClose, boardId, options }: Props) {
               autoFocus
               onKeyDown={(e) => {
                 if (e.key === "Enter" && savingName.trim()) {
-                  saveCurrentFilter(savingName.trim(), boardId);
+                  saveCurrentFilter(savingName.trim());
                   setSavingName(null);
                 }
                 if (e.key === "Escape") setSavingName(null);
@@ -353,7 +351,7 @@ export function FilterSidebar({ onClose, boardId, options }: Props) {
               size="sm"
               className="h-7 px-2 text-xs bg-brand-teal hover:opacity-90 text-white"
               disabled={!savingName.trim()}
-              onClick={() => { saveCurrentFilter(savingName.trim(), boardId); setSavingName(null); }}
+              onClick={() => { saveCurrentFilter(savingName.trim()); setSavingName(null); }}
             >
               OK
             </Button>
