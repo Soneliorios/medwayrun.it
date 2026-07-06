@@ -5,6 +5,10 @@ import { Plus, Trash2, GripVertical, Search, AlertCircle, CheckCircle2, ArrowRig
 import { Separator } from "@/components/ui/separator";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn, getInitials } from "@/lib/utils";
+import { createRawClient } from "@/lib/supabase/client";
+import { useOrgMembers } from "@/lib/useOrgMembers";
+import { useBoardStore } from "@/features/board/store/boardStore";
+
 interface MockTaskSequence {
   id: string; task_id: string; user_id: string; name: string;
   order_position: number; status: "pending" | "active" | "done";
@@ -14,9 +18,6 @@ interface MockTaskDependency {
   dependency_task_title: string | null; dependency_board_id: string | null;
   dependency_board_name: string | null; type: "prerequisite" | "subsequent";
 }
-import { useBoardStore } from "@/features/board/store/boardStore";
-
-const DEMO_MEMBERS: Array<{ id: string; name: string }> = [];
 
 interface AvailableTask {
   id: string;
@@ -52,20 +53,41 @@ export function RulesTab({ taskId }: Props) {
     [columns, taskId]
   );
 
-  // All-boards tasks (Supabase implementation pending — fall back to current board)
+  // All-boards tasks (cross-board search pending — fall back to current board)
   const allBoardTasks: AvailableTask[] = useMemo(() => boardTasks, [boardTasks]);
 
+  const orgMembers = useOrgMembers();
   const [sequence, setSequence] = useState<MockTaskSequence[]>([]);
   const [deps, setDeps] = useState<MockTaskDependency[]>([]);
 
-  function reload() {
-    // No-op: sequence/dependency data requires Supabase implementation
+  const titleOf = (id: string) => columns.flatMap((c) => c.tasks).find((t) => t.id === id)?.title ?? "Tarefa";
+
+  async function reload() {
+    const sb = createRawClient();
+    const [{ data: depRows }, { data: seqRows }] = await Promise.all([
+      (sb as any).from("task_dependencies").select("task_id, depends_on_task_id, dependency_type").eq("task_id", taskId),
+      (sb as any).from("task_sequences").select("*").eq("task_id", taskId).order("order_position"),
+    ]);
+    setDeps(((depRows ?? []) as any[]).map((d) => ({
+      id: `${d.depends_on_task_id}:${d.dependency_type}`,
+      task_id: d.task_id,
+      dependency_task_id: d.depends_on_task_id,
+      dependency_task_title: titleOf(d.depends_on_task_id),
+      dependency_board_id: null,
+      dependency_board_name: null,
+      type: d.dependency_type,
+    })));
+    setSequence(((seqRows ?? []) as any[]).map((s) => ({
+      id: s.id, task_id: s.task_id, user_id: s.user_id,
+      name: orgMembers.find((m) => m.id === s.user_id)?.full_name ?? s.user_id.slice(0, 8),
+      order_position: s.order_position, status: s.status,
+    })));
   }
 
   useEffect(() => {
     reload();
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [taskId]);
+  }, [taskId, orgMembers]);
 
   const prerequisites = deps.filter((d) => d.type === "prerequisite");
   const subsequents = deps.filter((d) => d.type === "subsequent");
@@ -73,26 +95,51 @@ export function RulesTab({ taskId }: Props) {
   // ── Sequence handlers ──────────────────────────────────────────────────────
   const [memberPickerOpen, setMemberPickerOpen] = useState(false);
 
-  function addToSequence(_member: { id: string; name: string }) {
+  async function addToSequence(member: { id: string; name: string }) {
     setMemberPickerOpen(false);
-    // No-op: requires Supabase implementation
+    const sb = createRawClient();
+    const nextPos = sequence.length > 0 ? Math.max(...sequence.map((s) => s.order_position)) + 1 : 0;
+    const { error } = await (sb as any).from("task_sequences").insert({ task_id: taskId, user_id: member.id, order_position: nextPos, status: "pending" });
+    if (error) { console.error("[sequence] add error:", error); return; }
+    reload();
   }
-  function removeFromSequence(_id: string) {
-    // No-op: requires Supabase implementation
+  async function removeFromSequence(id: string) {
+    const sb = createRawClient();
+    const { error } = await (sb as any).from("task_sequences").delete().eq("id", id);
+    if (error) { console.error("[sequence] remove error:", error); return; }
+    setSequence((prev) => prev.filter((s) => s.id !== id));
   }
 
   const [dragIndex, setDragIndex] = useState<number | null>(null);
-  function handleDrop(_targetIndex: number) {
+  async function handleDrop(targetIndex: number) {
+    const from = dragIndex;
     setDragIndex(null);
-    // No-op: requires Supabase implementation
+    if (from === null || from === targetIndex) return;
+    const reordered = [...sequence];
+    const [moved] = reordered.splice(from, 1);
+    reordered.splice(targetIndex, 0, moved);
+    setSequence(reordered.map((s, i) => ({ ...s, order_position: i })));
+    const sb = createRawClient();
+    await Promise.all(reordered.map((s, i) => (sb as any).from("task_sequences").update({ order_position: i }).eq("id", s.id)));
   }
 
   // ── Dependency handlers ────────────────────────────────────────────────────
-  function addDependency(_task: AvailableTask, _type: "prerequisite" | "subsequent") {
-    // No-op: requires Supabase implementation
+  async function addDependency(task: AvailableTask, type: "prerequisite" | "subsequent") {
+    const sb = createRawClient();
+    const { error } = await (sb as any).from("task_dependencies").insert({ task_id: taskId, depends_on_task_id: task.id, dependency_type: type });
+    if (error) { console.error("[deps] add error:", error); return; }
+    setDeps((prev) => [...prev, {
+      id: `${task.id}:${type}`, task_id: taskId, dependency_task_id: task.id,
+      dependency_task_title: task.title, dependency_board_id: null, dependency_board_name: null, type,
+    }]);
   }
-  function removeDependency(_id: string) {
-    // No-op: requires Supabase implementation
+  async function removeDependency(id: string) {
+    const [depId, type] = id.split(":");
+    const sb = createRawClient();
+    const { error } = await (sb as any).from("task_dependencies").delete()
+      .eq("task_id", taskId).eq("depends_on_task_id", depId).eq("dependency_type", type);
+    if (error) { console.error("[deps] remove error:", error); return; }
+    setDeps((prev) => prev.filter((d) => d.id !== id));
   }
 
   return (
@@ -155,7 +202,10 @@ export function RulesTab({ taskId }: Props) {
 
         {memberPickerOpen ? (
           <div className="rounded-lg border border-brand-teal/30 bg-white p-2 space-y-0.5">
-            {DEMO_MEMBERS.filter((m) => !sequence.some((s) => s.user_id === m.id)).map((m) => (
+            {orgMembers
+              .map((m) => ({ id: m.id, name: m.full_name }))
+              .filter((m) => !sequence.some((s) => s.user_id === m.id))
+              .map((m) => (
               <button
                 key={m.id}
                 onClick={() => addToSequence(m)}

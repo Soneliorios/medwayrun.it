@@ -33,6 +33,7 @@ import {
   Zap,
   Users,
   ClipboardCheck,
+  History,
   Paperclip,
   Mail,
   UserPlus,
@@ -52,6 +53,7 @@ import {
 import { cn, formatDate, formatDateFull, isOverdue, formatHours } from "@/lib/utils";
 import { PRIORITY_LABELS, PRIORITY_COLORS, formatElapsed } from "@/types";
 import { taskService } from "../services/taskService";
+import { activityService, type TaskActivity } from "../services/activityService";
 import { useBoardStore } from "@/features/board/store/boardStore";
 import { useAuthStore } from "@/features/auth/store/authStore";
 import { useTimerStore } from "@/features/timer/store/timerStore";
@@ -64,13 +66,13 @@ import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
 import { useRole } from "@/features/auth/hooks/useRole";
 import { useBoardProjectStore } from "@/features/board/store/boardProjectStore";
-import { createClient } from "@/lib/supabase/client";
+import { createClient, createRawClient } from "@/lib/supabase/client";
 import { ORG_ID } from "@/lib/utils";
 import type { TaskWithRelations } from "@/types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
-type DetailTab = "description" | "comments" | "checklist" | "subtasks" | "stage" | "attachments" | "emails" | "rules";
+type DetailTab = "description" | "comments" | "checklist" | "subtasks" | "stage" | "attachments" | "emails" | "rules" | "history";
 
 const TABS: { id: DetailTab; label: string; icon: React.ElementType }[] = [
   { id: "description", label: "Descrição", icon: FileText },
@@ -81,6 +83,7 @@ const TABS: { id: DetailTab; label: string; icon: React.ElementType }[] = [
   { id: "attachments", label: "Anexos", icon: Paperclip },
   { id: "emails", label: "Emails", icon: Mail },
   { id: "rules", label: "Regras", icon: Zap },
+  { id: "history", label: "Histórico", icon: History },
 ];
 
 const TASK_TYPES = ["Padrão", "Bug", "Feature", "Melhoria", "Análise"] as const;
@@ -240,20 +243,30 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
     loadOrgProfiles();
   }, []);
 
-  // Followers — no DB table yet, persisted per task in localStorage
+  // Followers — persisted in Supabase (task_followers)
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem(`mwr_followers_${taskId}`);
-      setFollowers(raw ? JSON.parse(raw) : []);
-    } catch { setFollowers([]); }
+    const sb = createRawClient();
+    (sb as any)
+      .from("task_followers")
+      .select("user_id")
+      .eq("task_id", taskId)
+      .then(({ data }: { data: { user_id: string }[] | null }) => {
+        setFollowers((data ?? []).map((r) => r.user_id));
+      });
   }, [taskId]);
 
-  function toggleFollower(id: string) {
-    setFollowers((prev) => {
-      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
-      try { localStorage.setItem(`mwr_followers_${taskId}`, JSON.stringify(next)); } catch {}
-      return next;
-    });
+  async function toggleFollower(id: string) {
+    const sb = createRawClient();
+    const isFollowing = followers.includes(id);
+    // optimistic
+    setFollowers((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
+    if (isFollowing) {
+      const { error } = await (sb as any).from("task_followers").delete().eq("task_id", taskId).eq("user_id", id);
+      if (error) { console.error("[followers] remove error:", error); setFollowers((prev) => [...prev, id]); }
+    } else {
+      const { error } = await (sb as any).from("task_followers").insert({ task_id: taskId, user_id: id });
+      if (error) { console.error("[followers] add error:", error); setFollowers((prev) => prev.filter((x) => x !== id)); }
+    }
   }
 
   // Close followers picker on outside click
@@ -1082,6 +1095,8 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
 
                 {/* RULES */}
                 {activeTab === "rules" && <RulesTab taskId={taskId} />}
+
+                {activeTab === "history" && <HistoryTab taskId={taskId} columns={boardColumns} orgProfiles={orgProfiles} />}
               </div>
 
               {/* ── Metadata sidebar ──────────────────────────────── */}
@@ -1979,3 +1994,91 @@ function MetaField({
 
 
 
+
+// ── Histórico da tarefa ──────────────────────────────────────────────────────
+const STATUS_LABELS_PT: Record<string, string> = {
+  open: "Aberta", in_progress: "Em andamento", delivered: "Entregue", archived: "Arquivada",
+};
+const PRIORITY_LABELS_PT: Record<string, string> = {
+  low: "Baixa", medium: "Média", high: "Alta", urgent: "Urgente",
+};
+
+function prettyValue(field: string | null, value: string | null): string {
+  if (value === null || value === "") return "—";
+  if (field === "situacao") return STATUS_LABELS_PT[value] ?? value;
+  if (field === "prioridade") return PRIORITY_LABELS_PT[value] ?? value;
+  return value;
+}
+
+function HistoryTab({
+  taskId,
+  columns,
+  orgProfiles,
+}: {
+  taskId: string;
+  columns: { id: string; name: string }[];
+  orgProfiles: Array<{ id: string; full_name: string | null }>;
+}) {
+  const [items, setItems] = useState<TaskActivity[]>([]);
+  const [loading, setLoading] = useState(true);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoading(true);
+    activityService.list(taskId).then((rows) => {
+      if (!cancelled) { setItems(rows); setLoading(false); }
+    });
+    return () => { cancelled = true; };
+  }, [taskId]);
+
+  function resolveName(id: string | null): string {
+    if (!id) return "Sistema";
+    return orgProfiles.find((p) => p.id === id)?.full_name ?? id.slice(0, 8);
+  }
+
+  if (loading) {
+    return <p className="text-sm text-neutral-400 py-6 text-center">Carregando histórico...</p>;
+  }
+  if (items.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-center">
+        <History size={30} className="text-neutral-200 mb-3" />
+        <p className="text-sm text-neutral-400">Nenhuma alteração registrada ainda</p>
+        <p className="text-xs text-neutral-300 mt-1">Mudanças de etapa, responsável, situação e outros campos aparecerão aqui.</p>
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-2">
+      {items.map((a) => {
+        const who = a.user_name ?? resolveName(a.user_id);
+        const when = new Date(a.created_at).toLocaleString("pt-BR", {
+          day: "2-digit", month: "short", year: "numeric", hour: "2-digit", minute: "2-digit",
+        });
+        return (
+          <div key={a.id} className="flex gap-3 rounded-lg border border-neutral-100 bg-white px-3 py-2">
+            <div className="w-6 h-6 rounded-full bg-brand-navy/10 flex items-center justify-center text-[9px] font-bold text-brand-navy shrink-0 mt-0.5">
+              {getInitials(who)}
+            </div>
+            <div className="flex-1 min-w-0">
+              <p className="text-xs text-neutral-700">
+                <span className="font-semibold text-brand-navy">{who}</span>{" "}
+                <span className="text-neutral-500">{a.action.toLowerCase()}</span>
+                {a.from_value !== null || a.to_value !== null ? (
+                  <>
+                    {": "}
+                    <span className="text-neutral-400 line-through">{prettyValue(a.field, a.from_value)}</span>
+                    {" → "}
+                    <span className="font-medium text-neutral-700">{prettyValue(a.field, a.to_value)}</span>
+                  </>
+                ) : null}
+              </p>
+              <p className="text-[10px] text-neutral-400 mt-0.5">{when}</p>
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
