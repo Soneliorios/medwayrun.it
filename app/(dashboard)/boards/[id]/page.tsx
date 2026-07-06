@@ -16,6 +16,7 @@ import {
   Minimize2,
   Users as UsersIcon,
   Layers,
+  Lock,
   ArrowRight as ArrowRightIcon,
   FolderKanban,
 } from "lucide-react";
@@ -29,6 +30,7 @@ import { BoardProjectsView } from "../../../../features/board/components/BoardPr
 import { useProjectStore } from "@/features/projects/store/projectStore";
 import { useBoardRealtime } from "@/features/board/hooks/useBoardRealtime";
 import { useBoardData } from "@/features/board/hooks/useBoardData";
+import { useBoardAccess } from "@/lib/boardAccess";
 import { useSelectionStore } from "@/features/board/store/selectionStore";
 import { useFilterStore, useActiveFilterCount } from "@/features/board/store/filterStore";
 import { useFilteredColumns } from "@/features/board/hooks/useFilteredColumns";
@@ -74,6 +76,8 @@ export default function BoardPage({ params }: Props) {
   const boardProjectStore = useBoardProjectStore();
   useEffect(() => { boardProjectStore.load(boardId); }, [boardId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  const { access, loading: accessLoading } = useBoardAccess(boardId);
+
   useBoardData(boardId);
   useBoardRealtime(boardId);
 
@@ -112,6 +116,22 @@ export default function BoardPage({ params }: Props) {
     }),
     [derivedOptions, projects, boardProjectStore.projects]
   );
+
+  // Block access to private boards the user can't view
+  if (!accessLoading && !access.canView) {
+    return (
+      <div className="flex flex-col items-center justify-center h-full text-center gap-3 p-8">
+        <Lock size={36} className="text-neutral-300" />
+        <div>
+          <p className="text-base font-semibold text-brand-navy">Você não tem acesso a este quadro</p>
+          <p className="text-sm text-neutral-400 mt-1">Este quadro é privado. Peça acesso a um administrador ou à liderança.</p>
+        </div>
+        <button onClick={() => router.push("/boards")} className="mt-2 text-sm text-brand-teal hover:underline">
+          ← Voltar aos quadros
+        </button>
+      </div>
+    );
+  }
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -201,6 +221,7 @@ export default function BoardPage({ params }: Props) {
             <KanbanBoard
               projectId={boardId}
               onTaskOpen={setOpenTaskId}
+              canCreate={access.canCreate}
               onAddTask={(columnId) =>
                 window.dispatchEvent(
                   new CustomEvent("open-create-task-in-column", {

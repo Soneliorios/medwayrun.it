@@ -18,9 +18,10 @@ interface Props {
   column: ColumnWithTasks;
   onTaskOpen: (taskId: string) => void;
   onAddTask: (columnId: string) => void;
+  canCreate?: boolean;
 }
 
-export function KanbanColumn({ column, onTaskOpen, onAddTask }: Props) {
+export function KanbanColumn({ column, onTaskOpen, onAddTask, canCreate = true }: Props) {
   const { isOver, setNodeRef } = useDroppable({
     id: column.id,
     data: { type: "column", column },
@@ -185,12 +186,14 @@ export function KanbanColumn({ column, onTaskOpen, onAddTask }: Props) {
       </div>
 
       {/* Add task button */}
-      <button
-        onClick={() => onAddTask(column.id)}
-        className="mt-2 w-full text-xs text-neutral-400 hover:text-brand-navy py-1.5 rounded-lg hover:bg-neutral-100 transition-colors text-left px-2"
-      >
-        + Adicionar tarefa
-      </button>
+      {canCreate && (
+        <button
+          onClick={() => onAddTask(column.id)}
+          className="mt-2 w-full text-xs text-neutral-400 hover:text-brand-navy py-1.5 rounded-lg hover:bg-neutral-100 transition-colors text-left px-2"
+        >
+          + Adicionar tarefa
+        </button>
+      )}
     </div>
   );
 }

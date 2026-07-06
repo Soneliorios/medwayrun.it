@@ -55,6 +55,7 @@ import { PRIORITY_LABELS, PRIORITY_COLORS, formatElapsed } from "@/types";
 import { taskService } from "../services/taskService";
 import { activityService, type TaskActivity } from "../services/activityService";
 import { approvalService } from "../services/approvalService";
+import { useBoardAccess } from "@/lib/boardAccess";
 import { areasService } from "@/lib/areasService";
 import { tagsService, type Label } from "../services/tagsService";
 import { useBoardStore } from "@/features/board/store/boardStore";
@@ -167,6 +168,8 @@ interface Props {
 
 export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   const [task, setTask] = useState<TaskWithRelations | null>(null);
+  // Board-level edit permission (view-only members can't change fields)
+  const { access: boardAccess } = useBoardAccess((task as any)?.project_id ?? "");
   const [loading, setLoading] = useState(true);
   const [activeTab, setActiveTab] = useState<DetailTab>("description");
   const [newChecklistItem, setNewChecklistItem] = useState("");
@@ -399,6 +402,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
 
   async function handleFieldUpdate(field: string, value: string | null) {
     if (!task) return;
+    if (!boardAccess.canEdit) return; // view-only members can't change fields
     const snapshot = task;
     setTask((prev) => prev ? { ...prev, [field]: value } as TaskWithRelations : null);
     store.updateTask(taskId, { [field]: value } as any);

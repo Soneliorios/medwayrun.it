@@ -16,6 +16,7 @@ import { ProjectForm } from "@/features/projects/components/ProjectForm";
 import { useProjectStore } from "@/features/projects/store/projectStore";
 import { useProjectActions } from "@/features/projects/hooks/useProjects";
 import { createRawClient } from "@/lib/supabase/client";
+import { useBoardAccessMap } from "@/lib/boardAccess";
 import { cn } from "@/lib/utils";
 import type { Project } from "@/types";
 
@@ -58,6 +59,7 @@ export function ProjectsExplorer({ title = "Quadros", noun = "quadro" }: { title
   const [filterBy, setFilterBy] = useState<FilterBy>("all");
   const [page, setPage] = useState(0);
   const [stats, setStats] = useState<Record<string, ProjectStats>>({});
+  const { map: accessMap, loading: accessLoading } = useBoardAccessMap();
 
   useEffect(() => {
     let cancelled = false;
@@ -71,6 +73,9 @@ export function ProjectsExplorer({ title = "Quadros", noun = "quadro" }: { title
 
   const filtered = useMemo(() => {
     let list = projects.filter((p) => p.name.toLowerCase().includes(search.toLowerCase()));
+    // Hide boards the user cannot view (private without access). While access is
+    // loading, don't hide anything to avoid a flash of empty state.
+    if (!accessLoading) list = list.filter((p) => accessMap[p.id]?.canView !== false);
     if (filterBy === "favorites") list = list.filter((p) => p.is_favorite);
     // "active" = has open tasks; "all" = everything
     if (filterBy === "active") list = list.filter((p) => (stats[p.id]?.total ?? 0) > (stats[p.id]?.delivered ?? 0));

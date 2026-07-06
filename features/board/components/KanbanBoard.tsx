@@ -29,10 +29,11 @@ interface Props {
   projectId: string;
   onTaskOpen: (taskId: string) => void;
   onAddTask: (columnId: string) => void;
+  canCreate?: boolean;
 }
 
 
-export function KanbanBoard({ projectId, onTaskOpen, onAddTask }: Props) {
+export function KanbanBoard({ projectId, onTaskOpen, onAddTask, canCreate = true }: Props) {
   const store = useBoardStore();
   const filters = useFilterStore((s) => s.filters);
   const activeTimerTaskId = useTimerStore((s) => s.activeTaskId);
@@ -115,24 +116,27 @@ export function KanbanBoard({ projectId, onTaskOpen, onAddTask }: Props) {
               column={column}
               onTaskOpen={onTaskOpen}
               onAddTask={onAddTask}
+              canCreate={canCreate}
             />
           ))}
         </SortableContext>
 
         {/* Add column button */}
-        <button
-          onClick={handleAddColumn}
-          disabled={addingColumn}
-          className={cn(
-            "w-64 shrink-0 h-11 rounded-xl border-2 border-dashed border-neutral-200",
-            "flex items-center justify-center gap-1.5",
-            "text-sm text-neutral-400 hover:text-brand-navy hover:border-brand-navy/30",
-            "hover:bg-white transition-all"
-          )}
-        >
-          <Plus size={14} />
-          Nova coluna
-        </button>
+        {canCreate && (
+          <button
+            onClick={handleAddColumn}
+            disabled={addingColumn}
+            className={cn(
+              "w-64 shrink-0 h-11 rounded-xl border-2 border-dashed border-neutral-200",
+              "flex items-center justify-center gap-1.5",
+              "text-sm text-neutral-400 hover:text-brand-navy hover:border-brand-navy/30",
+              "hover:bg-white transition-all"
+            )}
+          >
+            <Plus size={14} />
+            Nova coluna
+          </button>
+        )}
       </div>
 
       {/* Drag overlay — renders the "ghost" card that follows the cursor */}
