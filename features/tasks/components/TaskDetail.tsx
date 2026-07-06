@@ -277,21 +277,46 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   async function loadQueue() { setQueue(await sequenceService.list(taskId)); }
   useEffect(() => { loadQueue(); /* eslint-disable-next-line */ }, [taskId]);
   const queueRemaining = queue.filter((r) => r.status !== "done").length;
+  const activeQueueUserId = queue.find((r) => r.status === "active")?.user_id
+    ?? queue.find((r) => r.status !== "done")?.user_id ?? null;
+  // Only the current responsible (head of the queue) may deliver their part.
+  const isActiveResponsible = !!activeQueueUserId && activeQueueUserId === user?.id;
 
-  async function handleDeliverMyPart() {
+  // "part" = advance the queue via the same delivery popup; "full" = deliver task
+  const [deliveryMode, setDeliveryMode] = useState<"full" | "part">("full");
+
+  // Called from the delivery dialog when in "part" mode.
+  async function handleDeliverMyPart(opts?: { hours?: number; link?: string; note?: string }) {
     if (!task) return;
     const willFinish = queueRemaining <= 1;
-    // Final delivery must respect the approval block
     if (willFinish && (await refreshPendingApproval())) { setDeliverBlockedWarning(true); return; }
-    const { finished } = await sequenceService.advance(taskId);
+    const { finished, nextUserId } = await sequenceService.advance(taskId);
     if (finished) {
-      await handleDeliver();
+      await handleDeliver(opts); // finalizes the task (saves hours/link/note, moves column)
     } else {
-      const t = await taskService.get(taskId);
-      setTask(t);
-      store.updateTask(taskId, { assignee_id: (t as any)?.assignee_id } as any);
+      // Reflect the new responsible immediately (no refresh) with resolved profile
+      const p = orgProfiles.find((x) => x.id === nextUserId);
+      const assignee = p ? { id: p.id, full_name: p.full_name, avatar_url: p.avatar_url } : null;
+      setTask((t) => (t ? ({ ...t, assignee_id: nextUserId, assignee } as TaskWithRelations) : t));
+      store.updateTask(taskId, { assignee_id: nextUserId, assignee } as any);
     }
     loadQueue();
+  }
+
+  function openDeliveryDialog(mode: "full" | "part") {
+    if (!task) return;
+    const totalSec = Math.round((task.tracked_hours ?? 0) * 3600) + elapsed;
+    const h = Math.floor(totalSec / 3600);
+    const m = Math.floor((totalSec % 3600) / 60);
+    const s = totalSec % 60;
+    setDeliverySeconds(totalSec);
+    setDeliveryH(String(h));
+    setDeliveryM(String(m).padStart(2, "0"));
+    setDeliveryS(String(s).padStart(2, "0"));
+    setDeliveryLink((task as any).delivery_link ?? "");
+    setDeliveryNote((task as any).delivery_note ?? "");
+    setDeliveryMode(mode);
+    setDeliveryDialogOpen(true);
   }
 
   // Board task types (per board, stored in localStorage by the board settings)
@@ -710,23 +735,28 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                   <CheckCircle2 size={12} />
                   Entregue · Reabrir
                 </button>
+              ) : queueRemaining > 0 ? (
+                // Task has a responsible queue → only the current responsible delivers their part
+                isActiveResponsible ? (
+                  <button
+                    onClick={() => openDeliveryDialog("part")}
+                    title="Concluir sua parte (abre o popup de entrega) e passar para o próximo da fila"
+                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-brand-teal/50 text-brand-teal hover:bg-brand-teal/5 transition-all"
+                  >
+                    <CheckCircle2 size={12} />
+                    {queueRemaining <= 1 ? "Entregar (última parte)" : "Entregar minha parte"}
+                  </button>
+                ) : (
+                  <span className="text-[11px] text-neutral-400 px-1" title="Apenas o responsável atual da fila pode entregar a parte">
+                    Aguardando o responsável atual
+                  </span>
+                )
               ) : (
                 <button
                   onClick={canActOnTask ? async () => {
-                    // Block delivery if an approval is still pending
                     if (await refreshPendingApproval()) { setDeliverBlockedWarning(true); return; }
                     setDeliverBlockedWarning(false);
-                    const totalSec = Math.round((task.tracked_hours ?? 0) * 3600) + elapsed;
-                    const h = Math.floor(totalSec / 3600);
-                    const m = Math.floor((totalSec % 3600) / 60);
-                    const s = totalSec % 60;
-                    setDeliverySeconds(totalSec);
-                    setDeliveryH(String(h));
-                    setDeliveryM(String(m).padStart(2, "0"));
-                    setDeliveryS(String(s).padStart(2, "0"));
-                    setDeliveryLink((task as any).delivery_link ?? "");
-                    setDeliveryNote((task as any).delivery_note ?? "");
-                    setDeliveryDialogOpen(true);
+                    openDeliveryDialog("full");
                   } : undefined}
                   title={!canActOnTask ? "Somente o responsável pode entregar" : approvalBlockStatus === "adjustment" ? "Aprovação pediu ajustes — não pode ser entregue" : approvalBlockStatus === "rejected" ? "Aprovação reprovada — não pode ser entregue" : approvalBlockStatus === "pending" ? "Aprovação pendente — não pode ser entregue" : undefined}
                   className={cn(
@@ -738,18 +768,6 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                 >
                   <CheckCircle2 size={12} />
                   Entregar
-                </button>
-              )}
-
-              {/* Entregar minha parte — advances the responsible queue */}
-              {!isDelivered && queueRemaining > 0 && canActOnTask && (
-                <button
-                  onClick={handleDeliverMyPart}
-                  title="Concluir sua parte e passar para o próximo da fila"
-                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-brand-teal/40 text-brand-teal hover:bg-brand-teal/5 transition-all"
-                >
-                  <CheckCircle2 size={12} />
-                  {queueRemaining <= 1 ? "Entregar (última parte)" : "Entregar minha parte"}
                 </button>
               )}
 
@@ -1282,7 +1300,16 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                 )}
 
                 {/* RULES */}
-                {activeTab === "rules" && <RulesTab taskId={taskId} />}
+                {activeTab === "rules" && (
+                  <RulesTab
+                    taskId={taskId}
+                    onQueueChange={async () => {
+                      await loadQueue();
+                      const t = await taskService.get(taskId);
+                      if (t) setTask(t);
+                    }}
+                  />
+                )}
 
                 {activeTab === "history" && <HistoryTab taskId={taskId} columns={boardColumns} orgProfiles={orgProfiles} />}
               </div>
@@ -2089,16 +2116,14 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                 onClick={async () => {
                   const totalSec = (parseInt(deliveryH) || 0) * 3600 + (parseInt(deliveryM) || 0) * 60 + (parseInt(deliveryS) || 0);
                   setDeliveryDialogOpen(false);
-                  await handleDeliver({
-                    hours: totalSec / 3600,
-                    link: deliveryLink.trim(),
-                    note: deliveryNote.trim(),
-                  });
+                  const opts = { hours: totalSec / 3600, link: deliveryLink.trim(), note: deliveryNote.trim() };
+                  if (deliveryMode === "part") await handleDeliverMyPart(opts);
+                  else await handleDeliver(opts);
                 }}
                 className="px-5 py-2 text-sm font-semibold bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-1.5"
               >
                 <CheckCircle2 size={14} />
-                Confirmar entrega
+                {deliveryMode === "part" && queueRemaining > 1 ? "Entregar minha parte" : "Confirmar entrega"}
               </button>
             </div>
           </div>

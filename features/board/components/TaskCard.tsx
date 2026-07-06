@@ -17,6 +17,7 @@ import { cn, formatDate, isOverdue } from "@/lib/utils";
 import { PRIORITY_COLORS, PRIORITY_LABELS, formatElapsed as fmtElapsed } from "@/types";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
+import { useOrgMembers } from "@/lib/useOrgMembers";
 import { useTimerStore } from "@/features/timer/store/timerStore";
 import { useAuthStore } from "@/features/auth/store/authStore";
 import { useSelectionStore } from "../store/selectionStore";
@@ -108,7 +109,13 @@ function TaskCardInner({ task, onOpen }: Props) {
 
   // Assignees
   const assignees = (task as any).assignees as any[] | null;
-  const primaryAssignee = task.assignee;
+  const orgMembers = useOrgMembers();
+  // Resolve the single assignee's name from org members when the joined object
+  // isn't loaded (e.g. after the queue sets a new assignee_id).
+  const primaryAssignee = task.assignee
+    ?? (task.assignee_id
+      ? (() => { const m = orgMembers.find((x) => x.id === task.assignee_id); return m ? { id: m.id, full_name: m.full_name, avatar_url: m.avatar_url } : null; })()
+      : null);
 
   return (
     <div

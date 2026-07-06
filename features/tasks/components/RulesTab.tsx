@@ -31,10 +31,24 @@ interface AvailableTask {
 
 interface Props {
   taskId: string;
+  onQueueChange?: () => void;
 }
 
-export function RulesTab({ taskId }: Props) {
+export function RulesTab({ taskId, onQueueChange }: Props) {
   const columns = useBoardStore((s) => s.columns);
+
+  // Sync the queue head as assignee, reflect it on the board card immediately,
+  // and notify the parent (task detail) so its avatars/lock update in real time.
+  async function afterQueueChange() {
+    const activeId = await sequenceService.syncHeadAndAssignee(taskId);
+    const p = orgMembers.find((m) => m.id === activeId);
+    useBoardStore.getState().updateTask(taskId, {
+      assignee_id: activeId,
+      assignee: p ? { id: p.id, full_name: p.full_name, avatar_url: p.avatar_url } : null,
+    } as any);
+    onQueueChange?.();
+    reload();
+  }
 
   // Current-board tasks
   const boardTasks: AvailableTask[] = useMemo(
@@ -103,16 +117,13 @@ export function RulesTab({ taskId }: Props) {
     const nextPos = sequence.length > 0 ? Math.max(...sequence.map((s) => s.order_position)) + 1 : 0;
     const { error } = await (sb as any).from("task_sequences").insert({ task_id: taskId, user_id: member.id, order_position: nextPos, status: "pending" });
     if (error) { console.error("[sequence] add error:", error); return; }
-    // Queue drives the assignee: head of the queue becomes the responsible.
-    await sequenceService.syncHeadAndAssignee(taskId);
-    reload();
+    await afterQueueChange();
   }
   async function removeFromSequence(id: string) {
     const sb = createRawClient();
     const { error } = await (sb as any).from("task_sequences").delete().eq("id", id);
     if (error) { console.error("[sequence] remove error:", error); return; }
-    await sequenceService.syncHeadAndAssignee(taskId);
-    reload();
+    await afterQueueChange();
   }
 
   const [dragIndex, setDragIndex] = useState<number | null>(null);
@@ -126,8 +137,7 @@ export function RulesTab({ taskId }: Props) {
     setSequence(reordered.map((s, i) => ({ ...s, order_position: i })));
     const sb = createRawClient();
     await Promise.all(reordered.map((s, i) => (sb as any).from("task_sequences").update({ order_position: i }).eq("id", s.id)));
-    await sequenceService.syncHeadAndAssignee(taskId);
-    reload();
+    await afterQueueChange();
   }
 
   // ── Dependency handlers ────────────────────────────────────────────────────
