@@ -16,7 +16,7 @@ import { ORG_ID } from "@/lib/utils";
 import {
   ArrowLeft, Archive, Loader2, Settings, Tag, Users, Layers,
   Plus, Trash2, ChevronDown, Check, GripVertical, FolderKanban,
-  Globe, Lock, X,
+  Globe, Lock, X, Pencil, Eye, Search,
 } from "lucide-react";
 import { getInitials } from "@/lib/utils";
 import Link from "next/link";
@@ -190,9 +190,6 @@ export default function ProjectSettingsPage({ params }: Props) {
   const [privacySaving, setPrivacySaving] = useState(false);
   const [projectMembers, setProjectMembers] = useState<ProjectMember[]>([]);
   const [projectMembersLoading, setProjectMembersLoading] = useState(false);
-  const [memberSearch, setMemberSearch] = useState("");
-  const [memberDropOpen, setMemberDropOpen] = useState(false);
-  const memberSearchRef = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
     async function fetchOrgMembers() {
@@ -240,38 +237,78 @@ export default function ProjectSettingsPage({ params }: Props) {
     } catch { /* ignore */ }
   }, []);
 
-  async function handleAddTeam(team: { id: string; name: string; member_ids: string[] }) {
-    const toAdd = team.member_ids.filter(
-      (uid) => !projectMembers.some((pm) => pm.user_id === uid)
-    );
-    if (toAdd.length === 0) return;
-    const added: ProjectMember[] = toAdd.map((uid) => ({
-      user_id: uid,
-      name: orgMembers.find((m) => m.user_id === uid)?.name ?? uid.slice(0, 8),
-      role: "member",
-    }));
-    setProjectMembers((prev) => [...prev, ...added]);
+  // "Todos os membros da org" por nível
+  const [allAccess, setAllAccess] = useState<{ view: boolean; create: boolean; edit: boolean }>({ view: false, create: false, edit: false });
+
+  // role da coluna project_members ↔ nível
+  type AccessRole = "admin" | "member" | "viewer"; // editar | criar | ver
+
+  async function upsertMemberRole(userId: string, name: string, role: AccessRole) {
+    setProjectMembers((prev) => {
+      const rest = prev.filter((pm) => pm.user_id !== userId);
+      return [...rest, { user_id: userId, name, role }];
+    });
     try {
       const supabase = createClient();
-      await (supabase as any).from("project_members").insert(
-        toAdd.map((uid) => ({ project_id: projectId, user_id: uid, role: "member" }))
-      );
-    } catch (e) { console.error("[project_members] team insert error:", e); }
+      await (supabase as any).from("project_members")
+        .upsert({ project_id: projectId, user_id: userId, role }, { onConflict: "project_id,user_id" });
+    } catch (e) { console.error("[project_members] upsert error:", e); }
+  }
+
+  async function handleAddMemberAt(member: OrgMember, role: AccessRole) {
+    await upsertMemberRole(member.user_id, member.name, role);
+  }
+
+  async function handleAddTeamAt(team: { id: string; name: string; member_ids: string[] }, role: AccessRole) {
+    const rows = team.member_ids.map((uid) => ({ project_id: projectId, user_id: uid, role }));
+    if (rows.length === 0) return;
+    setProjectMembers((prev) => {
+      const map = new Map(prev.map((pm) => [pm.user_id, pm]));
+      team.member_ids.forEach((uid) => {
+        map.set(uid, { user_id: uid, name: orgMembers.find((m) => m.user_id === uid)?.name ?? uid.slice(0, 8), role });
+      });
+      return [...map.values()];
+    });
+    try {
+      const supabase = createClient();
+      await (supabase as any).from("project_members").upsert(rows, { onConflict: "project_id,user_id" });
+    } catch (e) { console.error("[project_members] team upsert error:", e); }
+  }
+
+  async function handleRemoveMember(userId: string) {
+    setProjectMembers((prev) => prev.filter((pm) => pm.user_id !== userId));
+    try {
+      const supabase = createClient();
+      await (supabase as any).from("project_members").delete().eq("project_id", projectId).eq("user_id", userId);
+    } catch (e) { console.error("[project_members] delete error:", e); }
+  }
+
+  async function handleSetAllAccess(level: "view" | "create" | "edit", val: boolean) {
+    setAllAccess((prev) => ({ ...prev, [level]: val }));
+    const col = level === "view" ? "access_all_view" : level === "create" ? "access_all_create" : "access_all_edit";
+    try {
+      const supabase = createClient();
+      await (supabase as any).from("projects").update({ [col]: val }).eq("id", projectId);
+    } catch (e) { console.error("[projects] access_all update error:", e); }
   }
 
   useEffect(() => {
     async function fetchProjectAccess() {
       setProjectMembersLoading(true);
       const supabase = createClient();
-      // Load is_private from projects table
-      const { data: projData } = await supabase
+      const { data: projData } = await (supabase as any)
         .from("projects")
-        .select("is_private")
+        .select("is_private, access_all_view, access_all_create, access_all_edit")
         .eq("id", projectId)
         .single();
-      if (projData) setIsPrivate((projData as any).is_private ?? false);
-
-      // Load project_members (table may not exist yet — catch gracefully)
+      if (projData) {
+        setIsPrivate((projData as any).is_private ?? false);
+        setAllAccess({
+          view: (projData as any).access_all_view ?? false,
+          create: (projData as any).access_all_create ?? false,
+          edit: (projData as any).access_all_edit ?? false,
+        });
+      }
       try {
         const { data: pmData } = await (supabase as any)
           .from("project_members")
@@ -292,17 +329,6 @@ export default function ProjectSettingsPage({ params }: Props) {
     fetchProjectAccess();
   }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Close member search dropdown on outside click
-  useEffect(() => {
-    function handler(e: MouseEvent) {
-      if (memberSearchRef.current && !memberSearchRef.current.contains(e.target as Node)) {
-        setMemberDropOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
-  }, []);
-
   async function handleSetPrivacy(val: boolean) {
     setIsPrivate(val);
     setPrivacySaving(true);
@@ -310,33 +336,6 @@ export default function ProjectSettingsPage({ params }: Props) {
     await (supabase as any).from("projects").update({ is_private: val }).eq("id", projectId);
     setPrivacySaving(false);
   }
-
-  async function handleAddMember(member: OrgMember) {
-    setMemberSearch("");
-    setMemberDropOpen(false);
-    if (projectMembers.some((pm) => pm.user_id === member.user_id)) return;
-    const newPm: ProjectMember = { user_id: member.user_id, name: member.name, role: "member" };
-    setProjectMembers((prev) => [...prev, newPm]);
-    try {
-      const supabase = createClient();
-      await (supabase as any).from("project_members").insert({ project_id: projectId, user_id: member.user_id, role: "member" });
-    } catch (e) { console.error("[project_members] insert error:", e); }
-  }
-
-  async function handleRemoveMember(userId: string) {
-    setProjectMembers((prev) => prev.filter((pm) => pm.user_id !== userId));
-    try {
-      const supabase = createClient();
-      await (supabase as any).from("project_members").delete().eq("project_id", projectId).eq("user_id", userId);
-    } catch (e) { console.error("[project_members] delete error:", e); }
-  }
-
-  // Org members not yet in the project, filtered by search
-  const availableOrgMembers = orgMembers.filter(
-    (m) =>
-      !projectMembers.some((pm) => pm.user_id === m.user_id) &&
-      (memberSearch === "" || m.name.toLowerCase().includes(memberSearch.toLowerCase()))
-  );
 
   // Stage requirements (per column) — persisted to localStorage
   const STAGE_REQS_KEY = `mwr_stage_reqs_${projectId}`;
@@ -635,115 +634,61 @@ export default function ProjectSettingsPage({ params }: Props) {
                   </button>
                 </div>
 
-                {/* Project members list — only when private */}
+                {/* Access levels — only when private */}
                 {isPrivate && (
                   <>
-                    <div>
-                      <h3 className="text-sm font-semibold text-brand-navy mb-3">
-                        Membros com acesso
-                        {projectMembers.length > 0 && (
-                          <span className="ml-2 text-xs font-normal text-neutral-400 bg-neutral-100 px-2 py-0.5 rounded-full">
-                            {projectMembers.length}
-                          </span>
-                        )}
-                      </h3>
-                      {projectMembersLoading ? (
-                        <p className="text-sm text-neutral-400">Carregando...</p>
-                      ) : projectMembers.length === 0 ? (
-                        <p className="text-sm text-neutral-400 py-2">Nenhum membro adicionado. Adicione abaixo.</p>
-                      ) : (
-                        <div className="space-y-2">
-                          {projectMembers.map((pm) => (
-                            <div key={pm.user_id} className="flex items-center gap-3 p-3 bg-white rounded-xl border border-neutral-100 shadow-sm group">
-                              <div className="w-8 h-8 rounded-full bg-brand-navy/10 flex items-center justify-center text-xs font-bold text-brand-navy shrink-0">
-                                {getInitials(pm.name)}
-                              </div>
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm font-medium text-neutral-700 truncate">{pm.name}</p>
-                                <p className="text-xs text-neutral-400">
-                                  {pm.role === "admin" ? "Admin" : "Membro"}
-                                </p>
-                              </div>
-                              <button
-                                onClick={() => handleRemoveMember(pm.user_id)}
-                                className="opacity-0 group-hover:opacity-100 w-7 h-7 flex items-center justify-center rounded-lg text-neutral-300 hover:text-destructive hover:bg-destructive/5 transition-all"
-                                title="Remover acesso"
-                              >
-                                <X size={13} />
-                              </button>
-                            </div>
-                          ))}
-                        </div>
-                      )}
-                    </div>
-
-                    {/* Add a whole team at once */}
-                    {teams.length > 0 && (
-                      <div className="bg-neutral-50 rounded-xl p-4 space-y-2 border border-neutral-100">
-                        <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide">Adicionar um time inteiro</p>
-                        <div className="flex flex-wrap gap-1.5">
-                          {teams.map((team) => {
-                            const pending = team.member_ids.filter((uid) => !projectMembers.some((pm) => pm.user_id === uid));
-                            return (
-                              <button
-                                key={team.id}
-                                onClick={() => handleAddTeam(team)}
-                                disabled={pending.length === 0}
-                                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-neutral-200 bg-white text-neutral-600 hover:border-brand-teal hover:text-brand-teal disabled:opacity-40 disabled:hover:border-neutral-200 disabled:hover:text-neutral-600 transition-colors"
-                              >
-                                <Users size={12} />
-                                {team.name}
-                                <span className="text-[10px] text-neutral-400">
-                                  {pending.length > 0 ? `+${pending.length}` : "✓"}
-                                </span>
-                              </button>
-                            );
-                          })}
-                        </div>
+                    {projectMembersLoading ? (
+                      <p className="text-sm text-neutral-400">Carregando...</p>
+                    ) : (
+                      <div className="space-y-3">
+                        <p className="text-xs text-neutral-400">
+                          Defina quem pode <strong>editar</strong>, <strong>criar</strong> ou apenas <strong>ver</strong> este quadro.
+                          Use "Todos os membros" para liberar sem precisar adicionar pessoa por pessoa.
+                        </p>
+                        <AccessLevelSection
+                          title="Podem editar"
+                          description="Mexer nas tarefas, criar e ver."
+                          role="admin"
+                          icon={<Pencil size={13} />}
+                          orgMembers={orgMembers}
+                          teams={teams}
+                          projectMembers={projectMembers}
+                          allChecked={allAccess.edit}
+                          onToggleAll={(v) => handleSetAllAccess("edit", v)}
+                          onAddMember={(m) => handleAddMemberAt(m, "admin")}
+                          onAddTeam={(t) => handleAddTeamAt(t, "admin")}
+                          onRemove={handleRemoveMember}
+                        />
+                        <AccessLevelSection
+                          title="Podem criar"
+                          description="Criar tarefas e ver."
+                          role="member"
+                          icon={<Plus size={13} />}
+                          orgMembers={orgMembers}
+                          teams={teams}
+                          projectMembers={projectMembers}
+                          allChecked={allAccess.create}
+                          onToggleAll={(v) => handleSetAllAccess("create", v)}
+                          onAddMember={(m) => handleAddMemberAt(m, "member")}
+                          onAddTeam={(t) => handleAddTeamAt(t, "member")}
+                          onRemove={handleRemoveMember}
+                        />
+                        <AccessLevelSection
+                          title="Podem ver"
+                          description="Somente visualizar."
+                          role="viewer"
+                          icon={<Eye size={13} />}
+                          orgMembers={orgMembers}
+                          teams={teams}
+                          projectMembers={projectMembers}
+                          allChecked={allAccess.view}
+                          onToggleAll={(v) => handleSetAllAccess("view", v)}
+                          onAddMember={(m) => handleAddMemberAt(m, "viewer")}
+                          onAddTeam={(t) => handleAddTeamAt(t, "viewer")}
+                          onRemove={handleRemoveMember}
+                        />
                       </div>
                     )}
-
-                    {/* Add member — searchable org list */}
-                    <div className="bg-neutral-50 rounded-xl p-4 space-y-3 border border-neutral-100">
-                      <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide">Adicionar membro individual</p>
-                      <div className="relative" ref={memberSearchRef}>
-                        <input
-                          value={memberSearch}
-                          onChange={(e) => { setMemberSearch(e.target.value); setMemberDropOpen(true); }}
-                          onFocus={() => setMemberDropOpen(true)}
-                          placeholder={orgMembersLoading ? "Carregando membros..." : "Buscar por nome..."}
-                          disabled={orgMembersLoading}
-                          className="w-full text-sm border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:border-brand-teal bg-white disabled:opacity-50"
-                        />
-                        {memberDropOpen && availableOrgMembers.length > 0 && (
-                          <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-neutral-100 py-1 z-20 max-h-52 overflow-y-auto">
-                            {availableOrgMembers.map((m) => (
-                              <button
-                                key={m.user_id}
-                                onClick={() => handleAddMember(m)}
-                                className="w-full flex items-center gap-3 px-3 py-2.5 text-left hover:bg-neutral-50 transition-colors"
-                              >
-                                <div className="w-7 h-7 rounded-full bg-brand-navy/10 flex items-center justify-center text-xs font-bold text-brand-navy shrink-0">
-                                  {getInitials(m.name)}
-                                </div>
-                                <div className="flex-1 min-w-0">
-                                  <p className="text-sm font-medium text-neutral-700 truncate">{m.name}</p>
-                                  <p className="text-xs text-neutral-400">
-                                    {m.role === "owner" ? "Proprietário" : m.role === "admin" ? "Admin" : "Membro"}
-                                  </p>
-                                </div>
-                                <Plus size={13} className="text-brand-teal shrink-0" />
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        {memberDropOpen && availableOrgMembers.length === 0 && memberSearch !== "" && (
-                          <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-neutral-100 py-3 px-4 z-20">
-                            <p className="text-sm text-neutral-400">Nenhum membro encontrado.</p>
-                          </div>
-                        )}
-                      </div>
-                    </div>
                   </>
                 )}
 
@@ -991,6 +936,123 @@ export default function ProjectSettingsPage({ params }: Props) {
           </div>
         </div>
       </div>
+    </div>
+  );
+}
+
+// ── Nível de acesso do quadro privado ────────────────────────────────────────
+function AccessLevelSection({
+  title, description, role, icon, orgMembers, teams, projectMembers,
+  allChecked, onToggleAll, onAddMember, onAddTeam, onRemove,
+}: {
+  title: string;
+  description: string;
+  role: "admin" | "member" | "viewer";
+  icon: React.ReactNode;
+  orgMembers: OrgMember[];
+  teams: { id: string; name: string; member_ids: string[] }[];
+  projectMembers: ProjectMember[];
+  allChecked: boolean;
+  onToggleAll: (v: boolean) => void;
+  onAddMember: (m: OrgMember) => void;
+  onAddTeam: (t: { id: string; name: string; member_ids: string[] }) => void;
+  onRemove: (userId: string) => void;
+}) {
+  const [search, setSearch] = useState("");
+  const [open, setOpen] = useState(false);
+  const ref = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function h(e: MouseEvent) { if (ref.current && !ref.current.contains(e.target as Node)) setOpen(false); }
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, []);
+
+  const membersHere = projectMembers.filter((pm) => pm.role === role);
+  const available = orgMembers.filter(
+    (m) => !membersHere.some((pm) => pm.user_id === m.user_id) &&
+      (search === "" || m.name.toLowerCase().includes(search.toLowerCase()))
+  );
+
+  return (
+    <div className={cn("rounded-xl border p-4 space-y-3", allChecked ? "border-brand-teal/30 bg-brand-teal/5" : "border-neutral-100 bg-white")}>
+      <div className="flex items-center gap-2">
+        <span className="w-6 h-6 rounded-md bg-brand-navy/10 flex items-center justify-center text-brand-navy shrink-0">{icon}</span>
+        <div className="flex-1 min-w-0">
+          <p className="text-sm font-semibold text-brand-navy">{title}</p>
+          <p className="text-[11px] text-neutral-400">{description}</p>
+        </div>
+      </div>
+
+      {/* Todos os membros */}
+      <label className="flex items-center gap-2 cursor-pointer">
+        <input type="checkbox" checked={allChecked} onChange={(e) => onToggleAll(e.target.checked)} className="w-3.5 h-3.5 accent-brand-teal" />
+        <span className="text-xs font-medium text-neutral-700">Todos os membros da organização</span>
+      </label>
+
+      {!allChecked && (
+        <>
+          {/* Members at this level */}
+          {membersHere.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {membersHere.map((pm) => (
+                <span key={pm.user_id} className="group/m flex items-center gap-1.5 pl-1 pr-1.5 py-1 rounded-full bg-neutral-100 text-xs text-neutral-700">
+                  <span className="w-5 h-5 rounded-full bg-brand-navy/10 flex items-center justify-center text-[9px] font-bold text-brand-navy">{getInitials(pm.name)}</span>
+                  {pm.name}
+                  <button onClick={() => onRemove(pm.user_id)} className="text-neutral-300 hover:text-destructive"><X size={11} /></button>
+                </span>
+              ))}
+            </div>
+          )}
+
+          {/* Teams quick-add */}
+          {teams.length > 0 && (
+            <div className="flex flex-wrap gap-1.5">
+              {teams.map((team) => (
+                <button
+                  key={team.id}
+                  onClick={() => onAddTeam(team)}
+                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] font-medium border border-dashed border-neutral-200 text-neutral-500 hover:border-brand-teal hover:text-brand-teal transition-colors"
+                >
+                  <Users size={11} /> {team.name}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {/* Individual search */}
+          <div className="relative" ref={ref}>
+            <Search size={12} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-neutral-300" />
+            <input
+              value={search}
+              onChange={(e) => { setSearch(e.target.value); setOpen(true); }}
+              onFocus={() => setOpen(true)}
+              placeholder="Adicionar pessoa..."
+              className="w-full text-sm border border-neutral-200 rounded-lg pl-8 pr-3 py-1.5 outline-none focus:border-brand-teal bg-white"
+            />
+            {open && available.length > 0 && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-neutral-100 py-1 z-20 max-h-48 overflow-y-auto">
+                {available.map((m) => (
+                  <button
+                    key={m.user_id}
+                    onClick={() => { onAddMember(m); setSearch(""); setOpen(false); }}
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-left hover:bg-neutral-50 transition-colors"
+                  >
+                    <span className="w-6 h-6 rounded-full bg-brand-navy/10 flex items-center justify-center text-[10px] font-bold text-brand-navy shrink-0">{getInitials(m.name)}</span>
+                    <span className="text-sm text-neutral-700 flex-1 truncate">{m.name}</span>
+                    <Plus size={12} className="text-brand-teal shrink-0" />
+                  </button>
+                ))}
+              </div>
+            )}
+            {open && available.length === 0 && search !== "" && (
+              <div className="absolute top-full left-0 right-0 mt-1 bg-white rounded-xl shadow-xl border border-neutral-100 py-2.5 px-4 z-20">
+                <p className="text-sm text-neutral-400">Nenhum membro encontrado.</p>
+              </div>
+            )}
+          </div>
+        </>
+      )}
     </div>
   );
 }
