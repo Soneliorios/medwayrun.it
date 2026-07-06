@@ -249,6 +249,20 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   const [areas, setAreas] = useState<{ id: string; name: string }[]>([]);
   useEffect(() => { areasService.list().then(setAreas); }, []);
 
+  // Board sub-projects (per board) for the "Projeto" dropdown
+  const [boardProjects, setBoardProjects] = useState<{ id: string; name: string; color: string }[]>([]);
+  useEffect(() => {
+    const pid = task?.project_id;
+    if (!pid) return;
+    const sb = createRawClient();
+    (sb as any)
+      .from("board_subprojects")
+      .select("id, name, color")
+      .eq("project_id", pid)
+      .order("name")
+      .then(({ data }: { data: { id: string; name: string; color: string }[] | null }) => setBoardProjects(data ?? []));
+  }, [task?.project_id]);
+
   // Followers — persisted in Supabase (task_followers)
   useEffect(() => {
     const sb = createRawClient();
@@ -1249,19 +1263,19 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
 
                 {/* Projeto interno do board */}
                 <MetaField label="Projeto" icon={<Layers size={12} />}>
-                  {boardProjectStore.projects.length > 0 ? (
+                  {boardProjects.length > 0 ? (
                     <select
-                      value={(task as any).board_project_id ?? ""}
+                      value={(task as any).board_subproject_id ?? ""}
                       onChange={(e) => {
                         const v = e.target.value || null;
-                        setTask((t) => t ? { ...t, board_project_id: v } : t);
-                        store.updateTask(taskId, { board_project_id: v } as any);
-                        taskService.update(taskId, { board_project_id: v } as any).catch(() => {});
+                        setTask((t) => t ? { ...t, board_subproject_id: v } as TaskWithRelations : t);
+                        store.updateTask(taskId, { board_subproject_id: v } as any);
+                        taskService.update(taskId, { board_subproject_id: v } as any).catch(() => {});
                       }}
                       className="text-xs border border-neutral-200 rounded-md px-2 py-1 w-full bg-white outline-none focus:border-brand-teal"
                     >
                       <option value="">— Sem projeto —</option>
-                      {boardProjectStore.projects.map((p) => (
+                      {boardProjects.map((p) => (
                         <option key={p.id} value={p.id}>{p.name}</option>
                       ))}
                     </select>
@@ -1305,24 +1319,41 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                   />
                 </MetaField>
 
-                {/* Tempo estimado */}
+                {/* Tempo estimado — H : M : S */}
                 <MetaField label="Tempo estimado" icon={<Clock size={12} />}>
                   <div className="space-y-1.5">
-                    <div className="flex items-center gap-1.5">
-                      <input
-                        type="number"
-                        min={0}
-                        step={0.5}
-                        value={estimatedHours || ""}
-                        onChange={(e) => {
-                          const v = parseFloat(e.target.value) || 0;
-                          handleFieldUpdate("estimated_hours", v > 0 ? String(v) : null);
-                        }}
-                        placeholder="0"
-                        className="text-xs border border-neutral-200 rounded-md px-2 py-1 w-full bg-white outline-none focus:border-brand-teal"
-                      />
-                      <span className="text-[10px] text-neutral-400 shrink-0">h</span>
-                    </div>
+                    {(() => {
+                      const total = Math.round(estimatedHours * 3600);
+                      const eh = Math.floor(total / 3600);
+                      const em = Math.floor((total % 3600) / 60);
+                      const es = total % 60;
+                      const commit = (h: number, m: number, s: number) => {
+                        const hours = h + m / 60 + s / 3600;
+                        handleFieldUpdate("estimated_hours", hours > 0 ? String(hours) : null);
+                      };
+                      const cell = "w-full text-xs text-center border border-neutral-200 rounded-md px-1 py-1 bg-white outline-none focus:border-brand-teal";
+                      return (
+                        <div className="flex items-center gap-1">
+                          <div className="flex-1">
+                            <input type="number" min={0} value={eh || ""} placeholder="0"
+                              onChange={(e) => commit(parseInt(e.target.value) || 0, em, es)} className={cell} />
+                            <p className="text-[9px] text-neutral-400 text-center mt-0.5">h</p>
+                          </div>
+                          <span className="text-neutral-300 pb-3">:</span>
+                          <div className="flex-1">
+                            <input type="number" min={0} max={59} value={em || ""} placeholder="00"
+                              onChange={(e) => commit(eh, Math.min(59, parseInt(e.target.value) || 0), es)} className={cell} />
+                            <p className="text-[9px] text-neutral-400 text-center mt-0.5">min</p>
+                          </div>
+                          <span className="text-neutral-300 pb-3">:</span>
+                          <div className="flex-1">
+                            <input type="number" min={0} max={59} value={es || ""} placeholder="00"
+                              onChange={(e) => commit(eh, em, Math.min(59, parseInt(e.target.value) || 0))} className={cell} />
+                            <p className="text-[9px] text-neutral-400 text-center mt-0.5">seg</p>
+                          </div>
+                        </div>
+                      );
+                    })()}
                     {estimatedHours > 0 && (
                       <>
                         <div className="h-1.5 rounded-full bg-neutral-200 overflow-hidden">
@@ -1920,57 +1951,13 @@ function BRDateInput({ value, onChange, className }: {
   onChange: (isoDate: string | null) => void;
   className?: string;
 }) {
-  const toDisplay = (iso: string) => {
-    if (!iso) return "";
-    const [y, m, d] = iso.split("-");
-    return `${d}/${m}/${y}`;
-  };
-
-  const [inputVal, setInputVal] = useState(() => toDisplay(value));
-  const [focused, setFocused] = useState(false);
-
-  useEffect(() => {
-    if (!focused) setInputVal(toDisplay(value));
-  }, [value, focused]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  function handleChange(e: React.ChangeEvent<HTMLInputElement>) {
-    let v = e.target.value.replace(/[^0-9/]/g, "");
-    // Auto-insert slashes
-    const digits = v.replace(/\//g, "");
-    if (digits.length <= 2) v = digits;
-    else if (digits.length <= 4) v = `${digits.slice(0, 2)}/${digits.slice(2)}`;
-    else v = `${digits.slice(0, 2)}/${digits.slice(2, 4)}/${digits.slice(4, 8)}`;
-    setInputVal(v);
-    if (v.length === 10) {
-      const [d, m, y] = v.split("/");
-      const iso = `${y}-${m.padStart(2, "0")}-${d.padStart(2, "0")}`;
-      if (!isNaN(new Date(iso).getTime())) onChange(iso);
-    } else if (v === "") {
-      onChange(null);
-    }
-  }
-
-  function handleBlur() {
-    setFocused(false);
-    const parts = inputVal.split("/");
-    if (parts.length === 3 && parts[2].length === 4) {
-      const iso = `${parts[2]}-${parts[1].padStart(2, "0")}-${parts[0].padStart(2, "0")}`;
-      if (!isNaN(new Date(iso).getTime())) { onChange(iso); return; }
-    }
-    if (!inputVal) { onChange(null); return; }
-    setInputVal(toDisplay(value));
-  }
-
+  // Native date picker (calendar). Value is stored/emitted as YYYY-MM-DD.
+  const dateVal = value ? value.slice(0, 10) : "";
   return (
     <input
-      type="text"
-      inputMode="numeric"
-      value={inputVal}
-      onChange={handleChange}
-      onFocus={() => setFocused(true)}
-      onBlur={handleBlur}
-      placeholder="DD/MM/AAAA"
-      maxLength={10}
+      type="date"
+      value={dateVal}
+      onChange={(e) => onChange(e.target.value || null)}
       className={className}
     />
   );
