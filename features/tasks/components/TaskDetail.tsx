@@ -34,6 +34,7 @@ import {
   Users,
   ClipboardCheck,
   History,
+  Lock,
   Paperclip,
   Mail,
   UserPlus,
@@ -771,7 +772,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                     </AvatarFallback>
                   </Avatar>
                 ))}
-                {!isUser && (
+                {!isUser && queue.length === 0 && (
                   <button
                     onClick={() => setHeaderAssigneeOpen((v) => !v)}
                     title="Gerenciar responsável"
@@ -780,7 +781,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                     <Plus size={10} />
                   </button>
                 )}
-                {headerAssigneeOpen && (
+                {queue.length === 0 && headerAssigneeOpen && (
                   <div className="absolute top-8 right-0 z-50 bg-white rounded-xl border border-neutral-200 shadow-lg py-1 min-w-[190px]">
                     <div className="px-2 pb-1 pt-0.5">
                       <input autoFocus value={assigneeSearch} onChange={(e) => setAssigneeSearch(e.target.value)}
@@ -1291,6 +1292,40 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
 
                 {/* Responsáveis / Alocados */}
                 <MetaField label="Responsáveis" icon={<Users size={12} />}>
+                  {queue.length > 0 ? (
+                    <div className="space-y-1.5">
+                      <div className="flex flex-wrap gap-1.5 items-center">
+                        {queue.map((q) => {
+                          const p = orgProfiles.find((x) => x.id === q.user_id);
+                          const nm = p?.full_name ?? q.user_id.slice(0, 8);
+                          const done = q.status === "done";
+                          const active = q.status === "active";
+                          return (
+                            <div
+                              key={q.id}
+                              className="relative"
+                              title={`${nm}${done ? " — entregou sua parte" : active ? " — responsável atual" : " — na fila"}`}
+                            >
+                              <Avatar className={cn("w-6 h-6 border-2", active ? "border-brand-teal" : "border-white", done && "grayscale opacity-70")}>
+                                <AvatarImage src={p?.avatar_url ?? undefined} className={cn(done && "grayscale")} />
+                                <AvatarFallback className={cn("text-[9px] font-bold", done ? "bg-neutral-200 text-neutral-500" : "bg-brand-teal/20 text-brand-teal")}>
+                                  {getInitials(nm)}
+                                </AvatarFallback>
+                              </Avatar>
+                              {done && (
+                                <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-white border border-neutral-200 flex items-center justify-center">
+                                  <Check size={8} className="text-neutral-500" />
+                                </span>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                      <p className="text-[10px] text-neutral-400 flex items-center gap-1">
+                        <Lock size={9} /> Definido pela fila — ajuste na aba Regras
+                      </p>
+                    </div>
+                  ) : (
                   <div className="flex flex-wrap gap-1 items-center relative" ref={assigneePickerRef}>
                     {task.assignee_id ? (() => {
                       const name = task.assignee?.full_name ?? orgProfiles.find((p) => p.id === task.assignee_id)?.full_name ?? task.assignee_id;
@@ -1357,6 +1392,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                       </div>
                     )}
                   </div>
+                  )}
                 </MetaField>
 
                 {/* Tipo de tarefa (por quadro) */}
