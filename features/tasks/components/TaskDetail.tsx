@@ -55,6 +55,7 @@ import { PRIORITY_LABELS, PRIORITY_COLORS, formatElapsed } from "@/types";
 import { taskService } from "../services/taskService";
 import { activityService, type TaskActivity } from "../services/activityService";
 import { areasService } from "@/lib/areasService";
+import { tagsService, type Label } from "../services/tagsService";
 import { useBoardStore } from "@/features/board/store/boardStore";
 import { useAuthStore } from "@/features/auth/store/authStore";
 import { useTimerStore } from "@/features/timer/store/timerStore";
@@ -86,15 +87,6 @@ const TABS: { id: DetailTab; label: string; icon: React.ElementType }[] = [
   { id: "rules", label: "Regras", icon: Zap },
   { id: "history", label: "Histórico", icon: History },
 ];
-
-const TASK_TYPES = ["Padrão", "Bug", "Feature", "Melhoria", "Análise"] as const;
-const RECURRENCE_OPTIONS = [
-  { value: "none", label: "Sem repetição" },
-  { value: "daily", label: "Diária" },
-  { value: "weekly", label: "Semanal" },
-  { value: "biweekly", label: "Quinzenal" },
-  { value: "monthly", label: "Mensal" },
-] as const;
 
 interface MockAttachment {
   id: string;
@@ -248,6 +240,29 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   // Areas (managed by superadmin) for the "Área solicitante" dropdown
   const [areas, setAreas] = useState<{ id: string; name: string }[]>([]);
   useEffect(() => { areasService.list().then(setAreas); }, []);
+
+  // Board task types (per board, stored in localStorage by the board settings)
+  const [boardTypes, setBoardTypes] = useState<{ id: string; name: string; color: string }[]>([]);
+  useEffect(() => {
+    const pid = task?.project_id;
+    if (!pid) return;
+    try {
+      const raw = localStorage.getItem(`mwr_task_types_${pid}`);
+      setBoardTypes(raw ? JSON.parse(raw) : []);
+    } catch { setBoardTypes([]); }
+  }, [task?.project_id]);
+
+  // Board tags (per board) + this task's tags, from Supabase
+  const [boardLabels, setBoardLabels] = useState<Label[]>([]);
+  useEffect(() => {
+    const pid = task?.project_id;
+    if (pid) tagsService.listForBoard(pid).then(setBoardLabels);
+  }, [task?.project_id]);
+  useEffect(() => {
+    tagsService.listForTask(taskId).then((labels) => {
+      if (labels.length > 0) setTask((t) => (t ? ({ ...t, labels } as TaskWithRelations) : t));
+    });
+  }, [taskId]);
 
   // Board sub-projects (per board) for the "Projeto" dropdown
   const [boardProjects, setBoardProjects] = useState<{ id: string; name: string; color: string }[]>([]);
@@ -504,28 +519,47 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
     saveAttachments(taskId, updated);
   }
 
-  function handleAddTag() {
-    if (!task || !newTagValue.trim()) {
-      setNewTagInput(false);
-      setNewTagValue("");
-      return;
-    }
-    // For mock: add a label locally
-    const fakeLabel = {
-      id: crypto.randomUUID(),
-      name: newTagValue.trim(),
-      color: "#01CFB5",
-      task_id: taskId,
-      created_at: new Date().toISOString(),
-    } as any;
-    setTask((t) => t ? { ...t, labels: [...(t.labels ?? []), fakeLabel] } : t);
+  async function handleAddTag() {
+    const name = newTagValue.trim();
     setNewTagInput(false);
     setNewTagValue("");
+    if (!task || !name) return;
+    const label = await tagsService.ensureLabel(task.project_id, name);
+    if (!label) return;
+    // avoid duplicates
+    if ((task.labels ?? []).some((l: any) => l.id === label.id)) return;
+    await tagsService.attach(taskId, label.id);
+    setTask((t) => (t ? { ...t, labels: [...(t.labels ?? []), label as any] } : t));
+    store.updateTask(taskId, { labels: [...((task.labels as any[]) ?? []), label] } as any);
+    if (!boardLabels.some((l) => l.id === label.id)) setBoardLabels((prev) => [...prev, label]);
+  }
+
+  async function handleRemoveTag(labelId: string) {
+    if (!task) return;
+    await tagsService.detach(taskId, labelId);
+    const next = (task.labels ?? []).filter((l: any) => l.id !== labelId);
+    setTask((t) => (t ? { ...t, labels: next } : t));
+    store.updateTask(taskId, { labels: next } as any);
   }
 
   async function handleAssigneeChange(newUserId: string | null) {
     if (!task) return;
     await handleFieldUpdate("assignee_id", newUserId);
+  }
+
+  // ── Recorrência ──────────────────────────────────────────────────────────
+  function computeNextRun(freq: string): string {
+    const d = new Date();
+    if (freq === "daily") d.setDate(d.getDate() + 1);
+    else if (freq === "weekly") d.setDate(d.getDate() + 7);
+    else if (freq === "biweekly") d.setDate(d.getDate() + 14);
+    else if (freq === "monthly") d.setMonth(d.getMonth() + 1);
+    return d.toISOString().slice(0, 10);
+  }
+  async function saveRecurrence(cfg: Record<string, unknown> | null) {
+    setTask((t) => (t ? ({ ...t, recurrence_config: cfg } as TaskWithRelations) : t));
+    store.updateTask(taskId, { recurrence_config: cfg } as any);
+    await taskService.update(taskId, { recurrence_config: cfg } as any).catch(() => {});
   }
 
   // ── Derived ────────────────────────────────────────────────────────────────
@@ -1198,18 +1232,23 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                   </div>
                 </MetaField>
 
-                {/* Tipo de tarefa */}
+                {/* Tipo de tarefa (por quadro) */}
                 <MetaField label="Tipo de tarefa" icon={<ClipboardCheck size={12} />}>
                   <Select
-                    value={(task as any).task_type ?? "Padrão"}
-                    onValueChange={(v) => handleFieldUpdate("task_type", v)}
+                    value={(task as any).task_type ?? ""}
+                    onValueChange={(v) => handleFieldUpdate("task_type", v || null)}
                   >
                     <SelectTrigger className="h-7 text-xs border-neutral-200">
-                      <SelectValue />
+                      <SelectValue placeholder={boardTypes.length === 0 ? "Cadastre tipos nas configurações" : "Selecionar..."} />
                     </SelectTrigger>
                     <SelectContent>
-                      {TASK_TYPES.map((t) => (
-                        <SelectItem key={t} value={t} className="text-xs">{t}</SelectItem>
+                      {boardTypes.map((t) => (
+                        <SelectItem key={t.id} value={t.name} className="text-xs">
+                          <span className="flex items-center gap-1.5">
+                            <span className="w-1.5 h-1.5 rounded-full" style={{ background: t.color }} />
+                            {t.name}
+                          </span>
+                        </SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -1470,19 +1509,69 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
 
                 {/* Repetição */}
                 <MetaField label="Repetição" icon={<Repeat size={12} />}>
-                  <Select
-                    value={(task as any).recurrence_config ?? "none"}
-                    onValueChange={(v) => handleFieldUpdate("recurrence_config", v === "none" ? null : v)}
-                  >
-                    <SelectTrigger className="h-7 text-xs border-neutral-200">
-                      <SelectValue />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {RECURRENCE_OPTIONS.map(({ value, label }) => (
-                        <SelectItem key={value} value={value} className="text-xs">{label}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
+                  {(() => {
+                    const rc = (task as any).recurrence_config;
+                    const recur = !rc ? null : (typeof rc === "string"
+                      ? { frequency: rc, until: null as string | null }
+                      : (rc as { frequency: string; until: string | null }));
+                    return (
+                      <div className="space-y-2">
+                        <Select
+                          value={recur?.frequency ?? "none"}
+                          onValueChange={(v) =>
+                            !v || v === "none"
+                              ? saveRecurrence(null)
+                              : saveRecurrence({ frequency: v, until: recur?.until ?? null, active: true, next_run: computeNextRun(v) })
+                          }
+                        >
+                          <SelectTrigger className="h-7 text-xs border-neutral-200">
+                            <SelectValue placeholder="Sem repetição" />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="none" className="text-xs">Sem repetição</SelectItem>
+                            <SelectItem value="daily" className="text-xs">Diária</SelectItem>
+                            <SelectItem value="weekly" className="text-xs">Semanal</SelectItem>
+                            <SelectItem value="biweekly" className="text-xs">Quinzenal</SelectItem>
+                            <SelectItem value="monthly" className="text-xs">Mensal</SelectItem>
+                          </SelectContent>
+                        </Select>
+
+                        {recur && (
+                          <div className="space-y-1.5 rounded-lg bg-neutral-50 border border-neutral-100 p-2">
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Repetir até</p>
+                            <label className="flex items-center gap-2 text-[11px] text-neutral-600 cursor-pointer">
+                              <input
+                                type="checkbox"
+                                checked={!recur.until}
+                                onChange={(e) =>
+                                  saveRecurrence({ frequency: recur.frequency, active: true, next_run: computeNextRun(recur.frequency),
+                                    until: e.target.checked ? null : new Date().toISOString().slice(0, 10) })
+                                }
+                                className="w-3 h-3 accent-brand-teal"
+                              />
+                              Tempo indeterminado
+                            </label>
+                            {recur.until != null && (
+                              <input
+                                type="date"
+                                value={recur.until}
+                                onChange={(e) =>
+                                  saveRecurrence({ frequency: recur.frequency, active: true, next_run: computeNextRun(recur.frequency), until: e.target.value || null })
+                                }
+                                className="w-full text-xs border border-neutral-200 rounded-md px-2 py-1 bg-white outline-none focus:border-brand-teal"
+                              />
+                            )}
+                            <button
+                              onClick={() => saveRecurrence(null)}
+                              className="w-full flex items-center justify-center gap-1.5 text-[11px] font-medium text-destructive border border-destructive/20 rounded-md py-1 hover:bg-destructive/5 transition-colors"
+                            >
+                              <X size={11} /> Parar repetição
+                            </button>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })()}
                 </MetaField>
 
                 {/* Seguidores */}
@@ -1559,39 +1648,64 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                   )}
                 </MetaField>
 
-                {/* Tags */}
+                {/* Tags (por quadro) */}
                 <MetaField label="Tags" icon={<TagIcon size={12} />}>
-                  <div className="flex flex-wrap gap-1 items-center">
-                    {task.labels?.map((l) => (
-                      <span
-                        key={l.id}
-                        className="px-1.5 py-0.5 rounded-full text-[10px] font-medium"
-                        style={{ background: `${l.color}20`, color: l.color }}
-                      >
-                        {l.name}
-                      </span>
-                    ))}
-                    {newTagInput ? (
-                      <input
-                        autoFocus
-                        type="text"
-                        value={newTagValue}
-                        onChange={(e) => setNewTagValue(e.target.value)}
-                        onBlur={handleAddTag}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") { e.preventDefault(); handleAddTag(); }
-                          if (e.key === "Escape") { setNewTagInput(false); setNewTagValue(""); }
-                        }}
-                        placeholder="Nova tag..."
-                        className="text-[10px] border border-brand-teal/60 rounded-full px-2 py-0.5 outline-none bg-white w-20"
-                      />
-                    ) : (
-                      <button
-                        onClick={() => setNewTagInput(true)}
-                        className="w-5 h-5 rounded-full border border-dashed border-neutral-300 flex items-center justify-center text-neutral-400 hover:border-brand-teal hover:text-brand-teal transition-colors"
-                      >
-                        <Plus size={10} />
-                      </button>
+                  <div className="space-y-1.5">
+                    <div className="flex flex-wrap gap-1 items-center">
+                      {task.labels?.map((l) => (
+                        <span
+                          key={l.id}
+                          className="group/tag flex items-center gap-1 px-1.5 py-0.5 rounded-full text-[10px] font-medium"
+                          style={{ background: `${l.color}20`, color: l.color }}
+                        >
+                          {l.name}
+                          <button onClick={() => handleRemoveTag(l.id)} className="opacity-60 hover:opacity-100">
+                            <X size={9} />
+                          </button>
+                        </span>
+                      ))}
+                      {newTagInput ? (
+                        <input
+                          autoFocus
+                          type="text"
+                          value={newTagValue}
+                          onChange={(e) => setNewTagValue(e.target.value)}
+                          onBlur={handleAddTag}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") { e.preventDefault(); handleAddTag(); }
+                            if (e.key === "Escape") { setNewTagInput(false); setNewTagValue(""); }
+                          }}
+                          placeholder="Nova tag..."
+                          className="text-[10px] border border-brand-teal/60 rounded-full px-2 py-0.5 outline-none bg-white w-24"
+                        />
+                      ) : (
+                        <button
+                          onClick={() => setNewTagInput(true)}
+                          className="w-5 h-5 rounded-full border border-dashed border-neutral-300 flex items-center justify-center text-neutral-400 hover:border-brand-teal hover:text-brand-teal transition-colors"
+                        >
+                          <Plus size={10} />
+                        </button>
+                      )}
+                    </div>
+                    {/* Existing board tags not yet applied — quick add */}
+                    {boardLabels.filter((bl) => !(task.labels ?? []).some((l: any) => l.id === bl.id)).length > 0 && (
+                      <div className="flex flex-wrap gap-1">
+                        {boardLabels
+                          .filter((bl) => !(task.labels ?? []).some((l: any) => l.id === bl.id))
+                          .map((bl) => (
+                            <button
+                              key={bl.id}
+                              onClick={async () => {
+                                await tagsService.attach(taskId, bl.id);
+                                setTask((t) => (t ? { ...t, labels: [...(t.labels ?? []), bl as any] } : t));
+                                store.updateTask(taskId, { labels: [...((task.labels as any[]) ?? []), bl] } as any);
+                              }}
+                              className="px-1.5 py-0.5 rounded-full text-[10px] border border-dashed border-neutral-200 text-neutral-400 hover:text-brand-teal hover:border-brand-teal transition-colors"
+                            >
+                              + {bl.name}
+                            </button>
+                          ))}
+                      </div>
                     )}
                   </div>
                 </MetaField>
