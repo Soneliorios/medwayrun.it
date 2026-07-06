@@ -58,17 +58,19 @@ function TaskCardInner({ task, onOpen }: Props) {
     if (!isDragging) onOpen?.(task.id);
   }, [isDragging, onOpen, task.id]);
 
+  // Only the current responsible can register time
+  const canTrackTime = task.assignee_id === user?.id;
   const handlePlay = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      if (!user?.id) return;
+      if (!user?.id || task.assignee_id !== user.id) return;
       if (isActive) {
         timerStore.stopTimer(user.id);
       } else {
         timerStore.startTimer(user.id, task.id);
       }
     },
-    [isActive, task.id, timerStore, user?.id]
+    [isActive, task.id, task.assignee_id, timerStore, user?.id]
   );
 
   const handleCheckbox = useCallback(
@@ -237,18 +239,23 @@ function TaskCardInner({ task, onOpen }: Props) {
 
         {/* Footer */}
         <div className="flex items-center gap-1.5">
-          {/* Play button */}
-          <button
-            onClick={handlePlay}
-            className={cn(
-              "w-5 h-5 rounded-full flex items-center justify-center transition-all shrink-0",
-              isActive
-                ? "bg-brand-teal text-white"
-                : "text-neutral-300 hover:text-brand-teal hover:bg-brand-teal/10 opacity-0 group-hover:opacity-100"
-            )}
-          >
-            {isActive ? <Square size={8} /> : <Play size={8} />}
-          </button>
+          {/* Play button — only the current responsible can register time */}
+          {(canTrackTime || isActive) && (
+            <button
+              onClick={handlePlay}
+              disabled={!canTrackTime}
+              title={canTrackTime ? undefined : "Somente o responsável atual pode registrar tempo"}
+              className={cn(
+                "w-5 h-5 rounded-full flex items-center justify-center transition-all shrink-0",
+                isActive
+                  ? "bg-brand-teal text-white"
+                  : "text-neutral-300 hover:text-brand-teal hover:bg-brand-teal/10 opacity-0 group-hover:opacity-100",
+                !canTrackTime && "cursor-not-allowed"
+              )}
+            >
+              {isActive ? <Square size={8} /> : <Play size={8} />}
+            </button>
+          )}
 
           {/* Timer display */}
           {isActive && (

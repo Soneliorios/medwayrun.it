@@ -494,6 +494,8 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
 
   async function handleToggleTimer() {
     if (!user?.id) return;
+    // Only the current responsible can register time (play/pause)
+    if (task && task.assignee_id !== user.id) return;
     if (isTimerActive) {
       await timerStore.stopTimer(user.id);
     } else {
@@ -732,21 +734,29 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
           <>
             {/* ── Header ──────────────────────────────────────────── */}
             <div className="flex items-center gap-2 px-5 py-3 border-b border-neutral-100 shrink-0">
-              {/* Timer button */}
-              <button
-                onClick={handleToggleTimer}
-                className={cn(
-                  "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all",
-                  isTimerActive
-                    ? "bg-brand-teal text-white"
-                    : "border border-neutral-200 text-neutral-600 hover:border-brand-teal hover:text-brand-teal"
-                )}
-              >
-                {isTimerActive ? <Square size={12} /> : <Play size={12} />}
-                {isTimerActive
-                  ? formatElapsed(elapsed)
-                  : formatHours(task.tracked_hours ?? 0)}
-              </button>
+              {/* Timer button — only the current responsible can register time */}
+              {(() => {
+                const canTrack = task.assignee_id === user?.id;
+                return (
+                  <button
+                    onClick={canTrack ? handleToggleTimer : undefined}
+                    disabled={!canTrack}
+                    title={canTrack ? undefined : "Somente o responsável atual pode registrar tempo"}
+                    className={cn(
+                      "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all",
+                      isTimerActive
+                        ? "bg-brand-teal text-white"
+                        : "border border-neutral-200 text-neutral-600 hover:border-brand-teal hover:text-brand-teal",
+                      !canTrack && "opacity-50 cursor-not-allowed hover:border-neutral-200 hover:text-neutral-600"
+                    )}
+                  >
+                    {isTimerActive ? <Square size={12} /> : <Play size={12} />}
+                    {isTimerActive
+                      ? formatElapsed(elapsed)
+                      : formatHours(task.tracked_hours ?? 0)}
+                  </button>
+                );
+              })()}
 
               {/* Deliver / Reopen button */}
               {isDelivered ? (
@@ -1674,7 +1684,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                           className="text-xs border border-brand-teal rounded-md px-2 py-1 w-full bg-white outline-none focus:ring-1 focus:ring-brand-teal/30"
                         />
                       </div>
-                    ) : (
+                    ) : task.assignee_id === user?.id ? (
                       <button
                         onClick={() => {
                           const h = Math.floor(trackedHours);
@@ -1688,6 +1698,10 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                         {formatHours(trackedHours)}
                         <Pencil size={10} className="opacity-0 group-hover:opacity-60 transition-opacity shrink-0" />
                       </button>
+                    ) : (
+                      <span className="text-xs font-medium text-brand-navy" title="Somente o responsável atual pode registrar tempo">
+                        {formatHours(trackedHours)}
+                      </span>
                     )}
                     {(task as any).sla_minutes && (
                       <>
