@@ -129,13 +129,18 @@ export const useFilterStore = create<FilterState>()(
       const userId = useAuthStore.getState().profile?.id;
       if (!userId) { set({ savedFilters: [] }); return; }
       const sb = createRawClient();
+      // Column is named filters_json in the existing schema.
       const { data, error } = await (sb as any)
         .from("saved_filters")
-        .select("id, name, filters")
+        .select("id, name, filters_json")
         .eq("user_id", userId)
         .order("created_at");
       if (error) { console.error("[filters] load error:", error); return; }
-      set({ savedFilters: (data ?? []) as SavedFilterItem[] });
+      set({
+        savedFilters: ((data ?? []) as any[]).map((r) => ({
+          id: r.id, name: r.name, filters: (r.filters_json ?? {}) as BoardFilters,
+        })),
+      });
     },
 
     saveCurrentFilter: async (name) => {
@@ -145,11 +150,14 @@ export const useFilterStore = create<FilterState>()(
       const sb = createRawClient();
       const { data, error } = await (sb as any)
         .from("saved_filters")
-        .insert({ user_id: userId, name, filters })
-        .select("id, name, filters")
+        .insert({ user_id: userId, name, filters_json: filters })
+        .select("id, name, filters_json")
         .single();
       if (error) { console.error("[filters] save error:", error); return; }
-      set((s) => ({ savedFilters: [...s.savedFilters, data as SavedFilterItem], activeSavedId: data.id }));
+      set((s) => ({
+        savedFilters: [...s.savedFilters, { id: data.id, name: data.name, filters: (data.filters_json ?? {}) as BoardFilters }],
+        activeSavedId: data.id,
+      }));
     },
 
     deleteSavedFilter: async (id) => {
