@@ -56,6 +56,14 @@ export const approvalService = {
     return data as TaskApproval;
   },
 
+  /** Revert/cancel an approval (removes it). Only the requester should call this. */
+  async revert(id: string): Promise<boolean> {
+    const sb = createRawClient();
+    const { error } = await (sb as any).from("task_approvals").delete().eq("id", id);
+    if (error) { console.error("[approvalService.revert]", error); return false; }
+    return true;
+  },
+
   async resolve(id: string, status: "approved" | "rejected" | "adjustment", comment: string | null): Promise<boolean> {
     const sb = createRawClient();
     const { error } = await (sb as any)

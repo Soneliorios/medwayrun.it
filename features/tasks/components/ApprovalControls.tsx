@@ -182,6 +182,17 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
     await reload();
   }
 
+  // Only the person who requested the approval can revert it
+  const canRevert = !!approval && !!currentUserId && approval.requested_by === currentUserId;
+  async function revert() {
+    if (!approval || !canRevert) return;
+    if (!confirm("Reverter esta aprovação? A solicitação será removida.")) return;
+    await approvalService.revert(approval.id);
+    notify("approval_resolved", `Aprovação de "${taskTitle}" foi revertida.`, taskId);
+    setComment("");
+    await reload();
+  }
+
   async function resolve(status: ApprovalStatus) {
     if (!approval) return;
     await approvalService.resolve(approval.id, status, comment || null);
@@ -261,6 +272,11 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
                 <StatusIcon status={approval.status} size={12} />
                 Última: {statusLabel(approval.status)} por {nameOf(approval.approver_id)}
                 {approval.comment ? ` — "${approval.comment}"` : ""}
+                {canRevert && (
+                  <button onClick={revert} className="ml-1 flex items-center gap-1 text-neutral-400 hover:text-destructive transition-colors" title="Reverter aprovação (só quem solicitou)">
+                    <RotateCcw size={11} /> Reverter
+                  </button>
+                )}
               </span>
             )}
           </div>
@@ -270,11 +286,16 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2">
           <div className="flex items-center gap-2">
             <Clock size={14} className="text-amber-500" />
-            <span className="text-xs font-medium text-amber-700">
+            <span className="text-xs font-medium text-amber-700 flex-1">
               {canActOnIt
                 ? "Esta tarefa está aguardando sua aprovação"
                 : `Aguardando aprovação de ${nameOf(approval.approver_id)}`}
             </span>
+            {canRevert && (
+              <button onClick={revert} className="flex items-center gap-1 text-[11px] text-amber-600 hover:text-destructive transition-colors shrink-0" title="Cancelar a solicitação de aprovação">
+                <RotateCcw size={11} /> Reverter
+              </button>
+            )}
           </div>
           {canActOnIt && (
             <>
