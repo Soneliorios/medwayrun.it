@@ -187,6 +187,8 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   const [followers, setFollowers] = useState<string[]>([]);
   const [followersOpen, setFollowersOpen] = useState(false);
   const followersRef = useRef<HTMLDivElement>(null);
+  const [assigneeSearch, setAssigneeSearch] = useState("");
+  const [followerSearch, setFollowerSearch] = useState("");
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deliveryDialogOpen, setDeliveryDialogOpen] = useState(false);
   // deliverySeconds stores total time in seconds for the popup (tracked + running timer)
@@ -652,8 +654,13 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                   </button>
                 )}
                 {headerAssigneeOpen && (
-                  <div className="absolute top-8 right-0 z-50 bg-white rounded-xl border border-neutral-200 shadow-lg py-1 min-w-[170px]">
-                    {orgProfiles.map((m) => {
+                  <div className="absolute top-8 right-0 z-50 bg-white rounded-xl border border-neutral-200 shadow-lg py-1 min-w-[190px]">
+                    <div className="px-2 pb-1 pt-0.5">
+                      <input autoFocus value={assigneeSearch} onChange={(e) => setAssigneeSearch(e.target.value)}
+                        placeholder="Buscar membro..." className="w-full text-xs border border-neutral-200 rounded-md px-2 py-1.5 outline-none focus:border-brand-teal" />
+                    </div>
+                    <div className="max-h-52 overflow-y-auto">
+                    {orgProfiles.filter((m) => (m.full_name ?? "").toLowerCase().includes(assigneeSearch.toLowerCase())).map((m) => {
                       const isSelected = (task as any).assignee_id === m.id;
                       return (
                         <button
@@ -678,6 +685,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                         </button>
                       );
                     })}
+                    </div>
                   </div>
                 )}
               </div>
@@ -1135,8 +1143,13 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                       </button>
                     )}
                     {assigneePickerOpen && (
-                      <div className="absolute top-7 left-0 z-50 bg-white rounded-xl border border-neutral-200 shadow-lg py-1 min-w-[160px]">
-                        {orgProfiles.map((m) => {
+                      <div className="absolute top-7 left-0 z-50 bg-white rounded-xl border border-neutral-200 shadow-lg py-1 min-w-[190px]">
+                        <div className="px-2 pb-1 pt-0.5">
+                          <input autoFocus value={assigneeSearch} onChange={(e) => setAssigneeSearch(e.target.value)}
+                            placeholder="Buscar membro..." className="w-full text-xs border border-neutral-200 rounded-md px-2 py-1.5 outline-none focus:border-brand-teal" />
+                        </div>
+                        <div className="max-h-52 overflow-y-auto">
+                        {orgProfiles.filter((m) => (m.full_name ?? "").toLowerCase().includes(assigneeSearch.toLowerCase())).map((m) => {
                           const isSelected = task.assignee_id === m.id;
                           return (
                             <button
@@ -1161,6 +1174,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                             </button>
                           );
                         })}
+                        </div>
                       </div>
                     )}
                   </div>
@@ -1477,9 +1491,14 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                     </button>
                     {followers.length === 0 && <span className="text-[11px] text-neutral-400">Nenhum seguidor</span>}
                     {followersOpen && (
-                      <div className="absolute top-7 left-0 z-50 bg-white rounded-xl border border-neutral-200 shadow-lg py-1 min-w-[180px] max-h-52 overflow-y-auto">
+                      <div className="absolute top-7 left-0 z-50 bg-white rounded-xl border border-neutral-200 shadow-lg py-1 min-w-[190px]">
+                        <div className="px-2 pb-1 pt-0.5">
+                          <input autoFocus value={followerSearch} onChange={(e) => setFollowerSearch(e.target.value)}
+                            placeholder="Buscar membro..." className="w-full text-xs border border-neutral-200 rounded-md px-2 py-1.5 outline-none focus:border-brand-teal" />
+                        </div>
+                        <div className="max-h-52 overflow-y-auto">
                         {orgProfiles.length === 0 && <p className="px-3 py-1.5 text-xs text-neutral-400">Carregando membros...</p>}
-                        {orgProfiles.map((m) => {
+                        {orgProfiles.filter((m) => (m.full_name ?? "").toLowerCase().includes(followerSearch.toLowerCase())).map((m) => {
                           const isSelected = followers.includes(m.id);
                           return (
                             <button
@@ -1499,6 +1518,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                             </button>
                           );
                         })}
+                        </div>
                       </div>
                     )}
                   </div>

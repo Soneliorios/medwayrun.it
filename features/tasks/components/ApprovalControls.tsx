@@ -22,15 +22,11 @@ function getTeamLeaderIds(): Set<string> {
     return new Set();
   }
 }
-type MockTaskApproval = {
-  id: string; task_id: string; task_title: string;
-  approver: string; requested_by: string;
-  status: "pending" | "approved" | "rejected" | "adjustment";
-  comment: string | null; requested_at: string; resolved_at: string | null;
-};
 import { useNotificationStore } from "@/features/notifications/store/notificationStore";
 import { useAuthStore } from "@/features/auth/store/authStore";
+import { approvalService, type TaskApproval } from "../services/approvalService";
 
+type MockTaskApproval = TaskApproval;
 type ApprovalStatus = "approved" | "rejected" | "adjustment";
 
 function notify(type: "approval_requested" | "approval_resolved", content: string, taskId: string) {
@@ -85,7 +81,7 @@ function ApproverOption({ name, leader, selected, onClick }: { name: string; lea
 
 // ── History dropdown ─────────────────────────────────────────────────────────────
 
-function ApprovalHistory({ approvals }: { approvals: MockTaskApproval[] }) {
+function ApprovalHistory({ approvals, nameOf }: { approvals: MockTaskApproval[]; nameOf: (id: string | null) => string }) {
   const [open, setOpen] = useState(false);
   if (approvals.length === 0) return null;
   return (
@@ -105,7 +101,7 @@ function ApprovalHistory({ approvals }: { approvals: MockTaskApproval[] }) {
               <span className={cn("font-medium shrink-0", statusColor(a.status))}>
                 {statusLabel(a.status)}
               </span>
-              <span className="text-neutral-500 shrink-0">por {a.approver}</span>
+              <span className="text-neutral-500 shrink-0">por {nameOf(a.approver_id)}</span>
               {a.comment && (
                 <span className="text-neutral-400 truncate">"{a.comment}"</span>
               )}
@@ -131,7 +127,7 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
   const [approverOpen, setApproverOpen] = useState(false);
   const [approverSearch, setApproverSearch] = useState("");
   const [comment, setComment] = useState("");
-  const currentUserName = useAuthStore((s) => s.profile?.full_name ?? "");
+  const currentUserId = useAuthStore((s) => s.profile?.id ?? null);
   const approverRef = useRef<HTMLDivElement>(null);
 
   const members = useOrgMembers();
@@ -160,8 +156,12 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [members, approverSearch, leaderIds]);
 
-  function reload() {
-    // No-op: approval data requires Supabase implementation
+  const nameOf = (id: string | null) => (id ? members.find((m) => m.id === id)?.full_name ?? "—" : "—");
+
+  async function reload() {
+    const rows = await approvalService.getForTask(taskId);
+    setAllApprovals(rows);
+    setApproval(rows[0] ?? null);
   }
   useEffect(() => { reload(); /* eslint-disable-next-line */ }, [taskId]);
 
@@ -175,20 +175,24 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
     return () => document.removeEventListener("mousedown", h);
   }, [approverOpen]);
 
-  function request() {
-    if (!approverName) return;
+  async function request() {
+    if (!approverId) return;
+    await approvalService.request({ taskId, taskTitle, approverId, requestedBy: currentUserId });
     notify("approval_requested", `Aprovação solicitada a ${approverName}: "${taskTitle}"`, taskId);
+    await reload();
   }
 
-  function resolve(status: ApprovalStatus) {
+  async function resolve(status: ApprovalStatus) {
     if (!approval) return;
+    await approvalService.resolve(approval.id, status, comment || null);
     const resolveLabel = status === "approved" ? "aprovada" : status === "rejected" ? "rejeitada" : "marcada para ajuste";
     notify("approval_resolved", `Tarefa "${taskTitle}" foi ${resolveLabel}.`, taskId);
     setComment("");
+    await reload();
   }
 
   const pending = approval?.status === "pending";
-  const canActOnIt = pending && approval?.approver === currentUserName;
+  const canActOnIt = pending && approval?.approver_id === currentUserId;
 
   return (
     <div className="mb-4">
@@ -255,12 +259,12 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
             {approval && (
               <span className={cn("w-full mt-1 text-[11px] flex items-center gap-1.5", statusColor(approval.status))}>
                 <StatusIcon status={approval.status} size={12} />
-                Última: {statusLabel(approval.status)} por {approval.approver}
+                Última: {statusLabel(approval.status)} por {nameOf(approval.approver_id)}
                 {approval.comment ? ` — "${approval.comment}"` : ""}
               </span>
             )}
           </div>
-          <ApprovalHistory approvals={allApprovals} />
+          <ApprovalHistory approvals={allApprovals} nameOf={nameOf} />
         </div>
       ) : (
         <div className="rounded-lg border border-amber-200 bg-amber-50 p-3 space-y-2">
@@ -269,7 +273,7 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
             <span className="text-xs font-medium text-amber-700">
               {canActOnIt
                 ? "Esta tarefa está aguardando sua aprovação"
-                : `Aguardando aprovação de ${approval.approver}`}
+                : `Aguardando aprovação de ${nameOf(approval.approver_id)}`}
             </span>
           </div>
           {canActOnIt && (
@@ -293,7 +297,7 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
               </div>
             </>
           )}
-          <ApprovalHistory approvals={allApprovals} />
+          <ApprovalHistory approvals={allApprovals} nameOf={nameOf} />
         </div>
       )}
     </div>
@@ -305,14 +309,22 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
 export function MyApprovals({ onOpenTask }: { onOpenTask: (id: string) => void }) {
   const [items, setItems] = useState<MockTaskApproval[]>([]);
   const [comment, setComment] = useState<Record<string, string>>({});
+  const currentUserId = useAuthStore((s) => s.profile?.id ?? null);
+  const members = useOrgMembers();
+  const nameOf = (id: string | null) => (id ? members.find((m) => m.id === id)?.full_name ?? "—" : "—");
 
-  function reload() { /* No-op: approval data requires Supabase implementation */ }
-  useEffect(() => { reload(); }, []);
+  async function reload() {
+    if (!currentUserId) { setItems([]); return; }
+    setItems(await approvalService.listForApprover(currentUserId));
+  }
+  useEffect(() => { reload(); /* eslint-disable-next-line */ }, [currentUserId]);
 
-  function resolve(item: MockTaskApproval, status: ApprovalStatus) {
+  async function resolve(item: MockTaskApproval, status: ApprovalStatus) {
+    await approvalService.resolve(item.id, status, comment[item.id] || null);
     const resolveLabel = status === "approved" ? "aprovada" : status === "rejected" ? "rejeitada" : "marcada para ajuste";
     notify("approval_resolved", `Tarefa "${item.task_title}" foi ${resolveLabel}.`, item.task_id);
     setComment((c) => ({ ...c, [item.id]: "" }));
+    await reload();
   }
 
   const pending = items.filter((i) => i.status === "pending");
@@ -341,7 +353,7 @@ export function MyApprovals({ onOpenTask }: { onOpenTask: (id: string) => void }
                   <button onClick={() => onOpenTask(item.task_id)} className="text-sm font-medium text-brand-navy hover:text-brand-teal truncate flex-1 text-left">
                     {item.task_title}
                   </button>
-                  <span className="text-[10px] text-neutral-400">por {item.requested_by}</span>
+                  <span className="text-[10px] text-neutral-400">por {nameOf(item.requested_by)}</span>
                 </div>
                 <div className="flex items-center gap-2 mt-2 flex-wrap">
                   <input

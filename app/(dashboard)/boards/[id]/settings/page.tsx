@@ -197,6 +197,15 @@ export default function ProjectSettingsPage({ params }: Props) {
   useEffect(() => {
     async function fetchOrgMembers() {
       setOrgMembersLoading(true);
+      try {
+        const res = await fetch("/api/org/members");
+        if (res.ok) {
+          const users = (await res.json()) as Array<{ id: string; full_name: string; role: string }>;
+          setOrgMembers(users.map((u) => ({ id: u.id, user_id: u.id, name: u.full_name, role: u.role })));
+          setOrgMembersLoading(false);
+          return;
+        }
+      } catch { /* fall through */ }
       const supabase = createClient();
       const { data } = await supabase
         .from("members")
@@ -217,6 +226,38 @@ export default function ProjectSettingsPage({ params }: Props) {
     }
     fetchOrgMembers();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Teams (from admin config in localStorage) for mass-adding members
+  const [teams, setTeams] = useState<{ id: string; name: string; member_ids: string[] }[]>([]);
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem("mwr_teams");
+      if (raw) {
+        setTeams((JSON.parse(raw) as any[]).map((t) => ({
+          id: t.id, name: t.name, member_ids: t.member_ids ?? [],
+        })));
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  async function handleAddTeam(team: { id: string; name: string; member_ids: string[] }) {
+    const toAdd = team.member_ids.filter(
+      (uid) => !projectMembers.some((pm) => pm.user_id === uid)
+    );
+    if (toAdd.length === 0) return;
+    const added: ProjectMember[] = toAdd.map((uid) => ({
+      user_id: uid,
+      name: orgMembers.find((m) => m.user_id === uid)?.name ?? uid.slice(0, 8),
+      role: "member",
+    }));
+    setProjectMembers((prev) => [...prev, ...added]);
+    try {
+      const supabase = createClient();
+      await (supabase as any).from("project_members").insert(
+        toAdd.map((uid) => ({ project_id: projectId, user_id: uid, role: "member" }))
+      );
+    } catch (e) { console.error("[project_members] team insert error:", e); }
+  }
 
   useEffect(() => {
     async function fetchProjectAccess() {
@@ -636,9 +677,35 @@ export default function ProjectSettingsPage({ params }: Props) {
                       )}
                     </div>
 
+                    {/* Add a whole team at once */}
+                    {teams.length > 0 && (
+                      <div className="bg-neutral-50 rounded-xl p-4 space-y-2 border border-neutral-100">
+                        <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide">Adicionar um time inteiro</p>
+                        <div className="flex flex-wrap gap-1.5">
+                          {teams.map((team) => {
+                            const pending = team.member_ids.filter((uid) => !projectMembers.some((pm) => pm.user_id === uid));
+                            return (
+                              <button
+                                key={team.id}
+                                onClick={() => handleAddTeam(team)}
+                                disabled={pending.length === 0}
+                                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border border-neutral-200 bg-white text-neutral-600 hover:border-brand-teal hover:text-brand-teal disabled:opacity-40 disabled:hover:border-neutral-200 disabled:hover:text-neutral-600 transition-colors"
+                              >
+                                <Users size={12} />
+                                {team.name}
+                                <span className="text-[10px] text-neutral-400">
+                                  {pending.length > 0 ? `+${pending.length}` : "✓"}
+                                </span>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    )}
+
                     {/* Add member — searchable org list */}
                     <div className="bg-neutral-50 rounded-xl p-4 space-y-3 border border-neutral-100">
-                      <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide">Adicionar membro</p>
+                      <p className="text-xs font-semibold text-neutral-500 uppercase tracking-wide">Adicionar membro individual</p>
                       <div className="relative" ref={memberSearchRef}>
                         <input
                           value={memberSearch}

@@ -94,6 +94,7 @@ export function RulesTab({ taskId }: Props) {
 
   // ── Sequence handlers ──────────────────────────────────────────────────────
   const [memberPickerOpen, setMemberPickerOpen] = useState(false);
+  const [seqSearch, setSeqSearch] = useState("");
 
   async function addToSequence(member: { id: string; name: string }) {
     setMemberPickerOpen(false);
@@ -202,9 +203,15 @@ export function RulesTab({ taskId }: Props) {
 
         {memberPickerOpen ? (
           <div className="rounded-lg border border-brand-teal/30 bg-white p-2 space-y-0.5">
+            <div className="relative mb-1">
+              <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 text-neutral-300" />
+              <input autoFocus value={seqSearch} onChange={(e) => setSeqSearch(e.target.value)}
+                placeholder="Buscar membro..." className="w-full text-xs border border-neutral-200 rounded pl-6 pr-2 py-1 outline-none focus:border-brand-teal" />
+            </div>
             {orgMembers
               .map((m) => ({ id: m.id, name: m.full_name }))
               .filter((m) => !sequence.some((s) => s.user_id === m.id))
+              .filter((m) => m.name.toLowerCase().includes(seqSearch.toLowerCase()))
               .map((m) => (
               <button
                 key={m.id}
