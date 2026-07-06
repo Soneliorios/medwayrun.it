@@ -1497,7 +1497,10 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                     onValueChange={(v) => handleFieldUpdate("requesting_area_id", v || null)}
                   >
                     <SelectTrigger className="h-7 text-xs border-neutral-200">
-                      <SelectValue placeholder={areas.length === 0 ? "Nenhuma área cadastrada" : "Selecionar..."} />
+                      <span className={cn("truncate", !(task as any).requesting_area_id && "text-neutral-400")}>
+                        {areas.find((a) => a.id === (task as any).requesting_area_id)?.name
+                          ?? (areas.length === 0 ? "Nenhuma área cadastrada" : "Selecionar...")}
+                      </span>
                     </SelectTrigger>
                     <SelectContent>
                       {areas.map((a) => (
