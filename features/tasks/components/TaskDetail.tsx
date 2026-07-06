@@ -991,7 +991,13 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
               <div className="flex items-center gap-2 flex-wrap text-xs text-neutral-400">
                 <span>#{taskId.slice(0, 8).toUpperCase()}</span>
                 <span>·</span>
-                <span>Criado em {formatDateFull(task.created_at)}</span>
+                <span>
+                  Criado em {formatDateFull(task.created_at)}
+                  {(task as any).created_by && (() => {
+                    const creator = orgProfiles.find((p) => p.id === (task as any).created_by);
+                    return creator ? ` por ${creator.full_name ?? "—"}` : "";
+                  })()}
+                </span>
 
                 {/* Priority select */}
                 <Select
