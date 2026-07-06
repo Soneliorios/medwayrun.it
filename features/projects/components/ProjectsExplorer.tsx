@@ -15,6 +15,7 @@ import {
 import { ProjectForm } from "@/features/projects/components/ProjectForm";
 import { useProjectStore } from "@/features/projects/store/projectStore";
 import { useProjectActions } from "@/features/projects/hooks/useProjects";
+import { createRawClient } from "@/lib/supabase/client";
 import { cn } from "@/lib/utils";
 import type { Project } from "@/types";
 
@@ -26,13 +27,15 @@ const PAGE_SIZE = 12;
 
 interface ProjectStats { hours: number; total: number; delivered: number; activity: number[]; }
 
-function computeStats(): Record<string, ProjectStats> {
+async function computeStats(): Promise<Record<string, ProjectStats>> {
   const out: Record<string, ProjectStats> = {};
-  if (typeof window === "undefined") return out;
-  let tasks: any[] = [];
-  try { tasks = JSON.parse(localStorage.getItem("mwr_tasks") ?? "[]"); } catch {}
+  const supabase = createRawClient();
+  const { data, error } = await (supabase as any)
+    .from("tasks")
+    .select("project_id, tracked_hours, status");
+  if (error) { console.error("[ProjectsExplorer.computeStats]", error); return out; }
   const byProj: Record<string, any[]> = {};
-  tasks.forEach((t) => { (byProj[t.project_id] ??= []).push(t); });
+  (data ?? []).forEach((t: any) => { (byProj[t.project_id] ??= []).push(t); });
   for (const [pid, list] of Object.entries(byProj)) {
     const hours = list.reduce((s, t) => s + (t.tracked_hours ?? 0), 0);
     const delivered = list.filter((t) => t.status === "delivered").length;
@@ -56,7 +59,11 @@ export function ProjectsExplorer({ title = "Quadros", noun = "quadro" }: { title
   const [page, setPage] = useState(0);
   const [stats, setStats] = useState<Record<string, ProjectStats>>({});
 
-  useEffect(() => { setStats(computeStats()); }, [projects]);
+  useEffect(() => {
+    let cancelled = false;
+    computeStats().then((s) => { if (!cancelled) setStats(s); });
+    return () => { cancelled = true; };
+  }, [projects]);
 
   function duplicate(_p: Project) {
     // TODO: implement project duplication via Supabase
