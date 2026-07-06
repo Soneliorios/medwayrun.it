@@ -317,7 +317,12 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
     if (!task) return;
     const willFinish = queueRemaining <= 1;
     if (willFinish && (await refreshPendingApproval())) { setDeliverBlockedWarning(true); return; }
-    const { finished, nextUserId } = await sequenceService.advance(taskId);
+    // Record this member's part (time delta + what they delivered)
+    const { finished, nextUserId } = await sequenceService.advance(taskId, {
+      hours: opts?.hours,
+      note: opts?.note || null,
+      link: opts?.link || null,
+    });
     if (finished) {
       await handleDeliver(opts); // finalizes the task (saves hours/link/note, moves column)
     } else {
@@ -333,7 +338,17 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
 
   function openDeliveryDialog(mode: "full" | "part") {
     if (!task) return;
-    const totalSec = Math.round((task.tracked_hours ?? 0) * 3600) + elapsed;
+    // For a part, prefill with the delta since this member's turn started;
+    // for the full delivery, prefill with the task's total tracked time.
+    let totalSec: number;
+    if (mode === "part") {
+      const active = queue.find((r) => r.status === "active") ?? queue.find((r) => r.status !== "done");
+      const baseline = active?.part_start_hours ?? 0;
+      const partHours = Math.max(0, (task.tracked_hours ?? 0) - baseline);
+      totalSec = Math.round(partHours * 3600) + elapsed;
+    } else {
+      totalSec = Math.round((task.tracked_hours ?? 0) * 3600) + elapsed;
+    }
     const h = Math.floor(totalSec / 3600);
     const m = Math.floor((totalSec % 3600) / 60);
     const s = totalSec % 60;
@@ -341,8 +356,8 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
     setDeliveryH(String(h));
     setDeliveryM(String(m).padStart(2, "0"));
     setDeliveryS(String(s).padStart(2, "0"));
-    setDeliveryLink((task as any).delivery_link ?? "");
-    setDeliveryNote((task as any).delivery_note ?? "");
+    setDeliveryLink(mode === "part" ? "" : ((task as any).delivery_link ?? ""));
+    setDeliveryNote(mode === "part" ? "" : ((task as any).delivery_note ?? ""));
     setDeliveryMode(mode);
     setDeliveryDialogOpen(true);
   }

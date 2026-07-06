@@ -13,6 +13,16 @@ import { useBoardStore } from "@/features/board/store/boardStore";
 interface MockTaskSequence {
   id: string; task_id: string; user_id: string; name: string;
   order_position: number; status: "pending" | "active" | "done";
+  hours_spent?: number | null; delivered_at?: string | null;
+  delivery_note?: string | null; delivery_link?: string | null;
+}
+
+function fmtPartHours(h: number): string {
+  const total = Math.round(h * 3600);
+  const hh = Math.floor(total / 3600);
+  const mm = Math.floor((total % 3600) / 60);
+  const ss = total % 60;
+  return `${String(hh).padStart(2, "0")}:${String(mm).padStart(2, "0")}:${String(ss).padStart(2, "0")}`;
 }
 interface MockTaskDependency {
   id: string; task_id: string; dependency_task_id: string;
@@ -98,6 +108,8 @@ export function RulesTab({ taskId, onQueueChange }: Props) {
       id: s.id, task_id: s.task_id, user_id: s.user_id,
       name: orgMembers.find((m) => m.id === s.user_id)?.full_name ?? s.user_id.slice(0, 8),
       order_position: s.order_position, status: s.status,
+      hours_spent: s.hours_spent, delivered_at: s.delivered_at,
+      delivery_note: s.delivery_note, delivery_link: s.delivery_link,
     })));
   }
 
@@ -188,33 +200,49 @@ export function RulesTab({ taskId, onQueueChange }: Props) {
               onDragOver={(e) => e.preventDefault()}
               onDrop={() => handleDrop(i)}
               className={cn(
-                "flex items-center gap-2 p-2 rounded-md border bg-white group transition-colors",
+                "p-2 rounded-md border bg-white group transition-colors",
                 s.status === "active" ? "border-brand-teal/40 bg-brand-teal/5" : "border-neutral-100",
                 dragIndex === i && "opacity-50"
               )}
             >
-              <GripVertical size={13} className="text-neutral-300 cursor-grab shrink-0" />
-              <span className="w-5 h-5 rounded-full bg-brand-navy/10 text-brand-navy text-[10px] font-bold flex items-center justify-center shrink-0">
-                {i + 1}
-              </span>
-              <Avatar className="w-5 h-5 shrink-0">
-                <AvatarFallback className="text-[8px] bg-brand-teal/20 text-brand-teal">
-                  {getInitials(s.name)}
-                </AvatarFallback>
-              </Avatar>
-              <span className="text-xs text-neutral-600 flex-1 truncate">{s.name}</span>
-              {s.status === "active" && (
-                <span className="text-[9px] text-brand-teal font-semibold uppercase">Atual</span>
+              <div className="flex items-center gap-2">
+                <GripVertical size={13} className="text-neutral-300 cursor-grab shrink-0" />
+                <span className="w-5 h-5 rounded-full bg-brand-navy/10 text-brand-navy text-[10px] font-bold flex items-center justify-center shrink-0">
+                  {i + 1}
+                </span>
+                <Avatar className="w-5 h-5 shrink-0">
+                  <AvatarFallback className="text-[8px] bg-brand-teal/20 text-brand-teal">
+                    {getInitials(s.name)}
+                  </AvatarFallback>
+                </Avatar>
+                <span className="text-xs text-neutral-600 flex-1 truncate">{s.name}</span>
+                {s.status === "active" && (
+                  <span className="text-[9px] text-brand-teal font-semibold uppercase">Atual</span>
+                )}
+                {s.status === "done" && (
+                  <CheckCircle2 size={12} className="text-green-500 shrink-0" />
+                )}
+                <button
+                  onClick={() => removeFromSequence(s.id)}
+                  className="opacity-0 group-hover:opacity-100 p-0.5 text-neutral-300 hover:text-destructive transition-all shrink-0"
+                >
+                  <Trash2 size={11} />
+                </button>
+              </div>
+              {/* Delivered part details */}
+              {s.status === "done" && (s.hours_spent != null || s.delivery_note || s.delivery_link) && (
+                <div className="mt-1.5 pl-7 space-y-0.5">
+                  {s.hours_spent != null && (
+                    <p className="text-[10px] text-neutral-500">⏱ Tempo na parte: <span className="font-medium">{fmtPartHours(s.hours_spent)}</span></p>
+                  )}
+                  {s.delivery_note && (
+                    <p className="text-[10px] text-neutral-500 whitespace-pre-wrap">📝 {s.delivery_note}</p>
+                  )}
+                  {s.delivery_link && (
+                    <a href={s.delivery_link} target="_blank" rel="noopener noreferrer" className="text-[10px] text-brand-teal hover:underline break-all">🔗 {s.delivery_link}</a>
+                  )}
+                </div>
               )}
-              {s.status === "done" && (
-                <CheckCircle2 size={12} className="text-green-500 shrink-0" />
-              )}
-              <button
-                onClick={() => removeFromSequence(s.id)}
-                className="opacity-0 group-hover:opacity-100 p-0.5 text-neutral-300 hover:text-destructive transition-all shrink-0"
-              >
-                <Trash2 size={11} />
-              </button>
             </div>
           ))}
         </div>
