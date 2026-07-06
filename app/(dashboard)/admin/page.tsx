@@ -10,6 +10,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useRole } from "@/features/auth/hooks/useRole";
 import { useAuthStore } from "@/features/auth/store/authStore";
+import { areasService, type Area } from "@/lib/areasService";
 import {
   type AppRole,
   ROLE_LABELS,
@@ -51,7 +52,7 @@ interface MockTeam {
   member_hours: Record<string, number>;
 }
 
-type AdminTab = "overview" | "users" | "teams";
+type AdminTab = "overview" | "users" | "teams" | "areas";
 
 // ── Helpers ────────────────────────────────────────────────────────────────────
 
@@ -155,6 +156,30 @@ export default function AdminPage() {
   const [editingTeamId, setEditingTeamId] = useState<string | null>(null);
   const [editTeamNameValue, setEditTeamNameValue] = useState("");
   const [editingHours, setEditingHours] = useState<{ teamId: string; userId: string; value: string } | null>(null);
+
+  // Áreas (superadmin CRUD)
+  const [areas, setAreas] = useState<Area[]>([]);
+  const [newAreaName, setNewAreaName] = useState("");
+  const [editingAreaId, setEditingAreaId] = useState<string | null>(null);
+  const [editAreaName, setEditAreaName] = useState("");
+  useEffect(() => { areasService.list().then(setAreas); }, []);
+
+  async function createArea() {
+    const name = newAreaName.trim();
+    if (!name) return;
+    const created = await areasService.create(name);
+    if (created) { setAreas((prev) => [...prev, created].sort((a, b) => a.name.localeCompare(b.name))); setNewAreaName(""); }
+  }
+  async function saveAreaName(id: string) {
+    const name = editAreaName.trim();
+    if (name) { await areasService.rename(id, name); setAreas((prev) => prev.map((a) => (a.id === id ? { ...a, name } : a)).sort((x, y) => x.name.localeCompare(y.name))); }
+    setEditingAreaId(null); setEditAreaName("");
+  }
+  async function deleteArea(id: string, name: string) {
+    if (!confirm(`Excluir a área "${name}"? Tarefas que a usam ficarão sem área.`)) return;
+    await areasService.remove(id);
+    setAreas((prev) => prev.filter((a) => a.id !== id));
+  }
 
   const authLoading = useAuthStore((s) => s.isLoading);
 
@@ -305,6 +330,7 @@ export default function AdminPage() {
             { id: "overview" as AdminTab, label: "Visão Geral" },
             { id: "users"    as AdminTab, label: "Usuários", superadminOnly: true },
             { id: "teams"    as AdminTab, label: "Times" },
+            { id: "areas"    as AdminTab, label: "Áreas", superadminOnly: true },
           ]).filter((t) => !t.superadminOnly || isSuperAdmin).map((tab) => (
               <button
                 key={tab.id}
@@ -897,6 +923,78 @@ export default function AdminPage() {
                   </div>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* ════════════════════════════════════════════════════════════════════ */}
+        {/* TAB: Áreas                                                          */}
+        {/* ════════════════════════════════════════════════════════════════════ */}
+        {activeTab === "areas" && isSuperAdmin && (
+          <div className="space-y-5 pt-2">
+            <div>
+              <p className="text-sm text-neutral-500">
+                Áreas solicitantes da organização. Elas aparecem no campo <strong>Área Solicitante</strong> das tarefas.
+              </p>
+            </div>
+
+            {/* New area */}
+            <div className="flex gap-2 max-w-md">
+              <input
+                value={newAreaName}
+                onChange={(e) => setNewAreaName(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Enter") createArea(); }}
+                placeholder="Nome da área (ex: Marketing)"
+                className="flex-1 text-sm border border-neutral-200 rounded-lg px-3 py-2 focus:outline-none focus:border-brand-teal"
+              />
+              <button
+                onClick={createArea}
+                disabled={!newAreaName.trim()}
+                className="flex items-center gap-1.5 px-4 py-2 bg-brand-teal text-white text-sm font-medium rounded-lg hover:bg-brand-teal/90 disabled:opacity-40 transition-colors"
+              >
+                <Plus size={14} /> Criar
+              </button>
+            </div>
+
+            {/* Area list */}
+            <div className="bg-white rounded-xl border border-neutral-100 max-w-md">
+              {areas.length === 0 ? (
+                <div className="py-10 text-center">
+                  <p className="text-sm text-neutral-400">Nenhuma área cadastrada</p>
+                </div>
+              ) : (
+                <div className="divide-y divide-neutral-50">
+                  {areas.map((a) => (
+                    <div key={a.id} className="flex items-center gap-3 px-4 py-2.5 group">
+                      {editingAreaId === a.id ? (
+                        <input
+                          autoFocus
+                          value={editAreaName}
+                          onChange={(e) => setEditAreaName(e.target.value)}
+                          onBlur={() => saveAreaName(a.id)}
+                          onKeyDown={(e) => { if (e.key === "Enter") saveAreaName(a.id); if (e.key === "Escape") { setEditingAreaId(null); setEditAreaName(""); } }}
+                          className="flex-1 text-sm border-b border-brand-teal focus:outline-none pb-0.5"
+                        />
+                      ) : (
+                        <span
+                          className="flex-1 text-sm text-neutral-700 cursor-pointer hover:text-brand-teal"
+                          onClick={() => { setEditingAreaId(a.id); setEditAreaName(a.name); }}
+                          title="Clique para renomear"
+                        >
+                          {a.name}
+                        </span>
+                      )}
+                      <button
+                        onClick={() => deleteArea(a.id, a.name)}
+                        className="opacity-0 group-hover:opacity-100 w-6 h-6 flex items-center justify-center rounded text-neutral-300 hover:text-destructive transition-all"
+                        title="Excluir área"
+                      >
+                        <Trash2 size={13} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
             </div>
           </div>
         )}

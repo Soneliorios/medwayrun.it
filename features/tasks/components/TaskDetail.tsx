@@ -54,6 +54,7 @@ import { cn, formatDate, formatDateFull, isOverdue, formatHours } from "@/lib/ut
 import { PRIORITY_LABELS, PRIORITY_COLORS, formatElapsed } from "@/types";
 import { taskService } from "../services/taskService";
 import { activityService, type TaskActivity } from "../services/activityService";
+import { areasService } from "@/lib/areasService";
 import { useBoardStore } from "@/features/board/store/boardStore";
 import { useAuthStore } from "@/features/auth/store/authStore";
 import { useTimerStore } from "@/features/timer/store/timerStore";
@@ -87,7 +88,6 @@ const TABS: { id: DetailTab; label: string; icon: React.ElementType }[] = [
 ];
 
 const TASK_TYPES = ["Padrão", "Bug", "Feature", "Melhoria", "Análise"] as const;
-const AREAS = ["TI", "Marketing", "Comercial", "RH", "Financeiro", "Produto"] as const;
 const RECURRENCE_OPTIONS = [
   { value: "none", label: "Sem repetição" },
   { value: "daily", label: "Diária" },
@@ -244,6 +244,10 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
     }
     loadOrgProfiles();
   }, []);
+
+  // Areas (managed by superadmin) for the "Área solicitante" dropdown
+  const [areas, setAreas] = useState<{ id: string; name: string }[]>([]);
+  useEffect(() => { areasService.list().then(setAreas); }, []);
 
   // Followers — persisted in Supabase (task_followers)
   useEffect(() => {
@@ -1419,32 +1423,15 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                 {/* Área Solicitante */}
                 <MetaField label="Área Solicitante" icon={<Users size={12} />}>
                   <Select
-                    value={(task as any).requesting_area ?? ""}
-                    onValueChange={(v) => handleFieldUpdate("requesting_area", v || null)}
+                    value={(task as any).requesting_area_id ?? ""}
+                    onValueChange={(v) => handleFieldUpdate("requesting_area_id", v || null)}
                   >
                     <SelectTrigger className="h-7 text-xs border-neutral-200">
-                      <SelectValue placeholder="Selecionar..." />
+                      <SelectValue placeholder={areas.length === 0 ? "Nenhuma área cadastrada" : "Selecionar..."} />
                     </SelectTrigger>
                     <SelectContent>
-                      {AREAS.map((a) => (
-                        <SelectItem key={a} value={a} className="text-xs">{a}</SelectItem>
-                      ))}
-                    </SelectContent>
-                  </Select>
-                </MetaField>
-
-                {/* Área Solicitada */}
-                <MetaField label="Área Solicitada" icon={<Users size={12} />}>
-                  <Select
-                    value={(task as any).requested_area ?? ""}
-                    onValueChange={(v) => handleFieldUpdate("requested_area", v || null)}
-                  >
-                    <SelectTrigger className="h-7 text-xs border-neutral-200">
-                      <SelectValue placeholder="Selecionar..." />
-                    </SelectTrigger>
-                    <SelectContent>
-                      {AREAS.map((a) => (
-                        <SelectItem key={a} value={a} className="text-xs">{a}</SelectItem>
+                      {areas.map((a) => (
+                        <SelectItem key={a.id} value={a.id} className="text-xs">{a.name}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
