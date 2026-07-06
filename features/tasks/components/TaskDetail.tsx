@@ -55,6 +55,7 @@ import { PRIORITY_LABELS, PRIORITY_COLORS, formatElapsed } from "@/types";
 import { taskService } from "../services/taskService";
 import { activityService, type TaskActivity } from "../services/activityService";
 import { approvalService } from "../services/approvalService";
+import { sequenceService, type SeqRow } from "../services/sequenceService";
 import { useBoardAccess } from "@/lib/boardAccess";
 import { areasService } from "@/lib/areasService";
 import { tagsService, type Label } from "../services/tagsService";
@@ -269,6 +270,28 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
     return blocking !== null;
   }
   useEffect(() => { refreshPendingApproval(); /* eslint-disable-next-line */ }, [taskId]);
+
+  // Responsible queue (fila) — the head drives the assignee
+  const [queue, setQueue] = useState<SeqRow[]>([]);
+  async function loadQueue() { setQueue(await sequenceService.list(taskId)); }
+  useEffect(() => { loadQueue(); /* eslint-disable-next-line */ }, [taskId]);
+  const queueRemaining = queue.filter((r) => r.status !== "done").length;
+
+  async function handleDeliverMyPart() {
+    if (!task) return;
+    const willFinish = queueRemaining <= 1;
+    // Final delivery must respect the approval block
+    if (willFinish && (await refreshPendingApproval())) { setDeliverBlockedWarning(true); return; }
+    const { finished } = await sequenceService.advance(taskId);
+    if (finished) {
+      await handleDeliver();
+    } else {
+      const t = await taskService.get(taskId);
+      setTask(t);
+      store.updateTask(taskId, { assignee_id: (t as any)?.assignee_id } as any);
+    }
+    loadQueue();
+  }
 
   // Board task types (per board, stored in localStorage by the board settings)
   const [boardTypes, setBoardTypes] = useState<{ id: string; name: string; color: string }[]>([]);
@@ -714,6 +737,18 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                 >
                   <CheckCircle2 size={12} />
                   Entregar
+                </button>
+              )}
+
+              {/* Entregar minha parte — advances the responsible queue */}
+              {!isDelivered && queueRemaining > 0 && canActOnTask && (
+                <button
+                  onClick={handleDeliverMyPart}
+                  title="Concluir sua parte e passar para o próximo da fila"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-brand-teal/40 text-brand-teal hover:bg-brand-teal/5 transition-all"
+                >
+                  <CheckCircle2 size={12} />
+                  {queueRemaining <= 1 ? "Entregar (última parte)" : "Entregar minha parte"}
                 </button>
               )}
 
