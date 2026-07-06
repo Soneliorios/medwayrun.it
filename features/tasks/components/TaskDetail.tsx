@@ -991,11 +991,15 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                 {/* Priority select */}
                 <Select
                   value={task.priority}
-                  onValueChange={(v) => v && handleFieldUpdate("priority", v)}
+                  onValueChange={(v) => {
+                    if (!v) return;
+                    handleFieldUpdate("priority", v);
+                    handleFieldUpdate("is_urgent", v === "urgent" ? "true" : "false");
+                  }}
                 >
                   <SelectTrigger className="h-6 w-auto text-xs border-neutral-200 gap-1 px-2">
                     <span className="w-1.5 h-1.5 rounded-full" style={{ background: PRIORITY_COLORS[task.priority] }} />
-                    <SelectValue />
+                    <span>{PRIORITY_LABELS[task.priority]}</span>
                   </SelectTrigger>
                   <SelectContent>
                     {Object.entries(PRIORITY_LABELS).map(([v, l]) => (
@@ -1746,12 +1750,16 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                 <MetaField label="Prioridade" icon={<Flag size={12} />}>
                   <Select
                     value={task.priority}
-                    onValueChange={(v) => v && handleFieldUpdate("priority", v)}
+                    onValueChange={(v) => {
+                      if (!v) return;
+                      handleFieldUpdate("priority", v);
+                      handleFieldUpdate("is_urgent", v === "urgent" ? "true" : "false");
+                    }}
                   >
                     <SelectTrigger className="h-7 text-xs border-neutral-200">
                       <div className="flex items-center gap-1.5">
                         <span className="w-1.5 h-1.5 rounded-full" style={{ background: PRIORITY_COLORS[task.priority] }} />
-                        <SelectValue />
+                        <span>{PRIORITY_LABELS[task.priority]}</span>
                       </div>
                     </SelectTrigger>
                     <SelectContent>
