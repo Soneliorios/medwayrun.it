@@ -10,8 +10,7 @@ type MockTaskApproval = {
   comment: string | null; requested_at: string; resolved_at: string | null;
 };
 import { useNotificationStore } from "@/features/notifications/store/notificationStore";
-
-export const CURRENT_USER = "Você (demo)";
+import { useAuthStore } from "@/features/auth/store/authStore";
 
 type ApprovalStatus = "approved" | "rejected" | "adjustment";
 
@@ -95,6 +94,7 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
   const [approverOptions, setApproverOptions] = useState<string[]>([]);
   const [approver, setApprover] = useState("");
   const [comment, setComment] = useState("");
+  const currentUserName = useAuthStore((s) => s.profile?.full_name ?? "");
 
   function reload() {
     // No-op: approval data requires Supabase implementation
@@ -131,7 +131,7 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
   }
 
   const pending = approval?.status === "pending";
-  const canActOnIt = pending && approval?.approver === CURRENT_USER;
+  const canActOnIt = pending && approval?.approver === currentUserName;
 
   return (
     <div className="mb-4">

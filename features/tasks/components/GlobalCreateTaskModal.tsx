@@ -33,13 +33,7 @@ import type { Column } from "@/types";
 
 type Priority = "low" | "medium" | "high" | "urgent";
 
-const DEMO_USERS = [
-  { id: "mock-user", name: "Você (demo)" },
-  { id: "u-ana", name: "Ana Souza" },
-  { id: "u-bruno", name: "Bruno Lima" },
-  { id: "u-carla", name: "Carla Dias" },
-  { id: "u-diego", name: "Diego Reis" },
-];
+interface OrgMember { id: string; name: string }
 const RECURRENCE_OPTS = [
   { value: "none", label: "Sem repetição" },
   { value: "daily", label: "Diária" },
@@ -52,7 +46,6 @@ function userColor(s: string) {
   let h = 0; for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h);
   return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
 }
-function userName(id: string) { return DEMO_USERS.find((u) => u.id === id)?.name ?? id; }
 
 export function GlobalCreateTaskModal() {
   const [open, setOpen] = useState(false);
@@ -92,6 +85,20 @@ export function GlobalCreateTaskModal() {
   const [boardTaskTypes, setBoardTaskTypes] = useState<{ id: string; name: string; color: string; default_hours: number }[]>([]);
   const [estimatedHours, setEstimatedHours] = useState<number | null>(null);
   const [overflowWarning, setOverflowWarning] = useState<OverflowCheckResult | null>(null);
+  const [orgMembers, setOrgMembers] = useState<OrgMember[]>([]);
+
+  useEffect(() => {
+    (async () => {
+      try {
+        const res = await fetch("/api/org/members");
+        if (!res.ok) return;
+        const members = (await res.json()) as Array<{ id: string; full_name: string | null }>;
+        setOrgMembers(members.map((m) => ({ id: m.id, name: m.full_name ?? m.id })));
+      } catch { /* ignore */ }
+    })();
+  }, []);
+
+  const memberName = (id: string) => orgMembers.find((m) => m.id === id)?.name ?? id;
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const titleRef = useRef<HTMLInputElement>(null);
@@ -781,8 +788,8 @@ export function GlobalCreateTaskModal() {
                     <span className="text-[10px] text-neutral-400">Alocados:</span>
                     <span className="flex -space-x-1">
                       {assignees.map((id) => (
-                        <span key={id} title={userName(id)} className="w-5 h-5 rounded-full border-2 border-white flex items-center justify-center text-[8px] font-bold text-white" style={{ background: userColor(userName(id)) }}>
-                          {getInitials(userName(id))}
+                        <span key={id} title={memberName(id)} className="w-5 h-5 rounded-full border-2 border-white flex items-center justify-center text-[8px] font-bold text-white" style={{ background: userColor(memberName(id)) }}>
+                          {getInitials(memberName(id))}
                         </span>
                       ))}
                     </span>
@@ -899,7 +906,7 @@ export function GlobalCreateTaskModal() {
               {/* Alocados */}
               <div className="relative">
                 <ToolbarBtn icon={Users} label="Alocados" active={assignees.length > 0} border onClick={() => togglePicker("assignees")} />
-                {activePicker === "assignees" && <UserPickerDropdown selected={assignees} onToggle={(id) => setAssignees((a) => a.includes(id) ? a.filter((x) => x !== id) : [...a, id])} />}
+                {activePicker === "assignees" && <UserPickerDropdown members={orgMembers} selected={assignees} onToggle={(id) => setAssignees((a) => a.includes(id) ? a.filter((x) => x !== id) : [...a, id])} />}
               </div>
 
               {/* Repetição */}
@@ -924,7 +931,7 @@ export function GlobalCreateTaskModal() {
                   className={cn("w-7 h-7 flex items-center justify-center rounded-md transition-colors", followers.length > 0 ? "text-brand-teal bg-brand-teal/10" : "text-neutral-400 hover:text-brand-navy hover:bg-neutral-100")}>
                   <UserPlus size={14} />
                 </button>
-                {activePicker === "followers" && <UserPickerDropdown selected={followers} onToggle={(id) => setFollowers((a) => a.includes(id) ? a.filter((x) => x !== id) : [...a, id])} />}
+                {activePicker === "followers" && <UserPickerDropdown members={orgMembers} selected={followers} onToggle={(id) => setFollowers((a) => a.includes(id) ? a.filter((x) => x !== id) : [...a, id])} />}
               </div>
             </div>
 
@@ -1017,14 +1024,15 @@ function ToolbarBtn({ icon: Icon, label, onClick, active, border }: {
   );
 }
 
-function UserPickerDropdown({ selected, onToggle }: { selected: string[]; onToggle: (id: string) => void }) {
+function UserPickerDropdown({ members, selected, onToggle }: { members: OrgMember[]; selected: string[]; onToggle: (id: string) => void }) {
   const [search, setSearch] = useState("");
-  const filtered = DEMO_USERS.filter((u) => u.name.toLowerCase().includes(search.toLowerCase()));
+  const filtered = members.filter((u) => u.name.toLowerCase().includes(search.toLowerCase()));
   return (
     <div className="absolute top-full left-0 mt-1 w-56 bg-white rounded-xl shadow-xl border border-neutral-100 p-2 z-20" onClick={(e) => e.stopPropagation()}>
       <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Buscar membro..."
         className="w-full text-xs border border-neutral-200 rounded px-2 py-1.5 outline-none focus:border-brand-teal mb-1.5" />
       <div className="max-h-44 overflow-y-auto space-y-0.5">
+        {members.length === 0 && <p className="text-[11px] text-neutral-400 px-1 py-1">Carregando membros...</p>}
         {filtered.map((u) => (
           <label key={u.id} className="flex items-center gap-2 px-1 py-1 rounded hover:bg-neutral-50 cursor-pointer">
             <input type="checkbox" checked={selected.includes(u.id)} onChange={() => onToggle(u.id)} className="w-3 h-3 accent-brand-teal" />

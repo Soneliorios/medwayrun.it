@@ -9,6 +9,7 @@ import {
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
 import { useProjectStore } from "@/features/projects/store/projectStore";
+import { useOrgMembers } from "@/lib/useOrgMembers";
 interface MockAutomationAction { type: string; config: Record<string, unknown>; }
 interface MockAutomation {
   id: string; name: string; board: string; trigger: string;
@@ -45,7 +46,6 @@ const ACTIONS: Record<string, { label: string; icon: React.ElementType; extra?: 
 const EMAIL_TARGETS = ["Responsável", "Seguidores", "Usuário específico"];
 const PRIORITIES = ["Baixa", "Média", "Alta", "Urgente"];
 const TASK_TYPES = ["Padrão", "Bug", "Feature", "Melhoria", "Análise"];
-const DEMO_USERS = ["Ana Souza", "Bruno Lima", "Carla Dias", "Diego Reis"];
 
 function fmtDate(iso: string) {
   try { return new Date(iso).toLocaleString("pt-BR", { day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit" }); }
@@ -193,6 +193,7 @@ function AutomationBuilder({
   onClose: () => void;
   onSave: () => void;
 }) {
+  const memberNames = useOrgMembers().map((m) => m.full_name);
   const [name, setName] = useState("");
   const [board, setBoard] = useState(defaultBoard);
   const [trigger, setTrigger] = useState("task_created");
@@ -249,7 +250,7 @@ function AutomationBuilder({
             {triggerExtra === "approver" && (
               <select onChange={(e) => setTriggerConfig({ approver: e.target.value })} className="mt-2 w-full text-xs border border-neutral-200 rounded-lg px-2.5 py-2 bg-white outline-none focus:border-brand-teal">
                 <option value="">Aprovador...</option>
-                {DEMO_USERS.map((u) => <option key={u} value={u}>{u}</option>)}
+                {memberNames.map((u) => <option key={u} value={u}>{u}</option>)}
               </select>
             )}
             {triggerExtra === "days" && (
@@ -276,7 +277,7 @@ function AutomationBuilder({
                       <button onClick={() => removeAction(i)} className="text-neutral-300 hover:text-destructive shrink-0"><Trash2 size={12} /></button>
                     )}
                   </div>
-                  <ActionConfig action={act} onChange={(cfg) => setActionConfig(i, cfg)} />
+                  <ActionConfig action={act} members={memberNames} onChange={(cfg) => setActionConfig(i, cfg)} />
                 </div>
               ))}
             </div>
@@ -295,7 +296,7 @@ function AutomationBuilder({
   );
 }
 
-function ActionConfig({ action, onChange }: { action: MockAutomationAction; onChange: (cfg: Record<string, unknown>) => void }) {
+function ActionConfig({ action, members, onChange }: { action: MockAutomationAction; members: string[]; onChange: (cfg: Record<string, unknown>) => void }) {
   const extra = ACTIONS[action.type]?.extra;
   if (!extra) return null;
   const base = "mt-2 w-full text-xs border border-neutral-200 rounded-lg px-2.5 py-1.5 bg-white outline-none focus:border-brand-teal";
@@ -303,7 +304,8 @@ function ActionConfig({ action, onChange }: { action: MockAutomationAction; onCh
     case "users":
       return (
         <div className="mt-2 flex flex-wrap gap-1.5">
-          {DEMO_USERS.map((u) => {
+          {members.length === 0 && <span className="text-[11px] text-neutral-400">Carregando membros...</span>}
+          {members.map((u) => {
             const sel = ((action.config.users as string[]) ?? []).includes(u);
             return (
               <button key={u} onClick={() => {

@@ -181,6 +181,9 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   const [isDragOver, setIsDragOver] = useState(false);
   const [assigneePickerOpen, setAssigneePickerOpen] = useState(false);
   const [headerAssigneeOpen, setHeaderAssigneeOpen] = useState(false);
+  const [followers, setFollowers] = useState<string[]>([]);
+  const [followersOpen, setFollowersOpen] = useState(false);
+  const followersRef = useRef<HTMLDivElement>(null);
   const [deleteConfirm, setDeleteConfirm] = useState(false);
   const [deliveryDialogOpen, setDeliveryDialogOpen] = useState(false);
   // deliverySeconds stores total time in seconds for the popup (tracked + running timer)
@@ -236,6 +239,32 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
     }
     loadOrgProfiles();
   }, []);
+
+  // Followers — no DB table yet, persisted per task in localStorage
+  useEffect(() => {
+    try {
+      const raw = localStorage.getItem(`mwr_followers_${taskId}`);
+      setFollowers(raw ? JSON.parse(raw) : []);
+    } catch { setFollowers([]); }
+  }, [taskId]);
+
+  function toggleFollower(id: string) {
+    setFollowers((prev) => {
+      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
+      try { localStorage.setItem(`mwr_followers_${taskId}`, JSON.stringify(next)); } catch {}
+      return next;
+    });
+  }
+
+  // Close followers picker on outside click
+  useEffect(() => {
+    if (!followersOpen) return;
+    function h(e: MouseEvent) {
+      if (followersRef.current && !followersRef.current.contains(e.target as Node)) setFollowersOpen(false);
+    }
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [followersOpen]);
 
   // Load task
   useEffect(() => {
@@ -1411,17 +1440,52 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
 
                 {/* Seguidores */}
                 <MetaField label="Seguidores" icon={<UserPlus size={12} />}>
-                  <div className="flex flex-wrap gap-1 items-center">
+                  <div className="flex flex-wrap gap-1 items-center relative" ref={followersRef}>
                     <div className="flex -space-x-1.5">
-                      {["Você (demo)", "Ana Souza"].map((n) => (
-                        <Avatar key={n} className="w-5 h-5 border-2 border-white" title={n}>
-                          <AvatarFallback className="text-[8px] bg-brand-navy/10 text-brand-navy">{getInitials(n)}</AvatarFallback>
-                        </Avatar>
-                      ))}
+                      {followers.map((id) => {
+                        const p = orgProfiles.find((x) => x.id === id);
+                        const name = p?.full_name ?? id;
+                        return (
+                          <Avatar key={id} className="w-5 h-5 border-2 border-white" title={name}>
+                            <AvatarImage src={p?.avatar_url ?? undefined} />
+                            <AvatarFallback className="text-[8px] bg-brand-navy/10 text-brand-navy">{getInitials(name)}</AvatarFallback>
+                          </Avatar>
+                        );
+                      })}
                     </div>
-                    <button title="Adicionar seguidor" className="w-5 h-5 rounded-full border border-dashed border-neutral-300 flex items-center justify-center text-neutral-400 hover:border-brand-teal hover:text-brand-teal transition-colors">
+                    <button
+                      onClick={() => setFollowersOpen((v) => !v)}
+                      title="Gerenciar seguidores"
+                      className="w-5 h-5 rounded-full border border-dashed border-neutral-300 flex items-center justify-center text-neutral-400 hover:border-brand-teal hover:text-brand-teal transition-colors"
+                    >
                       <Plus size={10} />
                     </button>
+                    {followers.length === 0 && <span className="text-[11px] text-neutral-400">Nenhum seguidor</span>}
+                    {followersOpen && (
+                      <div className="absolute top-7 left-0 z-50 bg-white rounded-xl border border-neutral-200 shadow-lg py-1 min-w-[180px] max-h-52 overflow-y-auto">
+                        {orgProfiles.length === 0 && <p className="px-3 py-1.5 text-xs text-neutral-400">Carregando membros...</p>}
+                        {orgProfiles.map((m) => {
+                          const isSelected = followers.includes(m.id);
+                          return (
+                            <button
+                              key={m.id}
+                              onClick={() => toggleFollower(m.id)}
+                              className={cn(
+                                "w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-neutral-50 transition-colors",
+                                isSelected && "text-brand-teal font-semibold"
+                              )}
+                            >
+                              <Avatar className="w-5 h-5 shrink-0">
+                                <AvatarImage src={m.avatar_url ?? undefined} />
+                                <AvatarFallback className="text-[8px] bg-brand-teal/15 text-brand-teal font-bold">{getInitials(m.full_name)}</AvatarFallback>
+                              </Avatar>
+                              <span className="flex-1 text-left">{m.full_name ?? m.id}</span>
+                              {isSelected && <Check size={11} className="shrink-0" />}
+                            </button>
+                          );
+                        })}
+                      </div>
+                    )}
                   </div>
                 </MetaField>
 
