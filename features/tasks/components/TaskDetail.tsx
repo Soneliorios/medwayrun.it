@@ -54,6 +54,7 @@ import { cn, formatDate, formatDateFull, isOverdue, formatHours } from "@/lib/ut
 import { PRIORITY_LABELS, PRIORITY_COLORS, formatElapsed } from "@/types";
 import { taskService } from "../services/taskService";
 import { activityService, type TaskActivity } from "../services/activityService";
+import { approvalService } from "../services/approvalService";
 import { areasService } from "@/lib/areasService";
 import { tagsService, type Label } from "../services/tagsService";
 import { useBoardStore } from "@/features/board/store/boardStore";
@@ -240,6 +241,17 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   // Areas (managed by superadmin) for the "Área solicitante" dropdown
   const [areas, setAreas] = useState<{ id: string; name: string }[]>([]);
   useEffect(() => { areasService.list().then(setAreas); }, []);
+
+  // Block delivery while an approval is pending
+  const [pendingApproval, setPendingApproval] = useState(false);
+  const [deliverBlockedWarning, setDeliverBlockedWarning] = useState(false);
+  async function refreshPendingApproval() {
+    const rows = await approvalService.getForTask(taskId);
+    const pending = rows[0]?.status === "pending";
+    setPendingApproval(pending);
+    return pending;
+  }
+  useEffect(() => { refreshPendingApproval(); /* eslint-disable-next-line */ }, [taskId]);
 
   // Board task types (per board, stored in localStorage by the board settings)
   const [boardTypes, setBoardTypes] = useState<{ id: string; name: string; color: string }[]>([]);
@@ -430,6 +442,13 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   async function handleDeliver(opts?: { hours?: number; link?: string; note?: string }) {
     if (!task) return;
     if (isDelivered) return;
+
+    // Cannot deliver while an approval is pending — keep it open and warn.
+    if (await refreshPendingApproval()) {
+      setDeliveryDialogOpen(false);
+      setDeliverBlockedWarning(true);
+      return;
+    }
 
     await handleFieldUpdate("status", "delivered");
 
@@ -651,7 +670,10 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                 </button>
               ) : (
                 <button
-                  onClick={canActOnTask ? () => {
+                  onClick={canActOnTask ? async () => {
+                    // Block delivery if an approval is still pending
+                    if (await refreshPendingApproval()) { setDeliverBlockedWarning(true); return; }
+                    setDeliverBlockedWarning(false);
                     const totalSec = Math.round((task.tracked_hours ?? 0) * 3600) + elapsed;
                     const h = Math.floor(totalSec / 3600);
                     const m = Math.floor((totalSec % 3600) / 60);
@@ -664,7 +686,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                     setDeliveryNote((task as any).delivery_note ?? "");
                     setDeliveryDialogOpen(true);
                   } : undefined}
-                  title={!canActOnTask ? "Somente o responsável pode entregar" : undefined}
+                  title={!canActOnTask ? "Somente o responsável pode entregar" : pendingApproval ? "Aprovação pendente — não pode ser entregue" : undefined}
                   className={cn(
                     "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all border",
                     canActOnTask
@@ -888,6 +910,22 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
 
                 {/* APPROVAL */}
                 <ApprovalBanner taskId={taskId} taskTitle={task.title} />
+
+                {/* Delivery blocked — pending approval */}
+                {deliverBlockedWarning && pendingApproval && (
+                  <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                    <AlertCircle size={15} className="text-amber-500 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="text-xs font-semibold text-amber-700">Não é possível entregar</p>
+                      <p className="text-[11px] text-amber-600 mt-0.5">
+                        Esta tarefa tem uma aprovação pendente. Ela precisa ser aprovada antes de ser entregue.
+                      </p>
+                    </div>
+                    <button onClick={() => setDeliverBlockedWarning(false)} className="text-amber-400 hover:text-amber-600 shrink-0">
+                      <X size={13} />
+                    </button>
+                  </div>
+                )}
 
                 {/* DESCRIPTION */}
                 {activeTab === "description" && (
