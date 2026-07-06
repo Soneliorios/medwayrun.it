@@ -146,6 +146,11 @@ export function taskMatchesFilters(
     if (!mine || (mine as any).delivered_at) return false;
   }
 
+  // Created by me
+  if (filters.createdByMe) {
+    if (!ctx.currentUserId || task.created_by !== ctx.currentUserId) return false;
+  }
+
   // Board projects (internal)
   if (filters.boardProjectIds?.length) {
     const bp = (task as any).board_project_id as string | null | undefined;

@@ -299,6 +299,7 @@ export function GlobalCreateTaskModal() {
       board_project_id: boardProjectId || undefined,
       type_id: resolvedTypeId,
       recurrence_config: recurrenceConfig,
+      created_by: user?.id || undefined,
     } as any);
     const taskId: string | undefined = created?.id;
     if (!taskId) return null;

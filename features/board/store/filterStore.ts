@@ -26,6 +26,7 @@ export interface BoardFilters {
   isOverdue?: boolean;
   isRunning?: boolean;
   hasOpenParts?: boolean;
+  createdByMe?: boolean;
   boardProjectIds?: string[];
 }
 
@@ -80,6 +81,7 @@ export const FILTER_KEY_LABELS: Record<keyof BoardFilters, string> = {
   isOverdue: "Atrasadas",
   isRunning: "Em execução",
   hasOpenParts: "Minhas partes abertas",
+  createdByMe: "Criadas por mim",
   boardProjectIds: "Projeto",
 };
 

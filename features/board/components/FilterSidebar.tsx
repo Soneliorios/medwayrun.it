@@ -322,6 +322,8 @@ export function FilterSidebar({ onClose, boardId, options }: Props) {
                 onChange={(v) => setFilter("isOverdue", v || undefined)} />
               <FilterCheckbox label="Em execução" checked={filters.isRunning ?? false}
                 onChange={(v) => setFilter("isRunning", v || undefined)} />
+              <FilterCheckbox label="Criadas por mim" checked={filters.createdByMe ?? false}
+                onChange={(v) => setFilter("createdByMe", v || undefined)} />
               <FilterCheckbox label="Minhas partes abertas" checked={filters.hasOpenParts ?? false}
                 onChange={(v) => setFilter("hasOpenParts", v || undefined)} />
             </div>
