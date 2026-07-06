@@ -22,6 +22,7 @@ export async function submitFormToSupabase(input: {
   assignee_id: string | null;
   form_id: string;
   nativeExtras: Record<string, unknown>;
+  attachments?: { name: string; url: string; mime: string | null; size: number | null }[];
 }) {
   const admin = createAdminClient();
 
@@ -51,7 +52,7 @@ export async function submitFormToSupabase(input: {
   }
 
   const now = new Date().toISOString();
-  const { error } = await (admin as any).from('tasks').insert({
+  const { data: created, error } = await (admin as any).from('tasks').insert({
     project_id: input.board_id,
     column_id: columnId,
     org_id: ORG_ID,
@@ -66,7 +67,22 @@ export async function submitFormToSupabase(input: {
     is_urgent: false,
     form_id: input.form_id,
     ...safeExtras,
-  });
+  }).select('id').single();
 
   if (error) throw error;
+
+  // Link uploaded files to the new task so anyone with access can preview them
+  if (created?.id && input.attachments && input.attachments.length > 0) {
+    const { error: attErr } = await (admin as any).from('task_attachments').insert(
+      input.attachments.map((a) => ({
+        task_id: created.id,
+        org_id: ORG_ID,
+        name: a.name,
+        url: a.url,
+        mime: a.mime,
+        size: a.size,
+      }))
+    );
+    if (attErr) console.error('[submitFormToSupabase] attachments insert error:', attErr);
+  }
 }

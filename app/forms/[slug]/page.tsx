@@ -46,6 +46,25 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
+  const [fileUploads, setFileUploads] = useState<Record<string, { name: string; url: string; mime: string | null; size: number | null }>>({});
+  const [uploading, setUploading] = useState<Record<string, boolean>>({});
+
+  async function handleFileUpload(fieldId: string, file: File) {
+    const supabase = createRawClient();
+    setUploading((u) => ({ ...u, [fieldId]: true }));
+    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+    const path = `${slug}/${Date.now()}-${safeName}`;
+    const { error } = await supabase.storage.from("task-files").upload(path, file, { upsert: false });
+    if (error) {
+      console.error("[form upload]", error);
+      setSubmitError("Não foi possível enviar o arquivo. Tente novamente.");
+    } else {
+      const { data } = supabase.storage.from("task-files").getPublicUrl(path);
+      setFileUploads((prev) => ({ ...prev, [fieldId]: { name: file.name, url: data.publicUrl, mime: file.type || null, size: file.size } }));
+      setValues((s) => ({ ...s, [fieldId]: file.name }));
+    }
+    setUploading((u) => ({ ...u, [fieldId]: false }));
+  }
   const [notFound, setNotFound] = useState(false);
   const [boardProjects, setBoardProjects] = useState<{ id: string; name: string; color: string }[]>([]);
 
@@ -152,7 +171,7 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
       const customLines: string[] = [];
 
       effectiveFields.forEach(f => {
-        if (f.type === 'divider' || f.maps_to === 'title') return;
+        if (f.type === 'divider' || f.type === 'file' || f.maps_to === 'title') return;
         const val = values[f.id]?.trim();
         if (!val) return;
 
@@ -200,6 +219,7 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
         assignee_id: meta?.assignee_id ?? null,
         form_id: slug,
         nativeExtras,
+        attachments: Object.values(fileUploads),
       });
     } catch (err) {
       console.error('Error creating task from form:', err);
@@ -314,6 +334,21 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
                     onChange={e => set(e.target.value)}
                     className="w-full text-sm border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:border-brand-teal"
                   />
+                ) : f.type === 'file' ? (
+                  <div>
+                    <input
+                      type="file"
+                      required={f.required && !fileUploads[f.id]}
+                      onChange={e => { const file = e.target.files?.[0]; if (file) handleFileUpload(f.id, file); }}
+                      className="w-full text-sm border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:border-brand-teal file:mr-3 file:rounded-md file:border-0 file:bg-brand-navy file:text-white file:text-xs file:px-3 file:py-1.5 file:cursor-pointer"
+                    />
+                    {uploading[f.id] && <p className="text-xs text-neutral-400 mt-1">Enviando arquivo...</p>}
+                    {fileUploads[f.id] && (
+                      <p className="text-xs text-brand-teal mt-1 flex items-center gap-1">
+                        <CheckCircle2 size={11} /> {fileUploads[f.id].name}
+                      </p>
+                    )}
+                  </div>
                 ) : (
                   <input
                     type="text"

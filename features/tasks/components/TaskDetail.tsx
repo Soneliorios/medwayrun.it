@@ -175,6 +175,17 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   const [attachments, setAttachments] = useState<MockAttachment[]>([]);
   const [previewAttachment, setPreviewAttachment] = useState<MockAttachment | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
+  // Shared attachments (Supabase) — visible to anyone with task access (e.g. form uploads)
+  const [dbAttachments, setDbAttachments] = useState<{ id: string; name: string; url: string; mime: string | null; size: number | null }[]>([]);
+  useEffect(() => {
+    const sb = createRawClient();
+    (sb as any)
+      .from("task_attachments")
+      .select("id, name, url, mime, size")
+      .eq("task_id", taskId)
+      .order("created_at")
+      .then(({ data }: { data: any[] | null }) => setDbAttachments(data ?? []));
+  }, [taskId]);
   const [assigneePickerOpen, setAssigneePickerOpen] = useState(false);
   const [headerAssigneeOpen, setHeaderAssigneeOpen] = useState(false);
   const [followers, setFollowers] = useState<string[]>([]);
@@ -1098,6 +1109,38 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                         onChange={(e) => handleFilesAdded(e.target.files)}
                       />
                     </div>
+
+                    {/* Anexos compartilhados (Supabase) — ex: enviados pelo formulário */}
+                    {dbAttachments.length > 0 && (
+                      <div className="space-y-2">
+                        <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Arquivos compartilhados</p>
+                        {dbAttachments.map((a) => {
+                          const isImg = (a.mime ?? "").startsWith("image/");
+                          return (
+                            <a
+                              key={a.id}
+                              href={a.url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="flex items-center gap-3 p-2.5 rounded-lg border border-neutral-100 bg-white hover:border-brand-teal/40 hover:shadow-sm transition-all"
+                            >
+                              {isImg ? (
+                                <img src={a.url} alt={a.name} className="w-10 h-10 object-cover rounded-md border border-neutral-100 shrink-0" />
+                              ) : (
+                                <div className="w-10 h-10 rounded-md bg-brand-navy/10 flex items-center justify-center shrink-0">
+                                  <Paperclip size={16} className="text-brand-navy/50" />
+                                </div>
+                              )}
+                              <div className="flex-1 min-w-0">
+                                <p className="text-sm text-neutral-700 truncate">{a.name}</p>
+                                <p className="text-[10px] text-neutral-400">{a.mime ?? "arquivo"}</p>
+                              </div>
+                              <span className="text-[10px] text-brand-teal shrink-0">Abrir →</span>
+                            </a>
+                          );
+                        })}
+                      </div>
+                    )}
 
                     {/* File list */}
                     {attachments.length > 0 ? (
