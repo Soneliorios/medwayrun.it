@@ -229,6 +229,13 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   const elapsed = timerStore.getElapsedForTask(taskId);
 
   const [orgProfiles, setOrgProfiles] = useState<Array<{ id: string; full_name: string | null; avatar_url: string | null }>>([]);
+  // Current user first in member pickers (assignee/followers) for quick self-pick.
+  const orgProfilesMeFirst = useMemo(() => {
+    const uid = user?.id;
+    if (!uid) return orgProfiles;
+    const me = orgProfiles.find((p) => p.id === uid);
+    return me ? [me, ...orgProfiles.filter((p) => p.id !== uid)] : orgProfiles;
+  }, [orgProfiles, user?.id]);
   useEffect(() => {
     async function loadOrgProfiles() {
       // Primary: service-role endpoint accessible to any org member (bypasses
@@ -806,7 +813,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                         placeholder="Buscar membro..." className="w-full text-xs border border-neutral-200 rounded-md px-2 py-1.5 outline-none focus:border-brand-teal" />
                     </div>
                     <div className="max-h-52 overflow-y-auto">
-                    {orgProfiles.filter((m) => (m.full_name ?? "").toLowerCase().includes(assigneeSearch.toLowerCase())).map((m) => {
+                    {orgProfilesMeFirst.filter((m) => (m.full_name ?? "").toLowerCase().includes(assigneeSearch.toLowerCase())).map((m) => {
                       const isSelected = (task as any).assignee_id === m.id;
                       return (
                         <button
@@ -826,7 +833,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                               {getInitials(m.full_name)}
                             </AvatarFallback>
                           </Avatar>
-                          <span className="flex-1 text-left">{m.full_name ?? m.id}</span>
+                          <span className="flex-1 text-left">{m.full_name ?? m.id}{m.id === user?.id ? " (você)" : ""}</span>
                           {isSelected && <Check size={11} className="shrink-0" />}
                         </button>
                       );
@@ -1390,7 +1397,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                             placeholder="Buscar membro..." className="w-full text-xs border border-neutral-200 rounded-md px-2 py-1.5 outline-none focus:border-brand-teal" />
                         </div>
                         <div className="max-h-52 overflow-y-auto">
-                        {orgProfiles.filter((m) => (m.full_name ?? "").toLowerCase().includes(assigneeSearch.toLowerCase())).map((m) => {
+                        {orgProfilesMeFirst.filter((m) => (m.full_name ?? "").toLowerCase().includes(assigneeSearch.toLowerCase())).map((m) => {
                           const isSelected = task.assignee_id === m.id;
                           return (
                             <button
@@ -1410,7 +1417,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                                   {getInitials(m.full_name)}
                                 </AvatarFallback>
                               </Avatar>
-                              <span className="flex-1 text-left">{m.full_name ?? m.id}</span>
+                              <span className="flex-1 text-left">{m.full_name ?? m.id}{m.id === user?.id ? " (você)" : ""}</span>
                               {isSelected && <Check size={11} className="shrink-0" />}
                             </button>
                           );
@@ -1798,7 +1805,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                         </div>
                         <div className="max-h-52 overflow-y-auto">
                         {orgProfiles.length === 0 && <p className="px-3 py-1.5 text-xs text-neutral-400">Carregando membros...</p>}
-                        {orgProfiles.filter((m) => (m.full_name ?? "").toLowerCase().includes(followerSearch.toLowerCase())).map((m) => {
+                        {orgProfilesMeFirst.filter((m) => (m.full_name ?? "").toLowerCase().includes(followerSearch.toLowerCase())).map((m) => {
                           const isSelected = followers.includes(m.id);
                           return (
                             <button
@@ -1813,7 +1820,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                                 <AvatarImage src={m.avatar_url ?? undefined} />
                                 <AvatarFallback className="text-[8px] bg-brand-teal/15 text-brand-teal font-bold">{getInitials(m.full_name)}</AvatarFallback>
                               </Avatar>
-                              <span className="flex-1 text-left">{m.full_name ?? m.id}</span>
+                              <span className="flex-1 text-left">{m.full_name ?? m.id}{m.id === user?.id ? " (você)" : ""}</span>
                               {isSelected && <Check size={11} className="shrink-0" />}
                             </button>
                           );
