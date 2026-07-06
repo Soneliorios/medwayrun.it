@@ -12,7 +12,7 @@ import {
   horizontalListSortingStrategy,
 } from "@dnd-kit/sortable";
 import { Plus } from "lucide-react";
-import { createClient, createRawClient } from "@/lib/supabase/client";
+import { createRawClient } from "@/lib/supabase/client";
 import { useBoardStore } from "../store/boardStore";
 import { useFilterStore } from "../store/filterStore";
 import { useTimerStore } from "@/features/timer/store/timerStore";
@@ -22,7 +22,6 @@ import { useBoardDnd } from "../hooks/useBoardDnd";
 import { KanbanColumn } from "./KanbanColumn";
 import { TaskCardOverlay } from "./TaskCardOverlay";
 import { cn, ORG_ID, getPositionBetween } from "@/lib/utils";
-import type { ColumnWithTasks, TaskWithRelations } from "@/types";
 import { Button } from "@/components/ui/button";
 import { Skeleton } from "@/components/ui/skeleton";
 
@@ -32,7 +31,6 @@ interface Props {
   onAddTask: (columnId: string) => void;
 }
 
-const DEFAULT_COLUMNS = ["A fazer", "Em andamento", "Revisão", "Concluído"];
 
 export function KanbanBoard({ projectId, onTaskOpen, onAddTask }: Props) {
   const store = useBoardStore();
@@ -42,84 +40,8 @@ export function KanbanBoard({ projectId, onTaskOpen, onAddTask }: Props) {
   const { sensors, handleDragStart, handleDragOver, handleDragEnd } = useBoardDnd();
   const [addingColumn, setAddingColumn] = useState(false);
 
-  useEffect(() => {
-    loadBoard(projectId);
-  }, [projectId]); // eslint-disable-line react-hooks/exhaustive-deps
-
-  async function loadBoard(pid: string) {
-    store.setLoading(true);
-
-    const supabase = createClient();
-
-    const { data: columnsData } = await supabase
-      .from("columns")
-      .select("*")
-      .eq("project_id", pid)
-      .order("position", { ascending: true });
-
-    if (!columnsData || columnsData.length === 0) {
-      // Create default columns for new project
-      await createDefaultColumns(pid);
-      return;
-    }
-
-    const rawClient = createRawClient();
-    const { data: tasksData, error: tasksError } = await rawClient
-      .from("tasks")
-      .select(`
-        *,
-        assignee:profiles!tasks_assignee_id_fkey(id, full_name, avatar_url),
-        labels:task_labels(labels(*)),
-        _commentCount:comments(count)
-      `)
-      .eq("project_id", pid)
-      .order("position", { ascending: true });
-
-    if (tasksError) console.error("[loadBoard] tasks error:", tasksError);
-
-    const tasksByColumn = new Map<string, TaskWithRelations[]>();
-    ((tasksData ?? []) as any[]).forEach((t: any) => {
-      const tasks = tasksByColumn.get(t.column_id) ?? [];
-      const processed: TaskWithRelations = {
-        ...t,
-        assignee: t.assignee ?? null,
-        labels: (t.labels as any[])?.map((tl: any) => tl.labels).filter(Boolean) ?? [],
-        _commentCount: (t._commentCount?.[0]?.count as number) ?? 0,
-      };
-      tasks.push(processed);
-      tasksByColumn.set(t.column_id, tasks);
-    });
-
-    const columns: ColumnWithTasks[] = ((columnsData ?? []) as any[]).map((col: any) => ({
-      ...col,
-      tasks: tasksByColumn.get(col.id) ?? [],
-    }));
-
-    store.setColumns(columns);
-    store.setLoading(false);
-  }
-
-  async function createDefaultColumns(pid: string) {
-    const supabase = createRawClient();
-    const insertData = DEFAULT_COLUMNS.map((name, i) => ({
-      project_id: pid,
-      name,
-      position: (i + 1) * 1000,
-      is_done_column: i === DEFAULT_COLUMNS.length - 1,
-    }));
-
-    const { data } = await supabase
-      .from("columns")
-      .insert(insertData)
-      .select();
-
-    const columns: ColumnWithTasks[] = (data ?? []).map((col: any) => ({
-      ...col,
-      tasks: [],
-    }));
-    store.setColumns(columns);
-    store.setLoading(false);
-  }
+  // Board data is loaded at the page level via useBoardData so every view
+  // (Kanban, Dashboard, List, Gantt) has data regardless of the active tab.
 
   async function handleAddColumn() {
     setAddingColumn(true);

@@ -6,6 +6,7 @@ export interface OrgMemberLite {
   id: string;
   full_name: string;
   avatar_url: string | null;
+  role: string;
 }
 
 /**
@@ -28,6 +29,7 @@ export function useOrgMembers(): OrgMemberLite[] {
               id: m.id,
               full_name: m.full_name ?? m.id,
               avatar_url: m.avatar_url ?? null,
+              role: m.role ?? "member",
             }))
           );
         }

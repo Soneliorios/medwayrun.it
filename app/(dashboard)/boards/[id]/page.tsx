@@ -28,6 +28,7 @@ import { BoardDashboardView } from "@/features/board/components/BoardDashboardVi
 import { BoardProjectsView } from "../../../../features/board/components/BoardProjectsView";
 import { useProjectStore } from "@/features/projects/store/projectStore";
 import { useBoardRealtime } from "@/features/board/hooks/useBoardRealtime";
+import { useBoardData } from "@/features/board/hooks/useBoardData";
 import { useSelectionStore } from "@/features/board/store/selectionStore";
 import { useFilterStore, useActiveFilterCount } from "@/features/board/store/filterStore";
 import { useFilteredColumns } from "@/features/board/hooks/useFilteredColumns";
@@ -73,6 +74,7 @@ export default function BoardPage({ params }: Props) {
   const boardProjectStore = useBoardProjectStore();
   useEffect(() => { boardProjectStore.load(boardId); }, [boardId]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  useBoardData(boardId);
   useBoardRealtime(boardId);
 
 

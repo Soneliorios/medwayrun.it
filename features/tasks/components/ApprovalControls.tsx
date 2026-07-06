@@ -1,8 +1,27 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { CheckCircle2, XCircle, ShieldCheck, Clock, RotateCcw, ChevronDown } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { CheckCircle2, XCircle, ShieldCheck, Clock, RotateCcw, ChevronDown, Search, Crown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useOrgMembers } from "@/lib/useOrgMembers";
+
+/** User ids that are team leaders, from the admin Teams config (localStorage). */
+function getTeamLeaderIds(): Set<string> {
+  if (typeof window === "undefined") return new Set();
+  try {
+    const raw = localStorage.getItem("mwr_teams");
+    if (!raw) return new Set();
+    const teams = JSON.parse(raw) as any[];
+    const ids = new Set<string>();
+    teams.forEach((t) => {
+      const leaders: string[] = t.leader_ids ?? (t.leader_id ? [t.leader_id] : []);
+      leaders.forEach((id) => ids.add(id));
+    });
+    return ids;
+  } catch {
+    return new Set();
+  }
+}
 type MockTaskApproval = {
   id: string; task_id: string; task_title: string;
   approver: string; requested_by: string;
@@ -45,6 +64,23 @@ function statusColor(status: MockTaskApproval["status"]) {
   if (status === "rejected") return "text-destructive";
   if (status === "adjustment") return "text-amber-600";
   return "text-amber-500";
+}
+
+function ApproverOption({ name, leader, selected, onClick }: { name: string; leader?: boolean; selected: boolean; onClick: () => void }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={cn(
+        "w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-neutral-50 transition-colors",
+        selected && "text-brand-teal font-semibold"
+      )}
+    >
+      {leader && <Crown size={11} className="text-amber-400 shrink-0" />}
+      <span className="flex-1 truncate">{name}</span>
+      {selected && <CheckCircle2 size={12} className="text-brand-teal shrink-0" />}
+    </button>
+  );
 }
 
 // ── History dropdown ─────────────────────────────────────────────────────────────
@@ -91,36 +127,57 @@ function ApprovalHistory({ approvals }: { approvals: MockTaskApproval[] }) {
 export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitle: string }) {
   const [approval, setApproval] = useState<MockTaskApproval | null>(null);
   const [allApprovals, setAllApprovals] = useState<MockTaskApproval[]>([]);
-  const [approverOptions, setApproverOptions] = useState<string[]>([]);
-  const [approver, setApprover] = useState("");
+  const [approverId, setApproverId] = useState("");
+  const [approverOpen, setApproverOpen] = useState(false);
+  const [approverSearch, setApproverSearch] = useState("");
   const [comment, setComment] = useState("");
   const currentUserName = useAuthStore((s) => s.profile?.full_name ?? "");
+  const approverRef = useRef<HTMLDivElement>(null);
+
+  const members = useOrgMembers();
+  const leaderIds = useMemo(() => getTeamLeaderIds(), []);
+  const isLeader = (m: { id: string; role: string }) =>
+    m.role === "owner" || m.role === "admin" || leaderIds.has(m.id);
+
+  // Default the approver to the first leader (or first member) once loaded.
+  useEffect(() => {
+    if (approverId || members.length === 0) return;
+    const firstLeader = members.find(isLeader);
+    setApproverId((firstLeader ?? members[0]).id);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [members]);
+
+  const approverName = members.find((m) => m.id === approverId)?.full_name ?? "";
+
+  // Leaders first, then everyone else — each group filtered by the search box.
+  const grouped = useMemo(() => {
+    const q = approverSearch.toLowerCase();
+    const match = (m: typeof members[number]) => m.full_name.toLowerCase().includes(q);
+    const byName = (a: typeof members[number], b: typeof members[number]) => a.full_name.localeCompare(b.full_name);
+    const leaders = members.filter((m) => isLeader(m) && match(m)).sort(byName);
+    const others = members.filter((m) => !isLeader(m) && match(m)).sort(byName);
+    return { leaders, others };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [members, approverSearch, leaderIds]);
 
   function reload() {
     // No-op: approval data requires Supabase implementation
   }
   useEffect(() => { reload(); /* eslint-disable-next-line */ }, [taskId]);
 
-  // Load real org members for the approver picker
+  // Close approver dropdown on outside click
   useEffect(() => {
-    let cancelled = false;
-    (async () => {
-      try {
-        const res = await fetch("/api/org/members");
-        if (!res.ok) return;
-        const members = (await res.json()) as Array<{ full_name: string | null }>;
-        const names = members.map((m) => m.full_name).filter((n): n is string => !!n);
-        if (!cancelled && names.length > 0) {
-          setApproverOptions(names);
-          setApprover((cur) => cur || names[0]);
-        }
-      } catch { /* ignore */ }
-    })();
-    return () => { cancelled = true; };
-  }, []);
+    if (!approverOpen) return;
+    function h(e: MouseEvent) {
+      if (approverRef.current && !approverRef.current.contains(e.target as Node)) setApproverOpen(false);
+    }
+    document.addEventListener("mousedown", h);
+    return () => document.removeEventListener("mousedown", h);
+  }, [approverOpen]);
 
   function request() {
-    notify("approval_requested", `Aprovação solicitada a ${approver}: "${taskTitle}"`, taskId);
+    if (!approverName) return;
+    notify("approval_requested", `Aprovação solicitada a ${approverName}: "${taskTitle}"`, taskId);
   }
 
   function resolve(status: ApprovalStatus) {
@@ -140,17 +197,58 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
           <div className="flex items-center gap-2 flex-wrap">
             <ShieldCheck size={14} className="text-neutral-400 shrink-0" />
             <span className="text-xs text-neutral-500">Aprovador:</span>
-            <select
-              value={approver}
-              onChange={(e) => setApprover(e.target.value)}
-              className="text-xs border border-neutral-200 rounded-md px-2 py-1 bg-white outline-none focus:border-brand-teal"
-            >
-              {approverOptions.length === 0 && <option value="">Carregando...</option>}
-              {approverOptions.map((u) => <option key={u} value={u}>{u}</option>)}
-            </select>
+            <div className="relative" ref={approverRef}>
+              <button
+                type="button"
+                onClick={() => setApproverOpen((v) => !v)}
+                className="flex items-center gap-1.5 text-xs border border-neutral-200 rounded-md px-2 py-1 bg-white hover:border-brand-teal transition-colors min-w-[140px]"
+              >
+                <span className="flex-1 text-left truncate">{approverName || "Selecionar..."}</span>
+                <ChevronDown size={12} className="text-neutral-400 shrink-0" />
+              </button>
+              {approverOpen && (
+                <div className="absolute top-full left-0 mt-1 w-60 bg-white rounded-xl border border-neutral-200 shadow-xl z-50 py-1">
+                  <div className="relative px-2 pb-1.5 pt-1">
+                    <Search size={12} className="absolute left-4 top-1/2 -translate-y-1/2 text-neutral-300" />
+                    <input
+                      autoFocus
+                      value={approverSearch}
+                      onChange={(e) => setApproverSearch(e.target.value)}
+                      placeholder="Buscar aprovador..."
+                      className="w-full text-xs border border-neutral-200 rounded-md pl-7 pr-2 py-1.5 outline-none focus:border-brand-teal"
+                    />
+                  </div>
+                  <div className="max-h-56 overflow-y-auto">
+                    {members.length === 0 && <p className="px-3 py-2 text-xs text-neutral-400">Carregando...</p>}
+                    {grouped.leaders.length > 0 && (
+                      <>
+                        <p className="px-3 pt-1.5 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Liderança</p>
+                        {grouped.leaders.map((m) => (
+                          <ApproverOption key={m.id} name={m.full_name} leader selected={m.id === approverId}
+                            onClick={() => { setApproverId(m.id); setApproverOpen(false); setApproverSearch(""); }} />
+                        ))}
+                      </>
+                    )}
+                    {grouped.others.length > 0 && (
+                      <>
+                        {grouped.leaders.length > 0 && <p className="px-3 pt-2 pb-0.5 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Membros</p>}
+                        {grouped.others.map((m) => (
+                          <ApproverOption key={m.id} name={m.full_name} selected={m.id === approverId}
+                            onClick={() => { setApproverId(m.id); setApproverOpen(false); setApproverSearch(""); }} />
+                        ))}
+                      </>
+                    )}
+                    {members.length > 0 && grouped.leaders.length === 0 && grouped.others.length === 0 && (
+                      <p className="px-3 py-2 text-xs text-neutral-400">Nenhum resultado.</p>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
             <button
               onClick={request}
-              className="ml-auto text-xs px-3 py-1.5 rounded-md bg-brand-navy text-white font-medium hover:bg-brand-navy-light"
+              disabled={!approverName}
+              className="ml-auto text-xs px-3 py-1.5 rounded-md bg-brand-navy text-white font-medium hover:bg-brand-navy-light disabled:opacity-50"
             >
               Solicitar aprovação
             </button>
