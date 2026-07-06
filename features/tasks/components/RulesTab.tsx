@@ -42,9 +42,11 @@ export function RulesTab({ taskId, onQueueChange }: Props) {
   async function afterQueueChange() {
     const activeId = await sequenceService.syncHeadAndAssignee(taskId);
     const p = orgMembers.find((m) => m.id === activeId);
+    const rows = await sequenceService.list(taskId);
     useBoardStore.getState().updateTask(taskId, {
       assignee_id: activeId,
       assignee: p ? { id: p.id, full_name: p.full_name, avatar_url: p.avatar_url } : null,
+      sequence: rows,
     } as any);
     onQueueChange?.();
     reload();

@@ -297,7 +297,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
         const p = orgProfiles.find((x) => x.id === headId);
         const assignee = p ? { id: p.id, full_name: p.full_name, avatar_url: p.avatar_url } : null;
         setTask((t) => (t ? ({ ...t, assignee_id: headId, assignee } as TaskWithRelations) : t));
-        store.updateTask(taskId, { assignee_id: headId, assignee } as any);
+        store.updateTask(taskId, { assignee_id: headId, assignee, sequence: rows } as any);
       }
     }
     setQueue(rows);
@@ -324,8 +324,9 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
       // Reflect the new responsible immediately (no refresh) with resolved profile
       const p = orgProfiles.find((x) => x.id === nextUserId);
       const assignee = p ? { id: p.id, full_name: p.full_name, avatar_url: p.avatar_url } : null;
+      const rows = await sequenceService.list(taskId);
       setTask((t) => (t ? ({ ...t, assignee_id: nextUserId, assignee } as TaskWithRelations) : t));
-      store.updateTask(taskId, { assignee_id: nextUserId, assignee } as any);
+      store.updateTask(taskId, { assignee_id: nextUserId, assignee, sequence: rows } as any);
     }
     loadQueue();
   }

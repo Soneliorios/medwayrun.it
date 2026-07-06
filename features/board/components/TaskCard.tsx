@@ -12,6 +12,7 @@ import {
   Flag,
   Paperclip,
   ListChecks,
+  Check,
 } from "lucide-react";
 import { cn, formatDate, isOverdue } from "@/lib/utils";
 import { PRIORITY_COLORS, PRIORITY_LABELS, formatElapsed as fmtElapsed } from "@/types";
@@ -289,7 +290,37 @@ function TaskCardInner({ task, onOpen }: Props) {
           )}
 
           {/* Assignees */}
-          {assignees && assignees.length > 0 ? (
+          {((task as any).sequence?.length ?? 0) > 0 ? (
+            // Responsible queue: show all in order, highlight the active one
+            <div className="flex -space-x-1">
+              {((task as any).sequence as any[]).slice(0, 4).map((q: any) => {
+                const m = orgMembers.find((x) => x.id === q.user_id);
+                const nm = m?.full_name ?? q.user_id;
+                const done = q.status === "done";
+                const active = q.status === "active";
+                return (
+                  <span key={q.user_id} className="relative" title={`${nm}${done ? " — entregou" : active ? " — responsável atual" : " — na fila"}`}>
+                    <Avatar className={cn("w-5 h-5 border-2", active ? "border-brand-teal ring-1 ring-brand-teal" : "border-white", done && "grayscale opacity-70")}>
+                      <AvatarImage src={m?.avatar_url ?? undefined} className={cn(done && "grayscale")} />
+                      <AvatarFallback className={cn("text-[8px] font-bold", done ? "bg-neutral-200 text-neutral-500" : "text-white")} style={done ? undefined : { background: stringToColor(nm) }}>
+                        {getInitials(m?.full_name) || (q.user_id ?? "?").slice(0, 2).toUpperCase()}
+                      </AvatarFallback>
+                    </Avatar>
+                    {done && (
+                      <span className="absolute -bottom-0.5 -right-0.5 w-2.5 h-2.5 rounded-full bg-white border border-neutral-200 flex items-center justify-center">
+                        <Check size={7} className="text-neutral-500" />
+                      </span>
+                    )}
+                  </span>
+                );
+              })}
+              {((task as any).sequence as any[]).length > 4 && (
+                <span className="w-5 h-5 rounded-full border-2 border-white bg-neutral-200 flex items-center justify-center text-[8px] text-neutral-600 font-bold">
+                  +{((task as any).sequence as any[]).length - 4}
+                </span>
+              )}
+            </div>
+          ) : assignees && assignees.length > 0 ? (
             <div className="flex -space-x-1">
               {assignees.slice(0, 3).map((a: any) => (
                 <Avatar
@@ -355,9 +386,14 @@ export const TaskCard = memo(TaskCardInner, (prev, next) => {
     prev.task._commentCount === next.task._commentCount &&
     prev.task.labels?.length === next.task.labels?.length &&
     (prev.task as any).is_urgent === (next.task as any).is_urgent &&
-    (prev.task as any).sla_minutes === (next.task as any).sla_minutes
+    (prev.task as any).sla_minutes === (next.task as any).sla_minutes &&
+    seqSig((prev.task as any).sequence) === seqSig((next.task as any).sequence)
   );
 });
+
+function seqSig(seq: any[] | undefined): string {
+  return (seq ?? []).map((s) => `${s.user_id}:${s.status}`).join("|");
+}
 
 TaskCard.displayName = "TaskCard";
 

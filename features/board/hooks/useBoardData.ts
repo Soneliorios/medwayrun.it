@@ -54,6 +54,22 @@ export async function loadBoardData(pid: string) {
 
   if (tasksError) console.error("[loadBoardData] tasks error:", tasksError);
 
+  // Responsible queue per task (so cards can show the whole queue in order)
+  const taskIds = ((tasksData ?? []) as any[]).map((t: any) => t.id);
+  const seqByTask = new Map<string, any[]>();
+  if (taskIds.length > 0) {
+    const { data: seqData } = await (rawClient as any)
+      .from("task_sequences")
+      .select("task_id, user_id, order_position, status")
+      .in("task_id", taskIds)
+      .order("order_position");
+    ((seqData ?? []) as any[]).forEach((s) => {
+      const arr = seqByTask.get(s.task_id) ?? [];
+      arr.push(s);
+      seqByTask.set(s.task_id, arr);
+    });
+  }
+
   const tasksByColumn = new Map<string, TaskWithRelations[]>();
   ((tasksData ?? []) as any[]).forEach((t: any) => {
     const tasks = tasksByColumn.get(t.column_id) ?? [];
@@ -62,6 +78,7 @@ export async function loadBoardData(pid: string) {
       assignee: t.assignee ?? null,
       labels: (t.labels as any[])?.map((tl: any) => tl.labels).filter(Boolean) ?? [],
       _commentCount: (t._commentCount?.[0]?.count as number) ?? 0,
+      sequence: seqByTask.get(t.id) ?? [],
     } as TaskWithRelations);
     tasksByColumn.set(t.column_id, tasks);
   });
