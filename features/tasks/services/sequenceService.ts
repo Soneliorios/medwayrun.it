@@ -29,12 +29,17 @@ export const sequenceService = {
   async syncHeadAndAssignee(taskId: string): Promise<string | null> {
     const sb = createRawClient();
     const rows = await this.list(taskId);
-    if (rows.length === 0) return null; // no queue → leave assignee as-is
+
+    // Queue empty (or fully removed) → clear the responsible.
+    if (rows.length === 0) {
+      await (sb as any).from("tasks").update({ assignee_id: null }).eq("id", taskId);
+      return null;
+    }
 
     const notDone = rows.filter((r) => r.status !== "done");
     const head = notDone[0] ?? null;
 
-    // Normalize statuses
+    // Normalize statuses of the not-done members (first active, rest pending)
     await Promise.all(
       notDone.map((r, i) =>
         (sb as any).from("task_sequences")
