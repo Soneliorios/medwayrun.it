@@ -782,21 +782,46 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
 
               {/* Assignees */}
               <div className="flex items-center gap-0.5 relative" ref={headerAssigneeRef}>
-                {task.assignees?.map((a: any) => (
-                  <Avatar key={a.user_id} className={cn("w-6 h-6 border-2", a.delivered_at ? "border-brand-teal" : "border-white")}>
-                    <AvatarImage src={a.profile?.avatar_url ?? undefined} />
-                    <AvatarFallback className="text-[9px] bg-brand-navy/10 text-brand-navy">
-                      {getInitials(a.profile?.full_name)}
-                    </AvatarFallback>
-                  </Avatar>
-                )) ?? (task.assignee && (
+                {queue.length > 0 ? (
+                  // Queue drives responsibles: show them in order (done = B&W + check)
+                  queue.map((q) => {
+                    const p = orgProfiles.find((x) => x.id === q.user_id);
+                    const nm = p?.full_name ?? q.user_id.slice(0, 8);
+                    const done = q.status === "done";
+                    const active = q.status === "active";
+                    return (
+                      <div key={q.id} className="relative" title={`${nm}${done ? " — entregou" : active ? " — responsável atual" : " — na fila"}`}>
+                        <Avatar className={cn("w-6 h-6 border-2", active ? "border-brand-teal" : "border-white", done && "grayscale opacity-70")}>
+                          <AvatarImage src={p?.avatar_url ?? undefined} className={cn(done && "grayscale")} />
+                          <AvatarFallback className={cn("text-[9px]", done ? "bg-neutral-200 text-neutral-500" : "bg-brand-navy/10 text-brand-navy")}>
+                            {getInitials(nm)}
+                          </AvatarFallback>
+                        </Avatar>
+                        {done && (
+                          <span className="absolute -bottom-0.5 -right-0.5 w-3 h-3 rounded-full bg-white border border-neutral-200 flex items-center justify-center">
+                            <Check size={8} className="text-neutral-500" />
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })
+                ) : task.assignees ? (
+                  task.assignees.map((a: any) => (
+                    <Avatar key={a.user_id} className={cn("w-6 h-6 border-2", a.delivered_at ? "border-brand-teal" : "border-white")}>
+                      <AvatarImage src={a.profile?.avatar_url ?? undefined} />
+                      <AvatarFallback className="text-[9px] bg-brand-navy/10 text-brand-navy">
+                        {getInitials(a.profile?.full_name)}
+                      </AvatarFallback>
+                    </Avatar>
+                  ))
+                ) : task.assignee ? (
                   <Avatar className="w-6 h-6 border-2 border-white">
                     <AvatarImage src={task.assignee.avatar_url ?? undefined} />
                     <AvatarFallback className="text-[9px] bg-brand-navy/10 text-brand-navy">
                       {getInitials(task.assignee.full_name)}
                     </AvatarFallback>
                   </Avatar>
-                ))}
+                ) : null}
                 {!isUser && queue.length === 0 && (
                   <button
                     onClick={() => setHeaderAssigneeOpen((v) => !v)}
