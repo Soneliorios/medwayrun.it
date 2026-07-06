@@ -914,10 +914,15 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                 )}
               </div>
 
-              {/* Urgent flag */}
+              {/* Urgent flag — kept in sync with the "Urgente" priority */}
               <button
-                onClick={() => handleFieldUpdate("is_urgent", String(!(task as any).is_urgent))}
-                title="Marcar como urgente"
+                onClick={() => {
+                  const next = !(task as any).is_urgent;
+                  handleFieldUpdate("is_urgent", String(next));
+                  if (next) handleFieldUpdate("priority", "urgent");
+                  else if (task.priority === "urgent") handleFieldUpdate("priority", "medium");
+                }}
+                title={(task as any).is_urgent ? "Remover urgência" : "Marcar como urgente"}
                 className={cn(
                   "w-7 h-7 flex items-center justify-center rounded-lg transition-colors",
                   (task as any).is_urgent
