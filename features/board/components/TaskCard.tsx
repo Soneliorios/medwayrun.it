@@ -110,10 +110,12 @@ function TaskCardInner({ task, onOpen }: Props) {
   // Assignees
   const assignees = (task as any).assignees as any[] | null;
   const orgMembers = useOrgMembers();
-  // Resolve the single assignee's name from org members when the joined object
-  // isn't loaded (e.g. after the queue sets a new assignee_id).
-  const primaryAssignee = task.assignee
-    ?? (task.assignee_id
+  // Always reflect the current assignee_id. Use the joined object only when it
+  // matches assignee_id (else it's stale, e.g. after the queue changed it);
+  // otherwise resolve the name from org members.
+  const primaryAssignee = (task.assignee && (task.assignee as any).id === task.assignee_id)
+    ? task.assignee
+    : (task.assignee_id
       ? (() => { const m = orgMembers.find((x) => x.id === task.assignee_id); return m ? { id: m.id, full_name: m.full_name, avatar_url: m.avatar_url } : null; })()
       : null);
 

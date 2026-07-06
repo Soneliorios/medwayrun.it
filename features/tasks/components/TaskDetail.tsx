@@ -281,7 +281,27 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
 
   // Responsible queue (fila) — the head drives the assignee
   const [queue, setQueue] = useState<SeqRow[]>([]);
-  async function loadQueue() { setQueue(await sequenceService.list(taskId)); }
+  async function loadQueue() {
+    let rows = await sequenceService.list(taskId);
+    if (rows.length > 0) {
+      const nonDone = rows.filter((r) => r.status !== "done");
+      const headId = nonDone[0]?.user_id ?? null;
+      // Self-heal desynced queues: ensure the head is the assignee (queue drives it).
+      const needsHeal =
+        (nonDone.length > 0 && nonDone[0].status !== "active") ||
+        nonDone.slice(1).some((r) => r.status === "active") ||
+        ((task as any)?.assignee_id ?? null) !== headId;
+      if (needsHeal) {
+        await sequenceService.syncHeadAndAssignee(taskId);
+        rows = await sequenceService.list(taskId);
+        const p = orgProfiles.find((x) => x.id === headId);
+        const assignee = p ? { id: p.id, full_name: p.full_name, avatar_url: p.avatar_url } : null;
+        setTask((t) => (t ? ({ ...t, assignee_id: headId, assignee } as TaskWithRelations) : t));
+        store.updateTask(taskId, { assignee_id: headId, assignee } as any);
+      }
+    }
+    setQueue(rows);
+  }
   useEffect(() => { loadQueue(); /* eslint-disable-next-line */ }, [taskId]);
   const queueRemaining = queue.filter((r) => r.status !== "done").length;
   const activeQueueUserId = queue.find((r) => r.status === "active")?.user_id
