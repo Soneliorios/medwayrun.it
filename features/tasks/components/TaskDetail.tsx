@@ -256,14 +256,17 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   const [areas, setAreas] = useState<{ id: string; name: string }[]>([]);
   useEffect(() => { areasService.list().then(setAreas); }, []);
 
-  // Block delivery while an approval is pending
-  const [pendingApproval, setPendingApproval] = useState(false);
+  // Block delivery unless the latest approval is "approved".
+  // pending → aguardando; adjustment → precisa de ajuste; rejected → reprovada.
+  const [approvalBlockStatus, setApprovalBlockStatus] = useState<"pending" | "adjustment" | "rejected" | null>(null);
+  const pendingApproval = approvalBlockStatus !== null;
   const [deliverBlockedWarning, setDeliverBlockedWarning] = useState(false);
   async function refreshPendingApproval() {
     const rows = await approvalService.getForTask(taskId);
-    const pending = rows[0]?.status === "pending";
-    setPendingApproval(pending);
-    return pending;
+    const latest = rows[0]?.status;
+    const blocking = latest && latest !== "approved" ? (latest as "pending" | "adjustment" | "rejected") : null;
+    setApprovalBlockStatus(blocking);
+    return blocking !== null;
   }
   useEffect(() => { refreshPendingApproval(); /* eslint-disable-next-line */ }, [taskId]);
 
@@ -701,7 +704,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                     setDeliveryNote((task as any).delivery_note ?? "");
                     setDeliveryDialogOpen(true);
                   } : undefined}
-                  title={!canActOnTask ? "Somente o responsável pode entregar" : pendingApproval ? "Aprovação pendente — não pode ser entregue" : undefined}
+                  title={!canActOnTask ? "Somente o responsável pode entregar" : approvalBlockStatus === "adjustment" ? "Aprovação pediu ajustes — não pode ser entregue" : approvalBlockStatus === "rejected" ? "Aprovação reprovada — não pode ser entregue" : approvalBlockStatus === "pending" ? "Aprovação pendente — não pode ser entregue" : undefined}
                   className={cn(
                     "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all border",
                     canActOnTask
@@ -926,14 +929,18 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                 {/* APPROVAL */}
                 <ApprovalBanner taskId={taskId} taskTitle={task.title} />
 
-                {/* Delivery blocked — pending approval */}
+                {/* Delivery blocked — approval not approved */}
                 {deliverBlockedWarning && pendingApproval && (
                   <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
                     <AlertCircle size={15} className="text-amber-500 shrink-0 mt-0.5" />
                     <div className="flex-1">
                       <p className="text-xs font-semibold text-amber-700">Não é possível entregar</p>
                       <p className="text-[11px] text-amber-600 mt-0.5">
-                        Esta tarefa tem uma aprovação pendente. Ela precisa ser aprovada antes de ser entregue.
+                        {approvalBlockStatus === "adjustment"
+                          ? "A aprovação pediu ajustes. Faça as correções e obtenha a aprovação antes de entregar."
+                          : approvalBlockStatus === "rejected"
+                          ? "A aprovação foi reprovada. É preciso ser aprovada antes de entregar."
+                          : "Esta tarefa tem uma aprovação pendente. Ela precisa ser aprovada antes de ser entregue."}
                       </p>
                     </div>
                     <button onClick={() => setDeliverBlockedWarning(false)} className="text-amber-400 hover:text-amber-600 shrink-0">
