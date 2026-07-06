@@ -71,9 +71,11 @@ export const taskService = {
 
   async getComments(taskId: string) {
     const supabase = createClient();
+    // No profiles embed — comments.user_id FKs auth.users, not profiles, so the
+    // embed 400s (PGRST200). Names are resolved client-side from org members.
     const { data, error } = await supabase
       .from("comments")
-      .select("*, profiles(id, full_name, avatar_url)")
+      .select("*")
       .eq("task_id", taskId)
       .order("created_at", { ascending: true });
     if (error) throw error;
@@ -85,7 +87,7 @@ export const taskService = {
     const { data, error } = await supabase
       .from("comments")
       .insert({ task_id: taskId, user_id: userId, content })
-      .select("*, profiles(id, full_name, avatar_url)")
+      .select("*")
       .single();
     if (error) throw error;
     return data;

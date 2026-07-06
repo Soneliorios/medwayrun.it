@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef } from "react";
 import { taskService } from "../services/taskService";
 import { useAuthStore } from "@/features/auth/store/authStore";
+import { useOrgMembers } from "@/lib/useOrgMembers";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -27,7 +28,13 @@ export function CommentList({ taskId }: Props) {
   const [loading, setLoading] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const { user } = useAuthStore();
+  const members = useOrgMembers();
   const bottomRef = useRef<HTMLDivElement>(null);
+
+  const authorOf = (userId: string) => {
+    const m = members.find((x) => x.id === userId);
+    return { name: m?.full_name ?? "Usuário", avatar_url: m?.avatar_url ?? null };
+  };
 
   useEffect(() => {
     setLoading(true);
@@ -86,18 +93,20 @@ export function CommentList({ taskId }: Props) {
               Sem comentários ainda. Seja o primeiro!
             </p>
           )}
-          {comments.map((comment) => (
+          {comments.map((comment) => {
+            const author = authorOf(comment.user_id);
+            return (
             <div key={comment.id} className="flex gap-2.5 group">
               <Avatar className="w-6 h-6 shrink-0 mt-0.5">
-                <AvatarImage src={comment.profiles?.avatar_url ?? undefined} />
+                <AvatarImage src={author.avatar_url ?? undefined} />
                 <AvatarFallback className="text-[9px] bg-brand-navy/10 text-brand-navy">
-                  {getInitials(comment.profiles?.full_name)}
+                  {getInitials(author.name)}
                 </AvatarFallback>
               </Avatar>
               <div className="flex-1 min-w-0">
                 <div className="flex items-baseline gap-2 mb-0.5">
                   <span className="text-xs font-semibold text-brand-navy">
-                    {comment.profiles?.full_name ?? "Usuário"}
+                    {author.name}
                   </span>
                   <span className="text-[10px] text-neutral-400">
                     {timeAgo(comment.created_at)}
@@ -116,7 +125,8 @@ export function CommentList({ taskId }: Props) {
                 </button>
               )}
             </div>
-          ))}
+            );
+          })}
           <div ref={bottomRef} />
         </div>
       )}
