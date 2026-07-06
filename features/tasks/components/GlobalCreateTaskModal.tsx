@@ -274,6 +274,17 @@ export function GlobalCreateTaskModal() {
     const matchedType = boardTaskTypes.find((t) => t.name === taskType);
     const resolvedTypeId = matchedType?.id ?? undefined;
 
+    // Recurrence config (same shape used by TaskDetail + the pg_cron job)
+    let recurrenceConfig: Record<string, unknown> | undefined;
+    if (recurrence && recurrence !== "none") {
+      const d = new Date();
+      if (recurrence === "daily") d.setDate(d.getDate() + 1);
+      else if (recurrence === "weekly") d.setDate(d.getDate() + 7);
+      else if (recurrence === "biweekly") d.setDate(d.getDate() + 14);
+      else if (recurrence === "monthly") d.setMonth(d.getMonth() + 1);
+      recurrenceConfig = { frequency: recurrence, until: null, active: true, next_run: d.toISOString().slice(0, 10) };
+    }
+
     const created: any = await taskService.create({
       project_id: selectedProjectId!,
       column_id: selectedColumnId!,
@@ -287,6 +298,7 @@ export function GlobalCreateTaskModal() {
       assignee_id: assignees[0] || undefined,
       board_project_id: boardProjectId || undefined,
       type_id: resolvedTypeId,
+      recurrence_config: recurrenceConfig,
     } as any);
     const taskId: string | undefined = created?.id;
     if (!taskId) return null;
