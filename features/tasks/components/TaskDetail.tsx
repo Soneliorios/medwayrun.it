@@ -213,10 +213,28 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
 
   const [orgProfiles, setOrgProfiles] = useState<Array<{ id: string; full_name: string | null; avatar_url: string | null }>>([]);
   useEffect(() => {
-    const sb = createClient();
-    sb.from("members").select("user_id, profiles!inner(id, full_name, avatar_url)").eq("org_id", ORG_ID).then(({ data }) => {
+    async function loadOrgProfiles() {
+      // Primary: service-role endpoint accessible to any org member (bypasses
+      // profiles RLS that would otherwise hide everyone but the current user).
+      try {
+        const res = await fetch("/api/org/members");
+        if (res.ok) {
+          const members = (await res.json()) as Array<{ id: string; full_name: string | null; avatar_url: string | null }>;
+          if (Array.isArray(members) && members.length > 0) {
+            setOrgProfiles(members.map((m) => ({ id: m.id, full_name: m.full_name, avatar_url: m.avatar_url })));
+            return;
+          }
+        }
+      } catch { /* fall through */ }
+      // Fallback: direct query
+      const sb = createClient();
+      const { data } = await sb
+        .from("members")
+        .select("user_id, profiles!inner(id, full_name, avatar_url)")
+        .eq("org_id", ORG_ID);
       setOrgProfiles((data ?? []).map((m: any) => m.profiles));
-    });
+    }
+    loadOrgProfiles();
   }, []);
 
   // Load task

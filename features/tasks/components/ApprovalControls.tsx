@@ -11,7 +11,6 @@ type MockTaskApproval = {
 };
 import { useNotificationStore } from "@/features/notifications/store/notificationStore";
 
-export const APPROVAL_USERS = ["Você (demo)", "Ana Souza", "Bruno Lima", "Carla Dias"];
 export const CURRENT_USER = "Você (demo)";
 
 type ApprovalStatus = "approved" | "rejected" | "adjustment";
@@ -93,13 +92,32 @@ function ApprovalHistory({ approvals }: { approvals: MockTaskApproval[] }) {
 export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitle: string }) {
   const [approval, setApproval] = useState<MockTaskApproval | null>(null);
   const [allApprovals, setAllApprovals] = useState<MockTaskApproval[]>([]);
-  const [approver, setApprover] = useState(APPROVAL_USERS[0]);
+  const [approverOptions, setApproverOptions] = useState<string[]>([]);
+  const [approver, setApprover] = useState("");
   const [comment, setComment] = useState("");
 
   function reload() {
     // No-op: approval data requires Supabase implementation
   }
   useEffect(() => { reload(); /* eslint-disable-next-line */ }, [taskId]);
+
+  // Load real org members for the approver picker
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const res = await fetch("/api/org/members");
+        if (!res.ok) return;
+        const members = (await res.json()) as Array<{ full_name: string | null }>;
+        const names = members.map((m) => m.full_name).filter((n): n is string => !!n);
+        if (!cancelled && names.length > 0) {
+          setApproverOptions(names);
+          setApprover((cur) => cur || names[0]);
+        }
+      } catch { /* ignore */ }
+    })();
+    return () => { cancelled = true; };
+  }, []);
 
   function request() {
     notify("approval_requested", `Aprovação solicitada a ${approver}: "${taskTitle}"`, taskId);
@@ -127,7 +145,8 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
               onChange={(e) => setApprover(e.target.value)}
               className="text-xs border border-neutral-200 rounded-md px-2 py-1 bg-white outline-none focus:border-brand-teal"
             >
-              {APPROVAL_USERS.map((u) => <option key={u} value={u}>{u}</option>)}
+              {approverOptions.length === 0 && <option value="">Carregando...</option>}
+              {approverOptions.map((u) => <option key={u} value={u}>{u}</option>)}
             </select>
             <button
               onClick={request}
