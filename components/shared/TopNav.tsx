@@ -345,7 +345,9 @@ export function TopNav() {
                     onRead={() => {
                       markRead(n.id);
                       if (!n.read_at) notificationService.markRead(n.id);
-                      if (n.task_id && (n.type === "capacity_overflow" || n.type === "approval_requested" || n.type === "approval_resolved")) {
+                      // Any task-linked notification (mention, approval, etc.)
+                      // opens the task.
+                      if (n.task_id) {
                         setNotifOpen(false);
                         router.push(`/tasks/${n.task_id}`);
                       }
