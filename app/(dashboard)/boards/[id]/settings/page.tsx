@@ -12,6 +12,7 @@ import { useProjectActions } from "@/features/projects/hooks/useProjects";
 import { useBoardStore } from "@/features/board/store/boardStore";
 import { useBoardProjectStore } from "@/features/board/store/boardProjectStore";
 import { taskTypeService } from "@/features/board/services/taskTypeService";
+import { teamService } from "@/lib/teamService";
 import { createClient } from "@/lib/supabase/client";
 import { ORG_ID } from "@/lib/utils";
 import {
@@ -207,17 +208,12 @@ export default function ProjectSettingsPage({ params }: Props) {
     fetchOrgMembers();
   }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Teams (from admin config in localStorage) for mass-adding members
+  // Teams (from admin config, DB) for mass-adding members
   const [teams, setTeams] = useState<{ id: string; name: string; member_ids: string[] }[]>([]);
   useEffect(() => {
-    try {
-      const raw = localStorage.getItem("mwr_teams");
-      if (raw) {
-        setTeams((JSON.parse(raw) as any[]).map((t) => ({
-          id: t.id, name: t.name, member_ids: t.member_ids ?? [],
-        })));
-      }
-    } catch { /* ignore */ }
+    teamService.list().then((rows) =>
+      setTeams(rows.map((t) => ({ id: t.id, name: t.name, member_ids: t.member_ids })))
+    );
   }, []);
 
   // "Todos os membros da org" por nível

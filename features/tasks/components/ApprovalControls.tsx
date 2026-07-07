@@ -5,24 +5,7 @@ import { CheckCircle2, XCircle, ShieldCheck, Clock, RotateCcw, ChevronDown, Sear
 import { cn } from "@/lib/utils";
 import { createClient } from "@/lib/supabase/client";
 import { useOrgMembers } from "@/lib/useOrgMembers";
-
-/** User ids that are team leaders, from the admin Teams config (localStorage). */
-function getTeamLeaderIds(): Set<string> {
-  if (typeof window === "undefined") return new Set();
-  try {
-    const raw = localStorage.getItem("mwr_teams");
-    if (!raw) return new Set();
-    const teams = JSON.parse(raw) as any[];
-    const ids = new Set<string>();
-    teams.forEach((t) => {
-      const leaders: string[] = t.leader_ids ?? (t.leader_id ? [t.leader_id] : []);
-      leaders.forEach((id) => ids.add(id));
-    });
-    return ids;
-  } catch {
-    return new Set();
-  }
-}
+import { teamService } from "@/lib/teamService";
 import { useAuthStore } from "@/features/auth/store/authStore";
 import { approvalService, type TaskApproval } from "../services/approvalService";
 import { activityService } from "../services/activityService";
@@ -133,7 +116,8 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
   const approverRef = useRef<HTMLDivElement>(null);
 
   const members = useOrgMembers();
-  const leaderIds = useMemo(() => getTeamLeaderIds(), []);
+  const [leaderIds, setLeaderIds] = useState<Set<string>>(new Set());
+  useEffect(() => { teamService.leaderIds().then(setLeaderIds); }, []);
   const isLeader = (m: { id: string; role: string }) =>
     m.role === "owner" || m.role === "admin" || leaderIds.has(m.id);
 

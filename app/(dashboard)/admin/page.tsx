@@ -11,6 +11,7 @@ import { cn } from "@/lib/utils";
 import { useRole } from "@/features/auth/hooks/useRole";
 import { useAuthStore } from "@/features/auth/store/authStore";
 import { areasService, type Area } from "@/lib/areasService";
+import { teamService } from "@/lib/teamService";
 import {
   type AppRole,
   ROLE_LABELS,
@@ -42,8 +43,6 @@ const SB_ROLE_COLOR: Record<string, string> = {
 
 // ── Types ──────────────────────────────────────────────────────────────────────
 
-const TEAMS_KEY = "mwr_teams";
-
 interface MockTeam {
   id: string;
   name: string;
@@ -64,29 +63,11 @@ function nanoid6() {
   return Math.random().toString(36).slice(2, 8);
 }
 
-// Teams
-function loadTeams(): MockTeam[] {
-  if (typeof window === "undefined") return defaultTeams();
-  try {
-    const raw = localStorage.getItem(TEAMS_KEY);
-    if (raw) {
-      return (JSON.parse(raw) as any[]).map((t) => ({
-        ...t,
-        // migrate old single-leader format
-        leader_ids: t.leader_ids ?? (t.leader_id ? [t.leader_id] : []),
-        member_hours: t.member_hours ?? {},
-      }));
-    }
-  } catch {}
-  const d = defaultTeams();
-  localStorage.setItem(TEAMS_KEY, JSON.stringify(d));
-  return d;
-}
-function defaultTeams(): MockTeam[] {
-  return [];
-}
+// Teams — persisted in the database (see supabase_teams.sql). saveTeams keeps
+// the same signature so the array-based CRUD below is unchanged; it just
+// upserts to Supabase instead of localStorage.
 function saveTeams(t: MockTeam[]) {
-  localStorage.setItem(TEAMS_KEY, JSON.stringify(t));
+  teamService.upsertMany(t);
 }
 
 // ── Component ──────────────────────────────────────────────────────────────────
@@ -96,13 +77,11 @@ export default function AdminPage() {
   const { isSuperAdmin, isAdmin } = useRole();
   const currentUserId = useAuthStore((s) => s.profile?.id ?? "");
 
-  const [teams, setTeams] = useState<MockTeam[]>(() =>
-    typeof window !== "undefined" ? loadTeams() : []
-  );
-  const [boards] = useState<{ id: string; name: string }[]>(() => {
-    if (typeof window === "undefined") return [];
-    try { return JSON.parse(localStorage.getItem("mwr_projects") ?? "[]"); } catch { return []; }
-  });
+  const [teams, setTeams] = useState<MockTeam[]>([]);
+  useEffect(() => {
+    teamService.list().then(setTeams);
+  }, []);
+  const [boards] = useState<{ id: string; name: string }[]>([]);
 
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
   const [openPicker, setOpenPicker] = useState<string | null>(null);
@@ -229,7 +208,7 @@ export default function AdminPage() {
   function deleteTeam(teamId: string) {
     const updated = teams.filter((t) => t.id !== teamId);
     setTeams(updated);
-    saveTeams(updated);
+    teamService.remove(teamId);
   }
 
   function addMember(teamId: string, userId: string) {
