@@ -19,7 +19,7 @@ export function getWeekDays(monday: string): string[] {
   return result;
 }
 
-// ─── Board task types (stored in localStorage per board) ─────────────────────
+// ─── Board task types (persisted in the DB — see taskTypeService) ────────────
 
 export interface BoardTaskType {
   id: string;
@@ -37,72 +37,6 @@ export const DEFAULT_BOARD_TYPES: BoardTaskType[] = [
   { id: "type-reuniao", name: "Reunião", color: "#01CFB5", default_hours: 1 },
 ];
 
-function boardTypesKey(boardId: string): string {
-  return `mwr_task_types_${boardId}`;
-}
-
-export function loadBoardTypes(boardId: string): BoardTaskType[] {
-  try {
-    const raw = localStorage.getItem(boardTypesKey(boardId));
-    if (!raw) return [];
-    return JSON.parse(raw) as BoardTaskType[];
-  } catch {
-    return [];
-  }
-}
-
-export function saveBoardTypes(boardId: string, types: BoardTaskType[]): void {
-  try {
-    localStorage.setItem(boardTypesKey(boardId), JSON.stringify(types));
-  } catch {
-    /* ignore quota / unavailable storage */
-  }
-}
-
-/**
- * Add a new task type to a board and persist it. Seeds the standard defaults
- * first if the board has none yet, so creating a custom type never wipes the
- * built-ins. Returns the full updated list. If the name already exists
- * (case-insensitive) the existing list is returned unchanged.
- */
-export function addBoardType(
-  boardId: string,
-  name: string,
-  opts?: { color?: string; default_hours?: number }
-): BoardTaskType[] {
-  const trimmed = name.trim();
-  if (!trimmed) return loadBoardTypes(boardId);
-
-  const existing = loadBoardTypes(boardId);
-  const base = existing.length > 0 ? existing : [...DEFAULT_BOARD_TYPES];
-  if (base.some((t) => t.name.toLowerCase() === trimmed.toLowerCase())) {
-    saveBoardTypes(boardId, base);
-    return base;
-  }
-
-  const next = [
-    ...base,
-    {
-      id: `type-${trimmed.toLowerCase().replace(/\s+/g, "-")}-${base.length}`,
-      name: trimmed,
-      color: opts?.color ?? "#407EC9",
-      default_hours: opts?.default_hours ?? 2,
-    },
-  ];
-  saveBoardTypes(boardId, next);
-  return next;
-}
-
-export function loadBoardTypeAverages(boardId: string): Record<string, number> {
-  return Object.fromEntries(
-    loadBoardTypes(boardId).map((t) => [t.name, t.default_hours ?? 0])
-  );
-}
-
-export function getTaskTypeName(typeId: string | null, boardId: string): string | null {
-  if (!typeId) return null;
-  return loadBoardTypes(boardId).find((t) => t.id === typeId)?.name ?? null;
-}
 
 /**
  * A task's effective estimated hours: its own explicit value when set,

@@ -32,6 +32,11 @@ import { useRole } from "@/features/auth/hooks/useRole";
 import { ROLE_LABELS, ROLE_COLORS } from "@/lib/roles";
 import { useNotificationStore } from "@/features/notifications/store/notificationStore";
 import { notificationService } from "@/features/notifications/services/notificationService";
+import { useProjectStore } from "@/features/projects/store/projectStore";
+import { useBoardAccessMap } from "@/lib/boardAccess";
+import { createClient } from "@/lib/supabase/client";
+import { uiPrefsService } from "@/lib/uiPrefsService";
+import { ORG_ID } from "@/lib/utils";
 import { useTimerStore } from "@/features/timer/store/timerStore";
 import { formatElapsed } from "@/types";
 import type { AppNotification } from "@/features/notifications/store/notificationStore";
@@ -99,9 +104,46 @@ export function TopNav() {
     return () => clearTimeout(t);
   }, [searchQuery]);
 
-  // Categorized global search over mock localStorage data
-  const searchResults = computeGlobalSearch(debounced);
-  const recentViews = historyOpen ? readRecentViews() : [];
+  // Global search over Supabase (tasks) + in-memory projects, restricted to
+  // boards the user can actually see (don't surface private-board content).
+  const projects = useProjectStore((s) => s.projects);
+  const { map: accessMap } = useBoardAccessMap();
+  const [searchResults, setSearchResults] = useState<{ tasks: SearchHit[]; projects: SearchHit[]; total: number }>({ tasks: [], projects: [], total: 0 });
+  useEffect(() => {
+    const q = debounced.trim();
+    if (!q) { setSearchResults({ tasks: [], projects: [], total: 0 }); return; }
+    const ql = q.toLowerCase();
+    const accessible = projects.filter((p) => accessMap[p.id]?.canView !== false);
+    const accessibleIds = accessible.map((p) => p.id);
+    const projHits: SearchHit[] = accessible
+      .filter((p) => p.name?.toLowerCase().includes(ql))
+      .slice(0, 5)
+      .map((p) => ({ id: p.id, label: p.name }));
+    let cancelled = false;
+    (async () => {
+      let taskHits: SearchHit[] = [];
+      if (accessibleIds.length > 0) {
+        const sb = createClient();
+        const { data } = await sb
+          .from("tasks")
+          .select("id, title")
+          .eq("org_id", ORG_ID)
+          .in("project_id", accessibleIds)
+          .ilike("title", `%${q}%`)
+          .limit(5);
+        taskHits = ((data ?? []) as any[]).map((t) => ({ id: t.id, label: t.title }));
+      }
+      if (cancelled) return;
+      setSearchResults({ tasks: taskHits, projects: projHits, total: taskHits.length + projHits.length });
+    })();
+    return () => { cancelled = true; };
+  }, [debounced, projects, accessMap]);
+
+  const [recentViews, setRecentViews] = useState<RecentView[]>([]);
+  useEffect(() => {
+    if (!historyOpen || !profile?.id) return;
+    uiPrefsService.get<RecentView[]>(profile.id, "recent_views").then((v) => setRecentViews(v ?? []));
+  }, [historyOpen, profile?.id]);
 
   // Close dropdowns on outside click
   useEffect(() => {
@@ -248,8 +290,7 @@ export function TopNav() {
                 ) : (
                   <>
                     <SearchGroup title="Tarefas" items={searchResults.tasks} onPick={(id) => { router.push(`/tasks/${id}`); setSearchOpen(false); setSearchQuery(""); }} />
-                    <SearchGroup title="Projetos" items={searchResults.projects} onPick={(id) => { router.push(`/boards/${id}`); setSearchOpen(false); setSearchQuery(""); }} />
-                    <SearchGroup title="Quadros" items={searchResults.boards} onPick={(id) => { router.push(`/boards/${id}`); setSearchOpen(false); setSearchQuery(""); }} />
+                    <SearchGroup title="Quadros" items={searchResults.projects} onPick={(id) => { router.push(`/boards/${id}`); setSearchOpen(false); setSearchQuery(""); }} />
                   </>
                 )}
               </div>
@@ -447,29 +488,7 @@ export function TopNav() {
 // ─── Global search + recent views helpers ──────────────────────────────────────
 
 interface SearchHit { id: string; label: string; sub?: string; }
-function computeGlobalSearch(q: string): { tasks: SearchHit[]; projects: SearchHit[]; boards: SearchHit[]; total: number } {
-  const empty = { tasks: [], projects: [], boards: [], total: 0 };
-  if (!q.trim() || typeof window === "undefined") return empty;
-  const ql = q.toLowerCase();
-  let tasks: SearchHit[] = [], projects: SearchHit[] = [];
-  try {
-    const t = JSON.parse(localStorage.getItem("mwr_tasks") ?? "[]");
-    tasks = t.filter((x: any) => x.title?.toLowerCase().includes(ql)).slice(0, 5).map((x: any) => ({ id: x.id, label: x.title }));
-  } catch {}
-  try {
-    const p = JSON.parse(localStorage.getItem("mwr_projects") ?? "[]");
-    projects = p.filter((x: any) => x.name?.toLowerCase().includes(ql)).slice(0, 5).map((x: any) => ({ id: x.id, label: x.name }));
-  } catch {}
-  // Boards = same as projects in this app; show as a separate category
-  const boards = projects;
-  return { tasks, projects, boards, total: tasks.length + projects.length + boards.length };
-}
-
 interface RecentView { id: string; title: string; board: string; viewed_at: string; }
-function readRecentViews(): RecentView[] {
-  if (typeof window === "undefined") return [];
-  try { return JSON.parse(localStorage.getItem("mwr_recent_views") ?? "[]"); } catch { return []; }
-}
 function timeAgoShort(iso: string): string {
   try {
     const diff = Date.now() - new Date(iso).getTime();

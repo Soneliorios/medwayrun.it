@@ -40,6 +40,7 @@ import { useBoardStore } from "@/features/board/store/boardStore";
 import { useBoardProjectStore } from "@/features/board/store/boardProjectStore";
 import { encodeFilters, decodeFilters } from "@/lib/filterUtils";
 import { cn } from "@/lib/utils";
+import { useUiPref } from "@/lib/useUiPref";
 import Link from "next/link";
 import { Settings } from "lucide-react";
 import { PRIORITY_LABELS, PRIORITY_COLORS } from "@/types";
@@ -285,18 +286,11 @@ function BoardCalendarView({ onTaskOpen }: { onTaskOpen: (id: string) => void })
   const [viewMode, setViewMode] = useState<"month" | "week" | "day">("month");
   const [currentDate, setCurrentDate] = useState(new Date());
   const [infoOpen, setInfoOpen] = useState(false);
-  const [infoFields, setInfoFields] = useState<string[]>(["title", "priority"]);
+  const [infoFields, setInfoFields] = useUiPref<string[]>("cal_info", ["title", "priority"]);
   const [dragTaskId, setDragTaskId] = useState<string | null>(null);
 
-  useEffect(() => {
-    try { const r = localStorage.getItem("mwr_cal_info"); if (r) setInfoFields(JSON.parse(r)); } catch {}
-  }, []);
   function toggleInfo(id: string) {
-    setInfoFields((prev) => {
-      const next = prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id];
-      localStorage.setItem("mwr_cal_info", JSON.stringify(next));
-      return next;
-    });
+    setInfoFields((prev) => (prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]));
   }
   function rescheduleTask(taskId: string, date: Date) {
     const newDue = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;

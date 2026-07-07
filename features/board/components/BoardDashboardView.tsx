@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { GripVertical, Plus, X, TrendingDown, TrendingUp } from "lucide-react";
 import { cn, formatHours } from "@/lib/utils";
+import { useUiPref } from "@/lib/useUiPref";
 import { PRIORITY_LABELS, PRIORITY_COLORS } from "@/types";
 import { useFilteredColumns } from "../hooks/useFilteredColumns";
 
@@ -28,19 +29,6 @@ const DEFAULT_METRICS: MetricKey[] = [
   "reopened_count", "reopened_hours",
 ];
 
-function cfgKey(boardId: string) { return `mwr_dashcfg_${boardId}_mock-user`; }
-function loadMetricCfg(boardId: string): MetricKey[] {
-  if (typeof window === "undefined") return DEFAULT_METRICS;
-  try {
-    const raw = localStorage.getItem(cfgKey(boardId));
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return DEFAULT_METRICS;
-}
-function saveMetricCfg(boardId: string, keys: MetricKey[]) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(cfgKey(boardId), JSON.stringify(keys));
-}
 
 // ── Component ──────────────────────────────────────────────────────────────────
 
@@ -49,12 +37,9 @@ export function BoardDashboardView({ boardId }: { boardId: string }) {
   const { rawColumns } = useFilteredColumns();
   const allTasks = useMemo(() => rawColumns.flatMap((c) => c.tasks), [rawColumns]);
 
-  const [visibleKeys, setVisibleKeys] = useState<MetricKey[]>(() => loadMetricCfg(boardId));
+  const [visibleKeys, setVisibleKeys] = useUiPref<MetricKey[]>(`dashcfg_${boardId}`, DEFAULT_METRICS);
   const [menuOpen, setMenuOpen] = useState(false);
   const [dragKey, setDragKey] = useState<MetricKey | null>(null);
-
-  useEffect(() => { saveMetricCfg(boardId, visibleKeys); }, [boardId, visibleKeys]);
-  useEffect(() => { setVisibleKeys(loadMetricCfg(boardId)); }, [boardId]);
 
   // ── Compute metrics ──────────────────────────────────────────────────────────
   const now = new Date();

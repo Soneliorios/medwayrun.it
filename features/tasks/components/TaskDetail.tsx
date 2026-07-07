@@ -60,6 +60,7 @@ import { sequenceService, type SeqRow } from "../services/sequenceService";
 import { useBoardAccess } from "@/lib/boardAccess";
 import { areasService } from "@/lib/areasService";
 import { attachmentService } from "@/lib/attachmentService";
+import { uiPrefsService } from "@/lib/uiPrefsService";
 import { tagsService, type Label } from "../services/tagsService";
 import { useBoardStore } from "@/features/board/store/boardStore";
 import { useAuthStore } from "@/features/auth/store/authStore";
@@ -93,6 +94,10 @@ const TABS: { id: DetailTab; label: string; icon: React.ElementType }[] = [
   { id: "rules", label: "Regras", icon: Zap },
   { id: "history", label: "Histórico", icon: History },
 ];
+
+// Serializes recent-view writes within the tab so rapid task opens don't
+// interleave (get→set race) and drop entries.
+let recentViewsChain: Promise<void> = Promise.resolve();
 
 interface MockAttachment {
   id: string;
@@ -353,7 +358,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
     setDeliveryDialogOpen(true);
   }
 
-  // Board task types (per board, stored in localStorage by the board settings)
+  // Board task types (per board, from the DB via taskTypeService)
   const [boardTypes, setBoardTypes] = useState<{ id: string; name: string; color: string; default_hours?: number }[]>([]);
   useEffect(() => {
     const pid = task?.project_id;
@@ -464,16 +469,17 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
     return () => document.removeEventListener("mousedown", handleOutside);
   }, [headerAssigneeOpen]);
 
-  // Record recent view (for header history)
+  // Record recent view (for header history) — persisted per-user in the DB.
   useEffect(() => {
-    if (!task || typeof window === "undefined") return;
-    try {
-      const boardName = projectStore.projects.find((p) => p.id === task.project_id)?.name ?? "Quadro";
-      const prev = JSON.parse(localStorage.getItem("mwr_recent_views") ?? "[]") as any[];
-      const next = [{ id: taskId, title: task.title, board: boardName, viewed_at: new Date().toISOString() },
-        ...prev.filter((r) => r.id !== taskId)].slice(0, 10);
-      localStorage.setItem("mwr_recent_views", JSON.stringify(next));
-    } catch {}
+    if (!task || !user?.id) return;
+    const uid = user.id;
+    const boardName = projectStore.projects.find((p) => p.id === task.project_id)?.name ?? "Quadro";
+    const entry = { id: taskId, title: task.title, board: boardName, viewed_at: new Date().toISOString() };
+    recentViewsChain = recentViewsChain.then(async () => {
+      const prev = await uiPrefsService.get<any[]>(uid, "recent_views");
+      const next = [entry, ...(prev ?? []).filter((r) => r.id !== taskId)].slice(0, 10);
+      await uiPrefsService.set(uid, "recent_views", next);
+    }).catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task?.id]);
 

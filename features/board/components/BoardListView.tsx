@@ -17,6 +17,7 @@ import {
   Paperclip,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { useUiPref } from "@/lib/useUiPref";
 import { PRIORITY_LABELS, PRIORITY_COLORS } from "@/types";
 import { useFilteredColumns } from "../hooks/useFilteredColumns";
 import { useSelectionStore } from "../store/selectionStore";
@@ -98,21 +99,6 @@ interface ListConfig {
   widths: Partial<Record<ColKey, number>>;
 }
 
-function configKey(boardId: string) {
-  return `mwr_listcfg_${boardId}_mock-user`;
-}
-function loadConfig(boardId: string): ListConfig {
-  if (typeof window === "undefined") return { visible: DEFAULT_VISIBLE, pinned: ["title"], widths: {} };
-  try {
-    const raw = localStorage.getItem(configKey(boardId));
-    if (raw) return JSON.parse(raw);
-  } catch {}
-  return { visible: DEFAULT_VISIBLE, pinned: ["title"], widths: {} };
-}
-function saveConfig(boardId: string, cfg: ListConfig) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(configKey(boardId), JSON.stringify(cfg));
-}
 
 function attachmentsCount(task: any): number {
   return (task?._attachmentCount as number) ?? 0;
@@ -141,16 +127,13 @@ export function BoardListView({ boardId, onTaskOpen }: { boardId: string; onTask
     setRowMenu(null);
   }
 
-  const [config, setConfig] = useState<ListConfig>(() => loadConfig(boardId));
+  const [config, setConfig] = useUiPref<ListConfig>(`listcfg_${boardId}`, { visible: DEFAULT_VISIBLE, pinned: ["title"], widths: {} });
   const [search, setSearch] = useState("");
   const [sortKey, setSortKey] = useState<ColKey | "activity">("activity");
   const [sortDir, setSortDir] = useState<"asc" | "desc">("asc");
   const [page, setPage] = useState(0);
   const [headerMenu, setHeaderMenu] = useState<ColKey | null>(null);
   const [configOpen, setConfigOpen] = useState(false);
-
-  useEffect(() => { saveConfig(boardId, config); }, [boardId, config]);
-  useEffect(() => { setConfig(loadConfig(boardId)); }, [boardId]);
 
   const allTasks: ListTask[] = useMemo(
     () =>
