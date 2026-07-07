@@ -21,6 +21,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { taskService } from "../services/taskService";
+import { tagsService } from "../services/tagsService";
 import { useProjectStore } from "@/features/projects/store/projectStore";
 import { useBoardStore } from "@/features/board/store/boardStore";
 import { useAuthStore } from "@/features/auth/store/authStore";
@@ -262,18 +263,24 @@ export function GlobalCreateTaskModal() {
     setActivePicker(null);
   }
 
-  // Load known tags from localStorage (mock) for the picker
+  // Tag suggestions = this board's labels (DB). Loaded when a board is chosen.
   useEffect(() => {
-    if (!open) return;
-    try { setAllTags(JSON.parse(localStorage.getItem("mwr_tags") ?? '["Urgente","Bug","Conteúdo","Design","Revisão"]')); } catch { setAllTags([]); }
-  }, [open]);
+    if (!open || !selectedProjectId) { setAllTags([]); return; }
+    let cancelled = false;
+    tagsService.listForBoard(selectedProjectId).then((labels) => {
+      if (!cancelled) setAllTags(labels.map((l) => l.name));
+    });
+    return () => { cancelled = true; };
+  }, [open, selectedProjectId]);
 
-  function createTag(name: string) {
-    const next = Array.from(new Set([...allTags, name]));
-    setAllTags(next);
-    try { localStorage.setItem("mwr_tags", JSON.stringify(next)); } catch {}
-    if (!tags.includes(name)) setTags((t) => [...t, name]);
+  async function createTag(name: string) {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    if (!allTags.includes(trimmed)) setAllTags((prev) => [...prev, trimmed]);
+    if (!tags.includes(trimmed)) setTags((t) => [...t, trimmed]);
     setTagSearch("");
+    // Persist the label to the board so it's a real suggestion next time.
+    if (selectedProjectId) await tagsService.ensureLabel(selectedProjectId, trimmed);
   }
 
   // Persist the task + all rich fields. Returns created task id or null.
@@ -317,6 +324,16 @@ export function GlobalCreateTaskModal() {
 
     // is_urgent
     try { await taskService.update(taskId, { is_urgent: isUrgent } as any); } catch (e) { console.error("[createTask] is_urgent update error:", e); }
+
+    // Tags → board labels (ensure the label exists, then attach to the task)
+    if (tags.length && selectedProjectId) {
+      for (const name of tags) {
+        try {
+          const label = await tagsService.ensureLabel(selectedProjectId, name);
+          if (label) await tagsService.attach(taskId, label.id);
+        } catch (e) { console.error("[createTask] tag attach error:", e); }
+      }
+    }
 
     // Checklist
     for (let i = 0; i < checklistItems.length; i++) {

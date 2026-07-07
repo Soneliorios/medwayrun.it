@@ -13,6 +13,7 @@ import { useBoardStore } from "@/features/board/store/boardStore";
 import { useBoardProjectStore } from "@/features/board/store/boardProjectStore";
 import { taskTypeService } from "@/features/board/services/taskTypeService";
 import { teamService } from "@/lib/teamService";
+import { stageReqService } from "@/lib/stageReqService";
 import { createClient } from "@/lib/supabase/client";
 import { ORG_ID } from "@/lib/utils";
 import {
@@ -316,20 +317,13 @@ export default function ProjectSettingsPage({ params }: Props) {
     setPrivacySaving(false);
   }
 
-  // Stage requirements (per column) — persisted to localStorage
-  const STAGE_REQS_KEY = `mwr_stage_reqs_${projectId}`;
+  // Stage requirements (per column) — persisted in the DB (stage_requirements).
   const [selectedColumn, setSelectedColumn] = useState<string>(columns[0]?.id ?? "");
-  const [stageReqs, setStageReqsRaw] = useState<Record<string, StageReq[]>>(() => {
-    if (typeof window === "undefined") return {};
-    try { const r = localStorage.getItem(STAGE_REQS_KEY); return r ? JSON.parse(r) : {}; } catch { return {}; }
-  });
-  function setStageReqs(fn: Record<string, StageReq[]> | ((p: Record<string, StageReq[]>) => Record<string, StageReq[]>)) {
-    setStageReqsRaw((prev) => {
-      const next = typeof fn === "function" ? fn(prev) : fn;
-      if (typeof window !== "undefined") localStorage.setItem(STAGE_REQS_KEY, JSON.stringify(next));
-      return next;
-    });
-  }
+  const [stageReqs, setStageReqs] = useState<Record<string, StageReq[]>>({});
+  useEffect(() => {
+    const ids = columns.map((c) => c.id);
+    if (ids.length) stageReqService.listForColumns(ids).then(setStageReqs);
+  }, [columns]);
   const [newReqField, setNewReqField] = useState<string>(STAGE_REQ_OPTIONS[0].field);
 
   async function handleSave(e: React.FormEvent) {
@@ -761,10 +755,13 @@ export default function ProjectSettingsPage({ params }: Props) {
                             <Check size={13} className="text-brand-teal shrink-0" />
                             <span className="text-sm text-neutral-700 flex-1">{req.label}</span>
                             <button
-                              onClick={() => setStageReqs((prev) => ({
-                                ...prev,
-                                [selectedColumn]: (prev[selectedColumn] ?? []).filter((r) => r.id !== req.id),
-                              }))}
+                              onClick={() => {
+                                setStageReqs((prev) => ({
+                                  ...prev,
+                                  [selectedColumn]: (prev[selectedColumn] ?? []).filter((r) => r.id !== req.id),
+                                }));
+                                stageReqService.remove(req.id);
+                              }}
                               className="w-6 h-6 flex items-center justify-center rounded-md text-neutral-300 hover:text-destructive hover:bg-destructive/5 transition-colors"
                             >
                               <Trash2 size={12} />
@@ -788,16 +785,14 @@ export default function ProjectSettingsPage({ params }: Props) {
                       </select>
                       <button
                         disabled={STAGE_REQ_OPTIONS.filter((opt) => !(currentReqs.some((r) => r.field === opt.field))).length === 0}
-                        onClick={() => {
+                        onClick={async () => {
                           const opt = STAGE_REQ_OPTIONS.find((o) => o.field === newReqField);
-                          if (!opt) return;
+                          if (!opt || !selectedColumn) return;
                           if (currentReqs.some((r) => r.field === opt.field)) return;
-                          setStageReqs((prev) => ({
+                          const created = await stageReqService.add(selectedColumn, opt.field, opt.label);
+                          if (created) setStageReqs((prev) => ({
                             ...prev,
-                            [selectedColumn]: [
-                              ...(prev[selectedColumn] ?? []),
-                              { id: Date.now().toString(), field: opt.field, label: opt.label },
-                            ],
+                            [selectedColumn]: [...(prev[selectedColumn] ?? []), created],
                           }));
                         }}
                         className="px-3 py-2 text-xs font-semibold bg-brand-teal text-white rounded-lg hover:bg-brand-teal/90 disabled:opacity-40 transition-colors"
