@@ -103,3 +103,18 @@ export function getTaskTypeName(typeId: string | null, boardId: string): string 
   if (!typeId) return null;
   return loadBoardTypes(boardId).find((t) => t.id === typeId)?.name ?? null;
 }
+
+/**
+ * A task's effective estimated hours: its own explicit value when set,
+ * otherwise the estimate of its task type. Lets tasks "follow the type"
+ * automatically while still honoring a manual per-task override.
+ */
+export function resolveEstimatedHours(
+  estimated: number | null | undefined,
+  taskTypeName: string | null | undefined,
+  hoursByType: Map<string, number>
+): number | null {
+  if (estimated != null && estimated > 0) return estimated;
+  if (taskTypeName && hoursByType.has(taskTypeName)) return hoursByType.get(taskTypeName) ?? null;
+  return estimated ?? null;
+}

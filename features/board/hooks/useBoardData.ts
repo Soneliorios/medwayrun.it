@@ -4,6 +4,7 @@ import { useEffect } from "react";
 import { createClient, createRawClient } from "@/lib/supabase/client";
 import { useBoardStore } from "../store/boardStore";
 import { taskTypeService } from "../services/taskTypeService";
+import { resolveEstimatedHours } from "@/lib/liquidTime";
 import type { ColumnWithTasks, TaskWithRelations } from "@/types";
 
 const DEFAULT_COLUMNS = ["A fazer", "Em andamento", "Revisão", "Concluído"];
@@ -74,11 +75,17 @@ export async function loadBoardData(pid: string) {
     });
   }
 
+  // Board task types → estimate map, so tasks without an explicit estimate
+  // inherit their type's estimated hours ("follow the type" behavior).
+  const boardTypes = await taskTypeService.list(pid);
+  const hoursByType = new Map(boardTypes.map((t) => [t.name, t.default_hours]));
+
   const tasksByColumn = new Map<string, TaskWithRelations[]>();
   ((tasksData ?? []) as any[]).forEach((t: any) => {
     const tasks = tasksByColumn.get(t.column_id) ?? [];
     tasks.push({
       ...t,
+      estimated_hours: resolveEstimatedHours(t.estimated_hours, t.task_type, hoursByType),
       assignee: t.assignee ?? null,
       labels: (t.labels as any[])?.map((tl: any) => tl.labels).filter(Boolean) ?? [],
       _commentCount: (t._commentCount?.[0]?.count as number) ?? 0,

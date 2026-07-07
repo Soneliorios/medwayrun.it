@@ -50,13 +50,27 @@ export default function MePage() {
     if (!userId) return;
     try {
       const supabase = createClient();
-      const { data } = await supabase
-        .from("tasks")
-        .select(`*, assignee:profiles!tasks_assignee_id_fkey(id, full_name, avatar_url)`)
-        .or(`assignee_id.eq.${userId},created_by.eq.${userId}`)
-        .neq("status", "archived")
-        .order("created_at", { ascending: false });
-      setTasks((data ?? []) as any);
+      const [{ data }, { data: typesData }] = await Promise.all([
+        supabase
+          .from("tasks")
+          .select(`*, assignee:profiles!tasks_assignee_id_fkey(id, full_name, avatar_url)`)
+          .or(`assignee_id.eq.${userId},created_by.eq.${userId}`)
+          .neq("status", "archived")
+          .order("created_at", { ascending: false }),
+        supabase.from("task_types").select("project_id, name, default_hours"),
+      ]);
+      // Fallback: a task with no explicit estimate inherits its type's estimate.
+      const hoursByKey = new Map(
+        (typesData ?? []).map((t: any) => [`${t.project_id}|${t.name}`, t.default_hours])
+      );
+      const withEstimates = ((data ?? []) as any[]).map((t: any) => ({
+        ...t,
+        estimated_hours:
+          t.estimated_hours != null && t.estimated_hours > 0
+            ? t.estimated_hours
+            : hoursByKey.get(`${t.project_id}|${t.task_type}`) ?? t.estimated_hours,
+      }));
+      setTasks(withEstimates as any);
     } catch { setTasks([]); }
   }, [userId]);
 

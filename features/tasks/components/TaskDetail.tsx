@@ -364,7 +364,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   }
 
   // Board task types (per board, stored in localStorage by the board settings)
-  const [boardTypes, setBoardTypes] = useState<{ id: string; name: string; color: string }[]>([]);
+  const [boardTypes, setBoardTypes] = useState<{ id: string; name: string; color: string; default_hours?: number }[]>([]);
   useEffect(() => {
     const pid = task?.project_id;
     if (!pid) return;
@@ -713,7 +713,11 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
     (task as any)?.status === "delivered" &&
     (!lastColumnId || task?.column_id === lastColumnId);
   const overdue = isOverdue(task?.due_date);
-  const estimatedHours: number = (task as any)?.estimated_hours ?? 0;
+  // Effective estimate: explicit per-task value, else the task type's estimate.
+  const explicitEstimate: number = (task as any)?.estimated_hours ?? 0;
+  const typeEstimate: number =
+    boardTypes.find((t) => t.name === (task as any)?.task_type)?.default_hours ?? 0;
+  const estimatedHours: number = explicitEstimate > 0 ? explicitEstimate : typeEstimate;
   const trackedHours: number = task?.tracked_hours ?? 0;
   const timeRatio = estimatedHours > 0 ? trackedHours / estimatedHours : 0;
   const timeBarColor = timeRatio < 0.7 ? "#01CFB5" : timeRatio <= 1 ? "#FFB81C" : "#AC145A";
@@ -2136,9 +2140,9 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                   <label className="text-xs font-medium text-neutral-500 uppercase tracking-wide">
                     Tempo registrado <span className="text-red-400">*</span>
                   </label>
-                  {task.estimated_hours != null && (
+                  {estimatedHours > 0 && (
                     <span className="text-xs text-neutral-400">
-                      Estimado: <span className="font-medium text-neutral-600">{task.estimated_hours}h</span>
+                      Estimado: <span className="font-medium text-neutral-600">{estimatedHours}h</span>
                     </span>
                   )}
                 </div>
@@ -2170,7 +2174,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                 {(() => {
                   const totalSec = (parseInt(deliveryH) || 0) * 3600 + (parseInt(deliveryM) || 0) * 60 + (parseInt(deliveryS) || 0);
                   const trackedH = totalSec / 3600;
-                  const estimated = task.estimated_hours ?? 0;
+                  const estimated = estimatedHours;
                   if (estimated > 0 && trackedH > estimated * 1.2)
                     return <p className="text-xs text-amber-600 mt-1.5">⚠ Tempo {((trackedH / estimated - 1) * 100).toFixed(0)}% acima do estimado</p>;
                   if (estimated > 0 && totalSec > 0 && trackedH < estimated * 0.5)
