@@ -41,11 +41,15 @@ export function useBoardDnd() {
     (event: DragStartEvent) => {
       const id = event.active.id as string;
 
-      // Role check: user role can only drag tasks they are assigned to
+      // Role check: a "user" can drag (change the stage of) a task if they are
+      // a responsible for it — the current assignee OR anyone in its queue.
       if (isUser) {
         const task = store.columns.flatMap((c) => c.tasks).find((t) => t.id === id);
         const isAssignee = (task as any)?.assignee_id === user?.id;
-        if (!isAssignee) {
+        const inQueue = ((task as any)?.sequence ?? []).some(
+          (s: any) => s.user_id === user?.id
+        );
+        if (!isAssignee && !inQueue) {
           dragAllowedRef.current = false;
           return;
         }

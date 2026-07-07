@@ -11,6 +11,7 @@ import { useProjectStore } from "@/features/projects/store/projectStore";
 import { useProjectActions } from "@/features/projects/hooks/useProjects";
 import { useBoardStore } from "@/features/board/store/boardStore";
 import { useBoardProjectStore } from "@/features/board/store/boardProjectStore";
+import { taskTypeService } from "@/features/board/services/taskTypeService";
 import { createClient } from "@/lib/supabase/client";
 import { ORG_ID } from "@/lib/utils";
 import {
@@ -150,32 +151,14 @@ export default function ProjectSettingsPage({ params }: Props) {
   const [saving, setSaving] = useState(false);
   const [archiving, setArchiving] = useState(false);
 
-  // Task types — persisted to localStorage
-  const TYPES_KEY = `mwr_task_types_${projectId}`;
-  const DEFAULT_TYPES: TaskType[] = [
-    { id: "type-padrao",  name: "Padrão",  color: "#407EC9", default_hours: 2 },
-    { id: "type-bug",     name: "Bug",     color: "#AC145A", default_hours: 1 },
-    { id: "type-feature", name: "Feature", color: "#3B3FB6", default_hours: 4 },
-    { id: "type-reuniao", name: "Reunião", color: "#01CFB5", default_hours: 1 },
-  ];
-  const [taskTypes, setTaskTypesRaw] = useState<TaskType[]>(() => {
-    if (typeof window === "undefined") return DEFAULT_TYPES;
-    try {
-      const raw = localStorage.getItem(TYPES_KEY);
-      if (raw) return JSON.parse(raw);
-    } catch {}
-    const d = DEFAULT_TYPES;
-    localStorage.setItem(TYPES_KEY, JSON.stringify(d));
-    return d;
-  });
-
-  function setTaskTypes(fn: TaskType[] | ((prev: TaskType[]) => TaskType[])) {
-    setTaskTypesRaw((prev) => {
-      const next = typeof fn === "function" ? fn(prev) : fn;
-      if (typeof window !== "undefined") localStorage.setItem(TYPES_KEY, JSON.stringify(next));
-      return next;
-    });
-  }
+  // Task types — persisted in the database (project-scoped). Lists exactly what
+  // exists; defaults are seeded only when a board is first created, so deleted
+  // types stay deleted. See supabase_board_task_types.sql.
+  const [taskTypes, setTaskTypes] = useState<TaskType[]>([]);
+  useEffect(() => {
+    if (!projectId) return;
+    taskTypeService.list(projectId).then(setTaskTypes);
+  }, [projectId]);
 
   const [newTypeName, setNewTypeName] = useState("");
   const [newTypeHours, setNewTypeHours] = useState(2);
@@ -514,7 +497,10 @@ export default function ProjectSettingsPage({ params }: Props) {
                           {type.default_hours}h estimadas
                         </span>
                         <button
-                          onClick={() => setTaskTypes((prev) => prev.filter((t) => t.id !== type.id))}
+                          onClick={() => {
+                            setTaskTypes((prev) => prev.filter((t) => t.id !== type.id));
+                            taskTypeService.remove(type.id);
+                          }}
                           className="w-6 h-6 flex items-center justify-center rounded-md text-neutral-300 hover:text-destructive hover:bg-destructive/5 transition-colors"
                         >
                           <Trash2 size={12} />
@@ -562,14 +548,17 @@ export default function ProjectSettingsPage({ params }: Props) {
                   </div>
                   <button
                     disabled={!newTypeName.trim()}
-                    onClick={() => {
-                      if (!newTypeName.trim()) return;
-                      setTaskTypes((prev) => [
-                        ...prev,
-                        { id: Date.now().toString(), name: newTypeName.trim(), color: newTypeColor, default_hours: newTypeHours },
-                      ]);
+                    onClick={async () => {
+                      const name = newTypeName.trim();
+                      if (!name) return;
                       setNewTypeName("");
                       setNewTypeHours(2);
+                      const created = await taskTypeService.create(projectId, {
+                        name,
+                        color: newTypeColor,
+                        default_hours: newTypeHours,
+                      });
+                      if (created) setTaskTypes((prev) => [...prev, created]);
                     }}
                     className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-semibold bg-brand-teal text-white hover:bg-brand-teal/90 disabled:opacity-40 transition-colors"
                   >

@@ -38,6 +38,18 @@ export const approvalService = {
     return (data ?? []) as TaskApproval[];
   },
 
+  /** Everything a user is involved in — as approver OR as requester. */
+  async listForUser(userId: string): Promise<TaskApproval[]> {
+    const sb = createRawClient();
+    const { data, error } = await (sb as any)
+      .from("task_approvals")
+      .select("*")
+      .or(`approver_id.eq.${userId},requested_by.eq.${userId}`)
+      .order("requested_at", { ascending: false });
+    if (error) { console.error("[approvalService.listForUser]", error); return []; }
+    return (data ?? []) as TaskApproval[];
+  },
+
   async request(input: { taskId: string; taskTitle: string; approverId: string; requestedBy: string | null }): Promise<TaskApproval | null> {
     const sb = createRawClient();
     const { data, error } = await (sb as any)

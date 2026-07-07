@@ -39,7 +39,32 @@ export function KanbanColumn({ column, onTaskOpen, onAddTask, canCreate = true }
     await supabase.from("columns").update({ is_minimized: next }).eq("id", column.id);
   }
 
-  // Minimized state — narrow vertical strip
+  const handleRename = useCallback(
+    async (newName: string) => {
+      store.updateColumn(column.id, { name: newName }); // optimistic
+      const supabase = createRawClient();
+      const { error } = await supabase
+        .from("columns")
+        .update({ name: newName })
+        .eq("id", column.id);
+      if (error) store.updateColumn(column.id, { name: column.name }); // revert
+    },
+    [column.id, column.name, store]
+  );
+
+  const handleDelete = useCallback(async () => {
+    if (column.tasks.length > 0) {
+      if (!confirm(`A coluna "${column.name}" tem tarefas. Excluir mesmo assim?`)) return;
+    }
+    store.removeColumn(column.id); // optimistic
+    const supabase = createRawClient();
+    await supabase.from("columns").delete().eq("id", column.id);
+  }, [column, store]);
+
+  // Minimized state — narrow vertical strip.
+  // NOTE: this early return must stay BELOW every hook call above (Rules of
+  // Hooks) — otherwise toggling minimize changes the hook count between
+  // renders and crashes the board.
   if (minimized) {
     return (
       <div className="kanban-column w-10 shrink-0 flex flex-col items-center gap-2 py-3 bg-neutral-50/80 rounded-xl border border-neutral-100">
@@ -63,28 +88,6 @@ export function KanbanColumn({ column, onTaskOpen, onAddTask, canCreate = true }
       </div>
     );
   }
-
-  const handleRename = useCallback(
-    async (newName: string) => {
-      store.updateColumn(column.id, { name: newName }); // optimistic
-      const supabase = createRawClient();
-      const { error } = await supabase
-        .from("columns")
-        .update({ name: newName })
-        .eq("id", column.id);
-      if (error) store.updateColumn(column.id, { name: column.name }); // revert
-    },
-    [column.id, column.name, store]
-  );
-
-  const handleDelete = useCallback(async () => {
-    if (column.tasks.length > 0) {
-      if (!confirm(`A coluna "${column.name}" tem tarefas. Excluir mesmo assim?`)) return;
-    }
-    store.removeColumn(column.id); // optimistic
-    const supabase = createRawClient();
-    await supabase.from("columns").delete().eq("id", column.id);
-  }, [column, store]);
 
   async function handleSetWipLimit(limit: number | null) {
     store.updateColumn(column.id, { wip_limit: limit } as any); // optimistic

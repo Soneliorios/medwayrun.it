@@ -31,6 +31,7 @@ import { useSignOut } from "@/features/auth/hooks/useAuth";
 import { useRole } from "@/features/auth/hooks/useRole";
 import { ROLE_LABELS, ROLE_COLORS } from "@/lib/roles";
 import { useNotificationStore } from "@/features/notifications/store/notificationStore";
+import { notificationService } from "@/features/notifications/services/notificationService";
 import { useTimerStore } from "@/features/timer/store/timerStore";
 import { formatElapsed } from "@/types";
 import type { AppNotification } from "@/features/notifications/store/notificationStore";
@@ -322,7 +323,7 @@ export function TopNav() {
               <span className="text-sm font-semibold text-brand-navy">Notificações</span>
               {unreadCount > 0 && (
                 <button
-                  onClick={markAllRead}
+                  onClick={() => { markAllRead(); if (profile?.id) notificationService.markAllRead(profile.id); }}
                   className="text-xs text-brand-teal hover:underline"
                 >
                   Marcar todas como lidas
@@ -343,7 +344,8 @@ export function TopNav() {
                     notification={n}
                     onRead={() => {
                       markRead(n.id);
-                      if (n.task_id && (n.type === "capacity_overflow" || n.type === "approval_requested")) {
+                      if (!n.read_at) notificationService.markRead(n.id);
+                      if (n.task_id && (n.type === "capacity_overflow" || n.type === "approval_requested" || n.type === "approval_resolved")) {
                         setNotifOpen(false);
                         router.push(`/tasks/${n.task_id}`);
                       }

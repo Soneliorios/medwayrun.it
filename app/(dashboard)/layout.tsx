@@ -4,6 +4,7 @@ import { TopNav } from "@/components/shared/TopNav";
 import { AuthProvider } from "@/features/auth/components/AuthProvider";
 import { ProjectsBootstrap } from "@/features/projects/components/ProjectsBootstrap";
 import { TimerProvider } from "@/features/timer/components/TimerProvider";
+import { NotificationProvider } from "@/features/notifications/components/NotificationProvider";
 import { GlobalCreateTaskModal } from "@/features/tasks/components/GlobalCreateTaskModal";
 
 export default function DashboardLayout({
@@ -14,6 +15,7 @@ export default function DashboardLayout({
   return (
     <AuthProvider>
       <ProjectsBootstrap />
+      <NotificationProvider />
       <TimerProvider>
         <div className="flex flex-col h-screen overflow-hidden bg-neutral-50">
           <TopNav />

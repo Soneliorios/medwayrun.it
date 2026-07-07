@@ -81,14 +81,24 @@ export function useBoardRealtime(projectId: string) {
         (payload) => {
           const { eventType, new: newRow, old: oldRow } = payload;
           if (eventType === "INSERT") {
-            store.addColumn({
-              ...(newRow as unknown as ColumnWithTasks),
-              tasks: [],
-            });
+            // Only add if not already present (avoids double from optimistic)
+            const exists = store.columns.some(
+              (c) => c.id === (newRow as any).id
+            );
+            if (!exists) {
+              store.addColumn({
+                ...(newRow as unknown as ColumnWithTasks),
+                tasks: [],
+              });
+            }
           } else if (eventType === "UPDATE") {
+            // Sync every field the board renders — notably `position`, so
+            // column reordering from any client reflects in real time.
             store.updateColumn((newRow as any).id, {
               name: (newRow as any).name,
               color: (newRow as any).color,
+              position: (newRow as any).position,
+              is_done_column: (newRow as any).is_done_column,
             });
           } else if (eventType === "DELETE") {
             store.removeColumn((oldRow as any).id);

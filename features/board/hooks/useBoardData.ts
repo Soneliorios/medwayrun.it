@@ -3,6 +3,7 @@
 import { useEffect } from "react";
 import { createClient, createRawClient } from "@/lib/supabase/client";
 import { useBoardStore } from "../store/boardStore";
+import { taskTypeService } from "../services/taskTypeService";
 import type { ColumnWithTasks, TaskWithRelations } from "@/types";
 
 const DEFAULT_COLUMNS = ["A fazer", "Em andamento", "Revisão", "Concluído"];
@@ -35,6 +36,9 @@ export async function loadBoardData(pid: string) {
     }));
     const { data } = await rawClient.from("columns").insert(insertData).select();
     const columns: ColumnWithTasks[] = (data ?? []).map((col: any) => ({ ...col, tasks: [] }));
+    // Brand-new board: seed the default task types once (the only place types
+    // are auto-created — normal loads never re-seed, so deletions stick).
+    await taskTypeService.seedDefaults(pid);
     store.setColumns(columns);
     store.setLoading(false);
     return;

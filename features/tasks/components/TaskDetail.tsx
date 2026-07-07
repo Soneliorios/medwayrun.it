@@ -74,6 +74,7 @@ import { useRole } from "@/features/auth/hooks/useRole";
 import { useBoardProjectStore } from "@/features/board/store/boardProjectStore";
 import { createClient, createRawClient } from "@/lib/supabase/client";
 import { ORG_ID } from "@/lib/utils";
+import { taskTypeService } from "@/features/board/services/taskTypeService";
 import type { TaskWithRelations } from "@/types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -367,10 +368,13 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   useEffect(() => {
     const pid = task?.project_id;
     if (!pid) return;
-    try {
-      const raw = localStorage.getItem(`mwr_task_types_${pid}`);
-      setBoardTypes(raw ? JSON.parse(raw) : []);
-    } catch { setBoardTypes([]); }
+    // List exactly what exists in the DB — no fallback/auto-seed, so deleted
+    // types never reappear. Same source as the create-task modal.
+    let cancelled = false;
+    taskTypeService.list(pid).then((types) => {
+      if (!cancelled) setBoardTypes(types);
+    });
+    return () => { cancelled = true; };
   }, [task?.project_id]);
 
   // Board tags (per board) + this task's tags, from Supabase
@@ -717,6 +721,10 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   // Role-based action gating
   const isAssignee = task?.assignee_id === user?.id;
   const canActOnTask = !isUser || !!isAssignee;
+  // Changing the stage is allowed for ANY responsible in the queue (not just
+  // the current head) — deliver/reopen stay restricted to the active one.
+  const isInQueue = !!user?.id && queue.some((q) => q.user_id === user.id);
+  const canChangeStage = !isUser || !!isAssignee || isInQueue;
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -1106,7 +1114,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                 )}
 
                 {/* COMMENTS */}
-                {activeTab === "comments" && <CommentList taskId={taskId} />}
+                {activeTab === "comments" && <CommentList taskId={taskId} taskTitle={task.title} />}
 
                 {/* CHECKLIST */}
                 {activeTab === "checklist" && (
@@ -1553,7 +1561,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                   {boardColumns.length > 0 ? (
                     <Select
                       value={task.column_id}
-                      disabled={!canActOnTask}
+                      disabled={!canChangeStage}
                       onValueChange={(v) => {
                         if (!v || v === task.column_id) return;
                         setTask((t) => (t ? { ...t, column_id: v } : t));
@@ -1561,7 +1569,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                         taskService.update(taskId, { column_id: v } as any).catch(() => {});
                       }}
                     >
-                      <SelectTrigger className={cn("h-7 text-xs border-neutral-200", !canActOnTask && "opacity-60 cursor-not-allowed")} title={!canActOnTask ? "Somente o responsável pode mudar a etapa" : undefined}>
+                      <SelectTrigger className={cn("h-7 text-xs border-neutral-200", !canChangeStage && "opacity-60 cursor-not-allowed")} title={!canChangeStage ? "Somente um responsável da tarefa pode mudar a etapa" : undefined}>
                         <div className="flex items-center gap-1.5">
                           <span
                             className="w-1.5 h-1.5 rounded-full"

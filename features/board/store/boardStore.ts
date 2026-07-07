@@ -28,7 +28,7 @@ interface BoardState {
 
   // Column mutations
   addColumn: (column: ColumnWithTasks) => void;
-  updateColumn: (columnId: string, updates: { name?: string; color?: string }) => void;
+  updateColumn: (columnId: string, updates: Partial<ColumnWithTasks>) => void;
   removeColumn: (columnId: string) => void;
 
   // Reorder columns
@@ -106,7 +106,13 @@ export const useBoardStore = create<BoardState>()(
       })),
 
     addColumn: (column) =>
-      set((state) => ({ columns: [...state.columns, column] })),
+      set((state) =>
+        // Idempotent: optimistic insert + realtime echo must not duplicate,
+        // regardless of which arrives first.
+        state.columns.some((c) => c.id === column.id)
+          ? state
+          : { columns: [...state.columns, column] }
+      ),
 
     updateColumn: (columnId, updates) =>
       set((state) => ({

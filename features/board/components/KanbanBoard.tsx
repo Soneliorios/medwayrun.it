@@ -73,11 +73,17 @@ export function KanbanBoard({ projectId, onTaskOpen, onAddTask, canCreate = true
     ? store.columns.flatMap((c) => c.tasks).find((t) => t.id === store.activeTaskId)
     : null;
 
-  const columnIds = store.columns.map((c) => c.id);
+  // Always render columns in `position` order — the store keeps them in
+  // insertion order, so reordering (which only mutates `position`) must be
+  // reflected here for the change to be visible without a refresh.
+  const orderedColumns = [...store.columns].sort(
+    (a, b) => a.position - b.position
+  );
+  const columnIds = orderedColumns.map((c) => c.id);
 
   // Apply active filters for display only — DnD continues to operate on the
   // full store data, so dragging/reordering still works while filtered.
-  const displayColumns = applyBoardFilters(store.columns, filters, {
+  const displayColumns = applyBoardFilters(orderedColumns, filters, {
     activeTimerTaskId,
     currentUserId,
   });

@@ -29,6 +29,7 @@ import { PRIORITY_LABELS, PRIORITY_COLORS } from "@/types";
 type OverflowCheckResult = null;
 import { getInitials } from "@/lib/utils";
 import { useBoardProjectStore } from "@/features/board/store/boardProjectStore";
+import { taskTypeService } from "@/features/board/services/taskTypeService";
 import type { Column } from "@/types";
 
 type Priority = "low" | "medium" | "high" | "urgent";
@@ -83,6 +84,7 @@ export function GlobalCreateTaskModal() {
   const [tagSearch, setTagSearch] = useState("");
   const [allTags, setAllTags] = useState<string[]>([]);
   const [boardTaskTypes, setBoardTaskTypes] = useState<{ id: string; name: string; color: string; default_hours: number }[]>([]);
+  const [newTypeName, setNewTypeName] = useState("");
   const [estimatedHours, setEstimatedHours] = useState<number | null>(null);
   const [overflowWarning, setOverflowWarning] = useState<OverflowCheckResult | null>(null);
   const [orgMembers, setOrgMembers] = useState<OrgMember[]>([]);
@@ -193,10 +195,19 @@ export function GlobalCreateTaskModal() {
     }
   }, [selectedProjectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load board task types for type_id resolution
+  // Load this board's task types from the database. No fallback/auto-seed:
+  // the list reflects exactly what exists, so deleted types never resurface.
   useEffect(() => {
-    setBoardTaskTypes([]);
-  }, [selectedProjectId]);
+    if (!open || !selectedProjectId) {
+      setBoardTaskTypes([]);
+      return;
+    }
+    let cancelled = false;
+    taskTypeService.list(selectedProjectId).then((types) => {
+      if (!cancelled) setBoardTaskTypes(types);
+    });
+    return () => { cancelled = true; };
+  }, [selectedProjectId, open]);
 
   // Auto-populate estimated hours: user avg (≥15 deliveries) > type default_hours
   useEffect(() => {
@@ -270,10 +281,6 @@ export function GlobalCreateTaskModal() {
     const colTasks = boardColumns.find((c) => c.id === selectedColumnId)?.tasks ?? [];
     const lastPos = colTasks.length ? colTasks[colTasks.length - 1].position + 1000 : 1000;
 
-    // Resolve type_id from board task types by matching the selected type name
-    const matchedType = boardTaskTypes.find((t) => t.name === taskType);
-    const resolvedTypeId = matchedType?.id ?? undefined;
-
     // Recurrence config (same shape used by TaskDetail + the pg_cron job)
     let recurrenceConfig: Record<string, unknown> | undefined;
     if (recurrence && recurrence !== "none") {
@@ -297,7 +304,11 @@ export function GlobalCreateTaskModal() {
       position: lastPos,
       assignee_id: assignees[0] || undefined,
       board_project_id: boardProjectId || undefined,
-      type_id: resolvedTypeId,
+      // Store the type as denormalized text (the field every board screen
+      // reads). We intentionally do NOT set type_id: board types live in
+      // localStorage with non-UUID ids that would violate the tasks.type_id
+      // foreign key.
+      task_type: taskType || undefined,
       recurrence_config: recurrenceConfig,
       created_by: user?.id || undefined,
     } as any);
@@ -347,7 +358,7 @@ export function GlobalCreateTaskModal() {
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    if (!title.trim() || !selectedProjectId || !selectedColumnId || !desiredStartDate) return;
+    if (!title.trim() || !selectedProjectId || !selectedColumnId) return;
     if (boardProjectRequired && !boardProjectId) return;
     setError(null);
     setLoading(true);
@@ -363,7 +374,7 @@ export function GlobalCreateTaskModal() {
   }
 
   async function handleSubmitAndCreateAnother() {
-    if (!title.trim() || !selectedProjectId || !selectedColumnId || !desiredStartDate) return;
+    if (!title.trim() || !selectedProjectId || !selectedColumnId) return;
     if (boardProjectRequired && !boardProjectId) return;
     setError(null);
     setLoading(true);
@@ -701,7 +712,7 @@ export function GlobalCreateTaskModal() {
                     "flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs cursor-pointer transition-colors",
                     desiredStartDate
                       ? "bg-brand-teal/10 text-brand-teal font-medium hover:bg-brand-teal/20"
-                      : "bg-destructive/10 text-destructive hover:bg-destructive/15"
+                      : "bg-neutral-100 text-neutral-500 hover:bg-neutral-200"
                   )}
                 >
                   <Clock size={13} />
@@ -715,7 +726,7 @@ export function GlobalCreateTaskModal() {
                       >×</span>
                     </>
                   ) : (
-                    <>Início desejado <span className="font-bold">*</span></>
+                    <>Início desejado</>
                   )}
                 </button>
                 <input
@@ -756,11 +767,8 @@ export function GlobalCreateTaskModal() {
                   <ChevronDown size={10} />
                 </button>
                 {activePicker === "taskType" && (
-                  <div className="absolute top-full left-0 mt-1 w-36 bg-white rounded-xl shadow-xl border border-neutral-100 py-1 z-10">
-                    {(boardTaskTypes.length > 0
-                      ? boardTaskTypes.map((t) => t.name)
-                      : ["Padrão", "Bug", "Feature", "Melhoria", "Análise", "Reunião"]
-                    ).map((t) => (
+                  <div className="absolute top-full left-0 mt-1 w-44 bg-white rounded-xl shadow-xl border border-neutral-100 py-1 z-10">
+                    {boardTaskTypes.map((t) => t.name).map((t) => (
                       <button
                         key={t}
                         type="button"
@@ -773,6 +781,45 @@ export function GlobalCreateTaskModal() {
                         {t}
                       </button>
                     ))}
+                    {/* Create a new type inline — persists to this board's types */}
+                    <div className="border-t border-neutral-100 mt-1 pt-1 px-2 pb-1">
+                      <div className="flex items-center gap-1">
+                        <input
+                          value={newTypeName}
+                          onChange={(e) => setNewTypeName(e.target.value)}
+                          onKeyDown={async (e) => {
+                            if (e.key === "Enter") {
+                              e.preventDefault();
+                              const name = newTypeName.trim();
+                              if (!name || !selectedProjectId) return;
+                              setNewTypeName("");
+                              setActivePicker(null);
+                              setTaskType(name);
+                              const created = await taskTypeService.create(selectedProjectId, { name });
+                              if (created) setBoardTaskTypes((prev) => prev.some((t) => t.name === created.name) ? prev : [...prev, created]);
+                            }
+                          }}
+                          placeholder="Novo tipo…"
+                          className="flex-1 min-w-0 px-2 py-1 text-xs rounded-md border border-neutral-200 outline-none focus:border-brand-teal"
+                        />
+                        <button
+                          type="button"
+                          onClick={async () => {
+                            const name = newTypeName.trim();
+                            if (!name || !selectedProjectId) return;
+                            setNewTypeName("");
+                            setActivePicker(null);
+                            setTaskType(name);
+                            const created = await taskTypeService.create(selectedProjectId, { name });
+                            if (created) setBoardTaskTypes((prev) => prev.some((t) => t.name === created.name) ? prev : [...prev, created]);
+                          }}
+                          className="shrink-0 w-6 h-6 flex items-center justify-center rounded-md bg-brand-teal/10 text-brand-teal hover:bg-brand-teal/20 transition-colors"
+                          title="Criar tipo"
+                        >
+                          <Plus size={13} />
+                        </button>
+                      </div>
+                    </div>
                   </div>
                 )}
               </div>
@@ -962,8 +1009,6 @@ export function GlobalCreateTaskModal() {
               <p className="text-xs text-neutral-400">
                 {!selectedProject
                   ? "Selecione um quadro para continuar"
-                  : !desiredStartDate
-                  ? <span className="text-destructive font-medium">Defina a data de início desejada</span>
                   : `em ${selectedProject.name}${selectedColumn ? ` › ${selectedColumn.name}` : ""}`}
               </p>
 
@@ -978,7 +1023,7 @@ export function GlobalCreateTaskModal() {
                 <button
                   type="button"
                   onClick={handleSubmitAndCreateAnother}
-                  disabled={!title.trim() || !selectedProjectId || !selectedColumnId || !desiredStartDate || (boardProjectRequired && !boardProjectId) || loading}
+                  disabled={!title.trim() || !selectedProjectId || !selectedColumnId || (boardProjectRequired && !boardProjectId) || loading}
                   className="px-4 py-2 rounded-lg text-sm font-semibold border border-neutral-200 text-neutral-600 hover:bg-neutral-50 disabled:opacity-40 transition-colors"
                 >
                   Salvar e criar outra
@@ -990,7 +1035,6 @@ export function GlobalCreateTaskModal() {
                     !title.trim() ||
                     !selectedProjectId ||
                     !selectedColumnId ||
-                    !desiredStartDate ||
                     (boardProjectRequired && !boardProjectId)
                   }
                   className={cn(

@@ -305,11 +305,25 @@ export type Database = {
         Row: {
           id: string;
           org_id: string;
+          project_id: string | null;
           name: string;
           color: string;
+          default_hours: number;
         };
-        Insert: { id?: string; org_id: string; name: string; color?: string };
-        Update: { name?: string; color?: string };
+        Insert: {
+          id?: string;
+          org_id: string;
+          project_id?: string | null;
+          name: string;
+          color?: string;
+          default_hours?: number;
+        };
+        Update: {
+          name?: string;
+          color?: string;
+          default_hours?: number;
+          project_id?: string | null;
+        };
       };
       areas: {
         Row: { id: string; org_id: string; name: string };

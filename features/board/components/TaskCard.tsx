@@ -167,7 +167,7 @@ function TaskCardInner({ task, onOpen }: Props) {
           {/* ID + type */}
           <div className="flex flex-wrap gap-1.5 flex-1 items-center">
             <span className="text-[10px] font-mono text-neutral-300">#{shortId}</span>
-            {typeof (task as any).task_type === "string" && (task as any).task_type && (task as any).task_type !== "Padrão" && (
+            {typeof (task as any).task_type === "string" && (task as any).task_type && (
               <span className="px-1.5 py-0.5 rounded text-[10px] font-medium shrink-0 bg-brand-navy/5 text-brand-navy">
                 {(task as any).task_type}
               </span>

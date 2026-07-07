@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { CheckCircle2, XCircle, ShieldCheck, Clock, RotateCcw, ChevronDown, Search, Crown } from "lucide-react";
 import { cn } from "@/lib/utils";
+import { createClient } from "@/lib/supabase/client";
 import { useOrgMembers } from "@/lib/useOrgMembers";
 
 /** User ids that are team leaders, from the admin Teams config (localStorage). */
@@ -22,24 +23,24 @@ function getTeamLeaderIds(): Set<string> {
     return new Set();
   }
 }
-import { useNotificationStore } from "@/features/notifications/store/notificationStore";
 import { useAuthStore } from "@/features/auth/store/authStore";
 import { approvalService, type TaskApproval } from "../services/approvalService";
+import { activityService } from "../services/activityService";
+import { notificationService } from "@/features/notifications/services/notificationService";
 
 type MockTaskApproval = TaskApproval;
 type ApprovalStatus = "approved" | "rejected" | "adjustment";
 
-function notify(type: "approval_requested" | "approval_resolved", content: string, taskId: string) {
-  useNotificationStore.getState().addNotification({
-    id: Math.random().toString(36).slice(2),
-    type,
-    content,
-    task_id: taskId,
-    from_user_id: null,
-    read_at: null,
-    created_at: new Date().toISOString(),
-  });
-}
+const RESOLVE_LABEL: Record<ApprovalStatus, string> = {
+  approved: "aprovada",
+  rejected: "rejeitada",
+  adjustment: "marcada para ajuste",
+};
+const RESOLVE_ACTION: Record<ApprovalStatus, string> = {
+  approved: "Aprovou a tarefa",
+  rejected: "Rejeitou a tarefa",
+  adjustment: "Solicitou ajuste",
+};
 
 function statusLabel(status: MockTaskApproval["status"]) {
   if (status === "approved") return "Aprovada";
@@ -128,6 +129,7 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
   const [approverSearch, setApproverSearch] = useState("");
   const [comment, setComment] = useState("");
   const currentUserId = useAuthStore((s) => s.profile?.id ?? null);
+  const myName = useAuthStore((s) => s.profile?.full_name ?? null);
   const approverRef = useRef<HTMLDivElement>(null);
 
   const members = useOrgMembers();
@@ -178,7 +180,15 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
   async function request() {
     if (!approverId) return;
     await approvalService.request({ taskId, taskTitle, approverId, requestedBy: currentUserId });
-    notify("approval_requested", `Aprovação solicitada a ${approverName}: "${taskTitle}"`, taskId);
+    await activityService.log({
+      taskId, userId: currentUserId, userName: myName,
+      action: "Solicitou aprovação", field: "aprovacao", toValue: approverName,
+    });
+    // Notify the chosen approver
+    await notificationService.create({
+      userId: approverId, type: "approval_requested", taskId, fromUserId: currentUserId,
+      content: `${myName ?? "Alguém"} solicitou sua aprovação em "${taskTitle}"`,
+    });
     await reload();
   }
 
@@ -187,17 +197,34 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
   async function revert() {
     if (!approval || !canRevert) return;
     if (!confirm("Reverter esta aprovação? A solicitação será removida.")) return;
+    const approverId = approval.approver_id;
     await approvalService.revert(approval.id);
-    notify("approval_resolved", `Aprovação de "${taskTitle}" foi revertida.`, taskId);
+    await activityService.log({
+      taskId, userId: currentUserId, userName: myName,
+      action: "Cancelou a solicitação de aprovação",
+    });
+    // Let the approver know the request was withdrawn
+    if (approverId) await notificationService.create({
+      userId: approverId, type: "approval_resolved", taskId, fromUserId: currentUserId,
+      content: `${myName ?? "Alguém"} cancelou a solicitação de aprovação de "${taskTitle}"`,
+    });
     setComment("");
     await reload();
   }
 
   async function resolve(status: ApprovalStatus) {
     if (!approval) return;
+    const requestedBy = approval.requested_by;
     await approvalService.resolve(approval.id, status, comment || null);
-    const resolveLabel = status === "approved" ? "aprovada" : status === "rejected" ? "rejeitada" : "marcada para ajuste";
-    notify("approval_resolved", `Tarefa "${taskTitle}" foi ${resolveLabel}.`, taskId);
+    await activityService.log({
+      taskId, userId: currentUserId, userName: myName,
+      action: RESOLVE_ACTION[status], field: "aprovacao", toValue: comment || null,
+    });
+    // Notify whoever requested the approval
+    if (requestedBy) await notificationService.create({
+      userId: requestedBy, type: "approval_resolved", taskId, fromUserId: currentUserId,
+      content: `Sua solicitação em "${taskTitle}" foi ${RESOLVE_LABEL[status]} por ${myName ?? "um aprovador"}${comment ? ` — "${comment}"` : ""}`,
+    });
     setComment("");
     await reload();
   }
@@ -331,43 +358,78 @@ export function MyApprovals({ onOpenTask }: { onOpenTask: (id: string) => void }
   const [items, setItems] = useState<MockTaskApproval[]>([]);
   const [comment, setComment] = useState<Record<string, string>>({});
   const currentUserId = useAuthStore((s) => s.profile?.id ?? null);
+  const myName = useAuthStore((s) => s.profile?.full_name ?? null);
   const members = useOrgMembers();
   const nameOf = (id: string | null) => (id ? members.find((m) => m.id === id)?.full_name ?? "—" : "—");
 
   async function reload() {
     if (!currentUserId) { setItems([]); return; }
-    setItems(await approvalService.listForApprover(currentUserId));
+    setItems(await approvalService.listForUser(currentUserId));
   }
   useEffect(() => { reload(); /* eslint-disable-next-line */ }, [currentUserId]);
 
+  // Keep the list live — new requests/resolutions show up without a refresh.
+  useEffect(() => {
+    if (!currentUserId) return;
+    const sb = createClient();
+    const channel = sb
+      .channel(`my-approvals:${currentUserId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "task_approvals" }, () => reload())
+      .subscribe();
+    return () => { sb.removeChannel(channel); };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUserId]);
+
   async function resolve(item: MockTaskApproval, status: ApprovalStatus) {
-    await approvalService.resolve(item.id, status, comment[item.id] || null);
-    const resolveLabel = status === "approved" ? "aprovada" : status === "rejected" ? "rejeitada" : "marcada para ajuste";
-    notify("approval_resolved", `Tarefa "${item.task_title}" foi ${resolveLabel}.`, item.task_id);
-    setComment((c) => ({ ...c, [item.id]: "" }));
+    const c = comment[item.id] || null;
+    await approvalService.resolve(item.id, status, c);
+    await activityService.log({
+      taskId: item.task_id, userId: currentUserId, userName: myName,
+      action: RESOLVE_ACTION[status], field: "aprovacao", toValue: c,
+    });
+    if (item.requested_by) await notificationService.create({
+      userId: item.requested_by, type: "approval_resolved", taskId: item.task_id, fromUserId: currentUserId,
+      content: `Sua solicitação em "${item.task_title}" foi ${RESOLVE_LABEL[status]} por ${myName ?? "um aprovador"}${c ? ` — "${c}"` : ""}`,
+    });
+    setComment((prev) => ({ ...prev, [item.id]: "" }));
     await reload();
   }
 
-  const pending = items.filter((i) => i.status === "pending");
+  async function cancel(item: MockTaskApproval) {
+    if (!confirm("Cancelar esta solicitação de aprovação?")) return;
+    await approvalService.revert(item.id);
+    await activityService.log({
+      taskId: item.task_id, userId: currentUserId, userName: myName,
+      action: "Cancelou a solicitação de aprovação",
+    });
+    if (item.approver_id) await notificationService.create({
+      userId: item.approver_id, type: "approval_resolved", taskId: item.task_id, fromUserId: currentUserId,
+      content: `${myName ?? "Alguém"} cancelou a solicitação de aprovação de "${item.task_title}"`,
+    });
+    await reload();
+  }
+
+  const toApprove = items.filter((i) => i.status === "pending" && i.approver_id === currentUserId);
+  const requestedByMe = items.filter((i) => i.status === "pending" && i.requested_by === currentUserId && i.approver_id !== currentUserId);
   const history = items.filter((i) => i.status !== "pending");
 
   if (items.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-center">
         <ShieldCheck size={32} className="text-neutral-200 mb-3" />
-        <p className="text-sm text-neutral-400">Nenhuma aprovação pendente</p>
-        <p className="text-xs text-neutral-300 mt-1">Tarefas aguardando sua aprovação aparecerão aqui</p>
+        <p className="text-sm text-neutral-400">Nenhuma aprovação por aqui</p>
+        <p className="text-xs text-neutral-300 mt-1">Aprovações que você precisa dar ou que você solicitou aparecerão aqui</p>
       </div>
     );
   }
 
   return (
     <div className="max-w-2xl space-y-6">
-      {pending.length > 0 && (
+      {toApprove.length > 0 && (
         <div>
-          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400 mb-3">Pendentes · {pending.length}</p>
+          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400 mb-3">Aguardando você aprovar · {toApprove.length}</p>
           <div className="space-y-2">
-            {pending.map((item) => (
+            {toApprove.map((item) => (
               <div key={item.id} className="rounded-xl border border-amber-200 bg-amber-50/60 p-3">
                 <div className="flex items-center gap-2">
                   <Clock size={13} className="text-amber-500 shrink-0" />
@@ -391,6 +453,28 @@ export function MyApprovals({ onOpenTask }: { onOpenTask: (id: string) => void }
                   </button>
                   <button onClick={() => resolve(item, "rejected")} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-destructive text-white hover:opacity-90">
                     <XCircle size={12} /> Rejeitar
+                  </button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {requestedByMe.length > 0 && (
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-neutral-400 mb-3">Que você solicitou · {requestedByMe.length}</p>
+          <div className="space-y-2">
+            {requestedByMe.map((item) => (
+              <div key={item.id} className="rounded-xl border border-neutral-200 bg-white p-3">
+                <div className="flex items-center gap-2">
+                  <Clock size={13} className="text-amber-400 shrink-0" />
+                  <button onClick={() => onOpenTask(item.task_id)} className="text-sm font-medium text-brand-navy hover:text-brand-teal truncate flex-1 text-left">
+                    {item.task_title}
+                  </button>
+                  <span className="text-[10px] text-neutral-400">aguardando {nameOf(item.approver_id)}</span>
+                  <button onClick={() => cancel(item)} className="flex items-center gap-1 text-[11px] text-neutral-400 hover:text-destructive transition-colors shrink-0" title="Cancelar solicitação">
+                    <RotateCcw size={11} /> Cancelar
                   </button>
                 </div>
               </div>

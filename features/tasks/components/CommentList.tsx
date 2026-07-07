@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from "react";
 import { taskService } from "../services/taskService";
 import { useAuthStore } from "@/features/auth/store/authStore";
 import { useOrgMembers } from "@/lib/useOrgMembers";
+import { notificationService } from "@/features/notifications/services/notificationService";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -12,6 +13,7 @@ import { Loader2, Trash2, Send } from "lucide-react";
 
 interface Props {
   taskId: string;
+  taskTitle?: string;
 }
 
 interface Comment {
@@ -22,7 +24,31 @@ interface Comment {
   profiles?: { full_name: string | null; avatar_url: string | null } | null;
 }
 
-export function CommentList({ taskId }: Props) {
+/** Render comment text with @mentions of known members highlighted. */
+function renderWithMentions(content: string, names: string[]) {
+  if (names.length === 0) return content;
+  // Longest names first so "Ana Paula" wins over "Ana".
+  const sorted = [...names].sort((a, b) => b.length - a.length);
+  const escaped = sorted.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
+  const re = new RegExp(`@(${escaped.join("|")})`, "g");
+  const out: React.ReactNode[] = [];
+  let last = 0;
+  let m: RegExpExecArray | null;
+  let i = 0;
+  while ((m = re.exec(content)) !== null) {
+    if (m.index > last) out.push(content.slice(last, m.index));
+    out.push(
+      <span key={`m${i++}`} className="text-brand-teal font-medium">
+        {m[0]}
+      </span>
+    );
+    last = m.index + m[0].length;
+  }
+  if (last < content.length) out.push(content.slice(last));
+  return out;
+}
+
+export function CommentList({ taskId, taskTitle }: Props) {
   const [comments, setComments] = useState<Comment[]>([]);
   const [newComment, setNewComment] = useState("");
   const [loading, setLoading] = useState(false);
@@ -30,6 +56,13 @@ export function CommentList({ taskId }: Props) {
   const { user } = useAuthStore();
   const members = useOrgMembers();
   const bottomRef = useRef<HTMLDivElement>(null);
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
+
+  // @mention autocomplete
+  const [mentionQuery, setMentionQuery] = useState<string | null>(null);
+
+  const myName = members.find((m) => m.id === user?.id)?.full_name ?? "Alguém";
+  const memberNames = members.map((m) => m.full_name);
 
   const authorOf = (userId: string) => {
     const m = members.find((x) => x.id === userId);
@@ -44,28 +77,80 @@ export function CommentList({ taskId }: Props) {
     });
   }, [taskId]);
 
+  // Detect an "@query" token immediately before the caret to drive the picker.
+  function handleChange(e: React.ChangeEvent<HTMLTextAreaElement>) {
+    const value = e.target.value;
+    setNewComment(value);
+    const caret = e.target.selectionStart ?? value.length;
+    const before = value.slice(0, caret);
+    const match = before.match(/(?:^|\s)@(\S*)$/);
+    setMentionQuery(match ? match[1].toLowerCase() : null);
+  }
+
+  function insertMention(fullName: string) {
+    const el = textareaRef.current;
+    const caret = el?.selectionStart ?? newComment.length;
+    const before = newComment.slice(0, caret);
+    const after = newComment.slice(caret);
+    const replaced = before.replace(/@(\S*)$/, `@${fullName} `);
+    const next = replaced + after;
+    setNewComment(next);
+    setMentionQuery(null);
+    // Restore focus + caret after the inserted mention
+    requestAnimationFrame(() => {
+      el?.focus();
+      const pos = replaced.length;
+      el?.setSelectionRange(pos, pos);
+    });
+  }
+
+  const mentionMatches =
+    mentionQuery === null
+      ? []
+      : members
+          .filter((m) => m.id !== user?.id && m.full_name.toLowerCase().includes(mentionQuery))
+          .slice(0, 6);
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!newComment.trim() || !user) return;
     setSubmitting(true);
+    const content = newComment.trim();
 
     // Optimistic insert
     const optimistic: Comment = {
       id: `temp-${Date.now()}`,
-      content: newComment.trim(),
+      content,
       created_at: new Date().toISOString(),
       user_id: user.id,
       profiles: { full_name: null, avatar_url: null },
     };
     setComments((prev) => [...prev, optimistic]);
     setNewComment("");
+    setMentionQuery(null);
 
     try {
-      const saved = await taskService.addComment(taskId, user.id, optimistic.content);
+      const saved = await taskService.addComment(taskId, user.id, content);
       setComments((prev) =>
         prev.map((c) => (c.id === optimistic.id ? (saved as Comment) : c))
       );
       bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+
+      // Notify every mentioned member (skip self), once each.
+      const mentioned = members.filter(
+        (m) => m.id !== user.id && content.includes(`@${m.full_name}`)
+      );
+      await Promise.all(
+        mentioned.map((m) =>
+          notificationService.create({
+            userId: m.id,
+            type: "mention",
+            taskId,
+            fromUserId: user.id,
+            content: `${myName} mencionou você em ${taskTitle ? `"${taskTitle}"` : "um comentário"}: "${content.slice(0, 80)}"`,
+          })
+        )
+      );
     } catch {
       setComments((prev) => prev.filter((c) => c.id !== optimistic.id));
     } finally {
@@ -76,7 +161,6 @@ export function CommentList({ taskId }: Props) {
   async function handleDelete(commentId: string) {
     setComments((prev) => prev.filter((c) => c.id !== commentId)); // optimistic
     await taskService.deleteComment(commentId).catch(() => {
-      // Reload on error
       taskService.getComments(taskId).then((data) => setComments(data as Comment[]));
     });
   }
@@ -113,7 +197,7 @@ export function CommentList({ taskId }: Props) {
                   </span>
                 </div>
                 <p className="text-xs text-neutral-700 leading-relaxed whitespace-pre-wrap">
-                  {comment.content}
+                  {renderWithMentions(comment.content, memberNames)}
                 </p>
               </div>
               {user?.id === comment.user_id && (
@@ -132,14 +216,37 @@ export function CommentList({ taskId }: Props) {
       )}
 
       {/* New comment form */}
-      <form onSubmit={handleSubmit} className="flex gap-2 items-end">
+      <form onSubmit={handleSubmit} className="flex gap-2 items-end relative">
+        {/* @mention picker */}
+        {mentionMatches.length > 0 && (
+          <div className="absolute bottom-full left-0 mb-1 w-64 bg-white rounded-xl border border-neutral-200 shadow-xl z-20 py-1 max-h-56 overflow-y-auto">
+            {mentionMatches.map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onMouseDown={(e) => { e.preventDefault(); insertMention(m.full_name); }}
+                className="w-full flex items-center gap-2 px-3 py-1.5 text-xs text-left hover:bg-neutral-50 transition-colors"
+              >
+                <Avatar className="w-5 h-5 shrink-0">
+                  <AvatarImage src={m.avatar_url ?? undefined} />
+                  <AvatarFallback className="text-[8px] bg-brand-navy/10 text-brand-navy">
+                    {getInitials(m.full_name)}
+                  </AvatarFallback>
+                </Avatar>
+                <span className="truncate">{m.full_name}</span>
+              </button>
+            ))}
+          </div>
+        )}
         <Textarea
+          ref={textareaRef}
           value={newComment}
-          onChange={(e) => setNewComment(e.target.value)}
+          onChange={handleChange}
           onKeyDown={(e) => {
+            if (e.key === "Escape" && mentionQuery !== null) { setMentionQuery(null); return; }
             if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) handleSubmit(e);
           }}
-          placeholder="Escrever comentário... (Ctrl+Enter para enviar)"
+          placeholder="Escrever comentário... (@ para mencionar, Ctrl+Enter para enviar)"
           rows={2}
           className="flex-1 resize-none text-xs focus:border-brand-teal focus:ring-1 focus:ring-brand-teal/20"
         />
