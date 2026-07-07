@@ -53,6 +53,7 @@ export type TaskWithRelations = Task & {
   checklist_items?: ChecklistItem[];
   subtasks?: TaskWithRelations[];
   _commentCount?: number;
+  _attachmentCount?: number;
   board_project_id?: string | null;
 };
 

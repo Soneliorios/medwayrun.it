@@ -52,7 +52,8 @@ export async function loadBoardData(pid: string) {
       *,
       assignee:profiles!tasks_assignee_id_fkey(id, full_name, avatar_url),
       labels:task_labels(labels(*)),
-      _commentCount:comments(count)
+      _commentCount:comments(count),
+      _attachmentCount:task_attachments(count)
     `)
     .eq("project_id", pid)
     .order("position", { ascending: true });
@@ -89,6 +90,7 @@ export async function loadBoardData(pid: string) {
       assignee: t.assignee ?? null,
       labels: (t.labels as any[])?.map((tl: any) => tl.labels).filter(Boolean) ?? [],
       _commentCount: (t._commentCount?.[0]?.count as number) ?? 0,
+      _attachmentCount: (t._attachmentCount?.[0]?.count as number) ?? 0,
       sequence: seqByTask.get(t.id) ?? [],
     } as TaskWithRelations);
     tasksByColumn.set(t.column_id, tasks);

@@ -59,6 +59,7 @@ import { approvalService } from "../services/approvalService";
 import { sequenceService, type SeqRow } from "../services/sequenceService";
 import { useBoardAccess } from "@/lib/boardAccess";
 import { areasService } from "@/lib/areasService";
+import { attachmentService } from "@/lib/attachmentService";
 import { tagsService, type Label } from "../services/tagsService";
 import { useBoardStore } from "@/features/board/store/boardStore";
 import { useAuthStore } from "@/features/auth/store/authStore";
@@ -99,26 +100,16 @@ interface MockAttachment {
   size: number;
   addedAt: string;
   mimeType?: string;
-  dataUrl?: string; // base64 data URL for preview/download (files ≤ 5 MB)
+  dataUrl?: string; // public Storage URL (inline preview)
+  downloadUrl?: string; // forces download with original filename
 }
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
-
-const MAX_PREVIEW_BYTES = 5 * 1024 * 1024; // 5 MB cap for localStorage
 
 function formatFileSize(bytes: number): string {
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
-}
-
-function readFileAsDataUrl(file: File): Promise<string> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
 }
 
 function getFileCategory(mimeType?: string): "image" | "pdf" | "video" | "other" {
@@ -142,23 +133,6 @@ function getFileExtColor(name: string): string {
   return map[ext] ?? "#64748B";
 }
 
-function getAttachmentsKey(taskId: string) {
-  return `mwr_attachments_${taskId}`;
-}
-
-function loadAttachments(taskId: string): MockAttachment[] {
-  if (typeof window === "undefined") return [];
-  try {
-    return JSON.parse(localStorage.getItem(getAttachmentsKey(taskId)) ?? "[]");
-  } catch {
-    return [];
-  }
-}
-
-function saveAttachments(taskId: string, attachments: MockAttachment[]) {
-  if (typeof window === "undefined") return;
-  localStorage.setItem(getAttachmentsKey(taskId), JSON.stringify(attachments));
-}
 
 // ── Component ─────────────────────────────────────────────────────────────────
 
@@ -181,16 +155,30 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   const [attachments, setAttachments] = useState<MockAttachment[]>([]);
   const [previewAttachment, setPreviewAttachment] = useState<MockAttachment | null>(null);
   const [isDragOver, setIsDragOver] = useState(false);
-  // Shared attachments (Supabase) — visible to anyone with task access (e.g. form uploads)
-  const [dbAttachments, setDbAttachments] = useState<{ id: string; name: string; url: string; mime: string | null; size: number | null }[]>([]);
+  // Attachments live in Supabase Storage + the task_attachments table. On first
+  // open we migrate any legacy localStorage attachments (data URLs) into Storage.
   useEffect(() => {
-    const sb = createRawClient();
-    (sb as any)
-      .from("task_attachments")
-      .select("id, name, url, mime, size")
-      .eq("task_id", taskId)
-      .order("created_at")
-      .then(({ data }: { data: any[] | null }) => setDbAttachments(data ?? []));
+    let cancelled = false;
+    (async () => {
+      const key = `mwr_attachments_${taskId}`;
+      let local: MockAttachment[] = [];
+      try { const raw = localStorage.getItem(key); local = raw ? JSON.parse(raw) : []; } catch { /* ignore */ }
+      if (local.length > 0) {
+        // Claim the key synchronously (before any await) so a concurrent run
+        // — e.g. React StrictMode's double-invoke — migrates nothing twice.
+        localStorage.removeItem(key);
+        const failed: MockAttachment[] = [];
+        for (const a of local) {
+          if (!a.dataUrl) continue;
+          const r = await attachmentService.uploadDataUrl(taskId, a.name, a.mimeType, a.dataUrl);
+          if (!r) failed.push(a); // keep failures to retry — never lose the only copy
+        }
+        if (failed.length) { try { localStorage.setItem(key, JSON.stringify(failed)); } catch { /* ignore */ } }
+      }
+      const list = await attachmentService.list(taskId);
+      if (!cancelled) setAttachments(list);
+    })();
+    return () => { cancelled = true; };
   }, [taskId]);
   const [assigneePickerOpen, setAssigneePickerOpen] = useState(false);
   const [headerAssigneeOpen, setHeaderAssigneeOpen] = useState(false);
@@ -452,11 +440,6 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId]);
 
-  // Load attachments
-  useEffect(() => {
-    setAttachments(loadAttachments(taskId));
-  }, [taskId]);
-
   // Close assignee picker on outside click
   useEffect(() => {
     if (!assigneePickerOpen) return;
@@ -611,31 +594,23 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
 
   async function handleFilesAdded(files: FileList | null) {
     if (!files || files.length === 0) return;
-    const newAttachments: MockAttachment[] = await Promise.all(
-      Array.from(files).map(async (f) => {
-        let dataUrl: string | undefined;
-        if (f.size <= MAX_PREVIEW_BYTES) {
-          try { dataUrl = await readFileAsDataUrl(f); } catch {}
-        }
-        return {
-          id: crypto.randomUUID(),
-          name: f.name,
-          size: f.size,
-          mimeType: f.type || undefined,
-          addedAt: new Date().toISOString(),
-          dataUrl,
-        };
-      })
+    const uploaded = await Promise.all(
+      Array.from(files).map((f) => attachmentService.upload(taskId, f))
     );
-    const updated = [...attachments, ...newAttachments];
-    setAttachments(updated);
-    saveAttachments(taskId, updated);
+    const ok = uploaded.filter(Boolean) as MockAttachment[];
+    if (ok.length) {
+      setAttachments((prev) => [...prev, ...ok]);
+      // Keep the board card/list badge in sync (outside the state updater).
+      store.updateTask(taskId, { _attachmentCount: attachments.length + ok.length } as any);
+    }
+    const failed = uploaded.length - ok.length;
+    if (failed > 0) alert(`${failed} anexo(s) não puderam ser enviados. Tente novamente.`);
   }
 
-  function handleDeleteAttachment(id: string) {
-    const updated = attachments.filter((a) => a.id !== id);
-    setAttachments(updated);
-    saveAttachments(taskId, updated);
+  async function handleDeleteAttachment(id: string) {
+    setAttachments((prev) => prev.filter((a) => a.id !== id)); // optimistic
+    store.updateTask(taskId, { _attachmentCount: Math.max(0, attachments.length - 1) } as any);
+    await attachmentService.remove(id);
   }
 
   async function handleAddTag() {
@@ -1264,38 +1239,6 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                       />
                     </div>
 
-                    {/* Anexos compartilhados (Supabase) — ex: enviados pelo formulário */}
-                    {dbAttachments.length > 0 && (
-                      <div className="space-y-2">
-                        <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Arquivos compartilhados</p>
-                        {dbAttachments.map((a) => {
-                          const isImg = (a.mime ?? "").startsWith("image/");
-                          return (
-                            <a
-                              key={a.id}
-                              href={a.url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="flex items-center gap-3 p-2.5 rounded-lg border border-neutral-100 bg-white hover:border-brand-teal/40 hover:shadow-sm transition-all"
-                            >
-                              {isImg ? (
-                                <img src={a.url} alt={a.name} className="w-10 h-10 object-cover rounded-md border border-neutral-100 shrink-0" />
-                              ) : (
-                                <div className="w-10 h-10 rounded-md bg-brand-navy/10 flex items-center justify-center shrink-0">
-                                  <Paperclip size={16} className="text-brand-navy/50" />
-                                </div>
-                              )}
-                              <div className="flex-1 min-w-0">
-                                <p className="text-sm text-neutral-700 truncate">{a.name}</p>
-                                <p className="text-[10px] text-neutral-400">{a.mime ?? "arquivo"}</p>
-                              </div>
-                              <span className="text-[10px] text-brand-teal shrink-0">Abrir →</span>
-                            </a>
-                          );
-                        })}
-                      </div>
-                    )}
-
                     {/* File list */}
                     {attachments.length > 0 ? (
                       <div className="space-y-2">
@@ -1329,9 +1272,6 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                                 <p className="text-xs font-medium text-brand-navy truncate">{file.name}</p>
                                 <p className="text-[10px] text-neutral-400">
                                   {formatFileSize(file.size)} · {formatDate(file.addedAt)}
-                                  {!file.dataUrl && file.size > MAX_PREVIEW_BYTES && (
-                                    <span className="ml-1 text-amber-500">· arquivo grande, sem preview</span>
-                                  )}
                                 </p>
                               </div>
 
@@ -1345,7 +1285,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                                 </span>
                                 {file.dataUrl && (
                                   <a
-                                    href={file.dataUrl}
+                                    href={file.downloadUrl ?? file.dataUrl}
                                     download={file.name}
                                     onClick={(e) => e.stopPropagation()}
                                     title="Download"
@@ -2296,7 +2236,7 @@ function AttachmentPreviewModal({ file, onClose }: { file: MockAttachment; onClo
           <span className="text-xs text-neutral-400 shrink-0">{formatFileSize(file.size)}</span>
           {file.dataUrl && (
             <a
-              href={file.dataUrl}
+              href={file.downloadUrl ?? file.dataUrl}
               download={file.name}
               onClick={(e) => e.stopPropagation()}
               className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-brand-navy text-white text-xs font-semibold hover:bg-brand-navy/90 transition-colors shrink-0"
@@ -2348,7 +2288,7 @@ function AttachmentPreviewModal({ file, onClose }: { file: MockAttachment; onClo
                 <p className="text-xs text-neutral-400 mt-0.5">{formatFileSize(file.size)}</p>
               </div>
               <a
-                href={file.dataUrl}
+                href={file.downloadUrl ?? file.dataUrl}
                 download={file.name}
                 className="flex items-center gap-2 px-5 py-2.5 rounded-xl bg-brand-navy text-white text-sm font-semibold hover:bg-brand-navy/90 transition-colors"
               >
@@ -2368,9 +2308,7 @@ function AttachmentPreviewModal({ file, onClose }: { file: MockAttachment; onClo
               <p className="text-sm font-medium text-brand-navy">{file.name}</p>
               <p className="text-xs text-neutral-400">{formatFileSize(file.size)}</p>
               <p className="text-xs text-neutral-300 mt-1">
-                {file.size > MAX_PREVIEW_BYTES
-                  ? "Arquivo maior que 5 MB — preview não disponível no modo demo."
-                  : "Preview não disponível para este arquivo."}
+                Preview não disponível para este arquivo.
               </p>
             </div>
           )}

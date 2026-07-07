@@ -104,10 +104,7 @@ function TaskCardInner({ task, onOpen }: Props) {
   // Counters
   const checklist = task.checklist_items ?? [];
   const checklistDone = checklist.filter((i) => i.is_done).length;
-  const attachmentCount = (() => {
-    if (typeof window === "undefined") return 0;
-    try { return JSON.parse(localStorage.getItem(`mwr_attachments_${task.id}`) ?? "[]").length; } catch { return 0; }
-  })();
+  const attachmentCount = task._attachmentCount ?? 0;
   const shortId = task.id.slice(0, 4).toUpperCase();
 
   // Assignees
@@ -391,6 +388,7 @@ export const TaskCard = memo(TaskCardInner, (prev, next) => {
     prev.task.column_id === next.task.column_id &&
     prev.task.assignee_id === next.task.assignee_id &&
     prev.task._commentCount === next.task._commentCount &&
+    prev.task._attachmentCount === next.task._attachmentCount &&
     prev.task.labels?.length === next.task.labels?.length &&
     (prev.task as any).is_urgent === (next.task as any).is_urgent &&
     (prev.task as any).sla_minutes === (next.task as any).sla_minutes &&

@@ -22,6 +22,7 @@ import {
 import { cn } from "@/lib/utils";
 import { taskService } from "../services/taskService";
 import { tagsService } from "../services/tagsService";
+import { attachmentService } from "@/lib/attachmentService";
 import { useProjectStore } from "@/features/projects/store/projectStore";
 import { useBoardStore } from "@/features/board/store/boardStore";
 import { useAuthStore } from "@/features/auth/store/authStore";
@@ -340,26 +341,15 @@ export function GlobalCreateTaskModal() {
       try { await taskService.addChecklistItem(taskId, checklistItems[i], i * 100); } catch (e) { console.error("[createTask] checklist item error:", e); }
     }
 
-    // Attachments → localStorage with data URLs so TaskDetail can preview/download
+    // Attachments → Supabase Storage + task_attachments (via attachmentService)
     if (attachmentFiles.length) {
-      const MAX = 5 * 1024 * 1024;
-      const atts = await Promise.all(
-        attachmentFiles.map(async (f) => {
-          let dataUrl: string | undefined;
-          if (f.size <= MAX) {
-            try {
-              dataUrl = await new Promise<string>((res, rej) => {
-                const r = new FileReader();
-                r.onload = () => res(r.result as string);
-                r.onerror = rej;
-                r.readAsDataURL(f);
-              });
-            } catch {}
-          }
-          return { id: Math.random().toString(36).slice(2), name: f.name, size: f.size, mimeType: f.type || undefined, addedAt: new Date().toISOString(), dataUrl };
-        })
+      const results = await Promise.all(
+        attachmentFiles.map((f) => attachmentService.upload(taskId, f).catch(() => null))
       );
-      try { localStorage.setItem(`mwr_attachments_${taskId}`, JSON.stringify(atts)); } catch {}
+      const failed = attachmentFiles.filter((_, i) => !results[i]);
+      if (failed.length) {
+        try { alert(`${failed.length} anexo(s) não puderam ser enviados: ${failed.map((f) => f.name).join(", ")}`); } catch { /* ignore */ }
+      }
     }
 
     return taskId;

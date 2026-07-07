@@ -114,13 +114,8 @@ function saveConfig(boardId: string, cfg: ListConfig) {
   localStorage.setItem(configKey(boardId), JSON.stringify(cfg));
 }
 
-function attachmentsCount(taskId: string): number {
-  if (typeof window === "undefined") return 0;
-  try {
-    return JSON.parse(localStorage.getItem(`mwr_attachments_${taskId}`) ?? "[]").length;
-  } catch {
-    return 0;
-  }
+function attachmentsCount(task: any): number {
+  return (task?._attachmentCount as number) ?? 0;
 }
 
 type ListTask = TaskWithRelations & { _columnName: string; _columnColor: string };
@@ -520,7 +515,7 @@ function csvCell(key: ColKey, t: ListTask): string {
     case "tracked": return String(t.tracked_hours ?? 0);
     case "tags": return (t.labels ?? []).map((l: any) => l.name).join("; ");
     case "comments": return String(t._commentCount ?? 0);
-    case "attachments": return String(attachmentsCount(t.id));
+    case "attachments": return String(attachmentsCount(t));
     case "project": return t._columnName ? (t.project_id ?? "") : "";
     case "client": return (t as any).client_id ?? "";
     case "area_req": return (t as any).requesting_area ?? t.requesting_area?.name ?? "";
@@ -653,7 +648,7 @@ function CellContent({ colKey, task }: { colKey: ColKey; task: ListTask }) {
         <span className="inline-flex items-center gap-1 text-xs text-neutral-500"><MessageSquare size={11} /> {task._commentCount}</span>
       ) : <span className="text-xs text-neutral-300">—</span>;
     case "attachments": {
-      const n = attachmentsCount(task.id);
+      const n = attachmentsCount(task);
       return n > 0 ? (
         <span className="inline-flex items-center gap-1 text-xs text-neutral-500"><Paperclip size={11} /> {n}</span>
       ) : <span className="text-xs text-neutral-300">—</span>;
