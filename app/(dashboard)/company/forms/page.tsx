@@ -52,49 +52,7 @@ export default function FormsPage() {
         return (data as any[]) ?? [];
       }
 
-      let rows = await fetchRows();
-
-      // One-time migration: forms created before the Supabase migration still
-      // live only in this browser's localStorage (e.g. "form-1"). Push any that
-      // aren't in Supabase yet into the table so they show up here and work
-      // cross-device. Runs once per browser.
-      if (typeof window !== "undefined" && !localStorage.getItem("mwr_forms_migrated_v1")) {
-        try {
-          const legacy: any[] = JSON.parse(localStorage.getItem("mwr_forms") ?? "[]");
-          const existing = new Set(rows.map((r) => r.id));
-          const isUuid = (v: unknown) =>
-            typeof v === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(v);
-          let migrated = 0;
-          for (const f of legacy) {
-            if (!f?.id || existing.has(f.id)) continue;
-            let fields: any[] = [];
-            try { fields = JSON.parse(localStorage.getItem(`mwr_form_fields_${f.id}`) ?? "[]"); } catch {}
-            const boardId = isUuid(f.board_id) ? f.board_id : isUuid(f.project_id) ? f.project_id : null;
-            const { error } = await (supabase as any).from("forms").upsert({
-              id: f.id,
-              org_id: ORG_ID,
-              name: f.name ?? "Formulário",
-              description: f.description ?? null,
-              is_active: f.is_active ?? true,
-              internal_access: f.internal_access ?? true,
-              external_access: f.external_access ?? false,
-              target_stage: f.target_stage ?? "A fazer",
-              board_id: boardId,
-              assignee_id: isUuid(f.assignee_id) ? f.assignee_id : null,
-              assignee_name: f.assignee_name ?? null,
-              portals: f.portals ?? 0,
-              responses: f.responses ?? 0,
-              fields,
-            }, { onConflict: "id" });
-            if (error) console.error("[forms] migrate error:", f.id, error);
-            else migrated++;
-          }
-          localStorage.setItem("mwr_forms_migrated_v1", "1");
-          if (migrated > 0) rows = await fetchRows();
-        } catch (e) {
-          console.error("[forms] legacy migration failed:", e);
-        }
-      }
+      const rows = await fetchRows();
 
       setForms(
         rows.map((f) => ({

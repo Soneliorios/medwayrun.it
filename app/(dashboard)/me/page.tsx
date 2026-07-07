@@ -15,6 +15,7 @@ import { PRIORITY_COLORS, PRIORITY_LABELS, formatElapsed } from "@/types";
 import type { TaskWithRelations } from "@/types";
 import { createClient, createRawClient } from "@/lib/supabase/client";
 import { taskService } from "@/features/tasks/services/taskService";
+import { userSettingsService } from "@/lib/userSettingsService";
 import { useProjectStore } from "@/features/projects/store/projectStore";
 import { TaskDetail } from "@/features/tasks/components/TaskDetail";
 import { MyApprovals } from "@/features/tasks/components/ApprovalControls";
@@ -696,8 +697,6 @@ function MiniCalendar({ tasks }: { tasks: TaskWithRelations[] }) {
 }
 
 
-const META_KEY = "mwr_timesheet_goal_mock-user";
-
 function Timesheet() {
   const { user } = useAuthStore();
   const userId = user?.id ?? "mock-user";
@@ -721,14 +720,16 @@ function Timesheet() {
   }, [userId]);
 
   useEffect(() => {
-    if (userId) reload();
-    const g = parseFloat(localStorage.getItem(META_KEY) ?? "8");
-    if (!isNaN(g)) setGoal(g);
-  }, [reload, userId]);
+    if (!user?.id) return;
+    reload();
+    userSettingsService.getTimesheetGoal(user.id).then((g) => {
+      if (g != null && !isNaN(g)) setGoal(g);
+    });
+  }, [reload, user?.id]);
 
   function updateGoal(v: number) {
     setGoal(v);
-    localStorage.setItem(META_KEY, String(v));
+    if (user?.id) userSettingsService.setTimesheetGoal(user.id, v);
   }
 
   const today = new Date();

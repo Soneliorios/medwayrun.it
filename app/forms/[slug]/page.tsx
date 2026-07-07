@@ -110,31 +110,8 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
         return;
       }
 
-      // Fallback: try localStorage (forms created before migration)
-      try {
-        const storedFields = JSON.parse(localStorage.getItem(`mwr_form_fields_${slug}`) ?? '[]');
-        const forms: any[] = JSON.parse(localStorage.getItem('mwr_forms') ?? '[]');
-        const form = forms.find((x: any) => x.id === slug);
-        if (form) {
-          setFields(storedFields.length > 0 ? storedFields : [
-            { id: 'f_title', type: 'text', label: 'Título da solicitação', required: true, width: 'full', maps_to: 'title' },
-            { id: 'f_desc', type: 'textarea', label: 'Descrição / briefing', required: false, width: 'full', maps_to: 'description' },
-          ]);
-          setMeta({
-            name: form.name,
-            description: form.description ?? '',
-            stage: form.target_stage ?? 'A fazer',
-            project_id: form.project_id,
-            board_id: form.board_id,
-            assignee_id: form.assignee_id,
-            assignee_name: form.assignee_name,
-          });
-        } else {
-          setNotFound(true);
-        }
-      } catch {
-        setNotFound(true);
-      }
+      // Not in the database → form doesn't exist (forms are DB-backed now).
+      setNotFound(true);
     }
 
     loadForm();
