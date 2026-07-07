@@ -210,6 +210,8 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   const [deliveryNote, setDeliveryNote] = useState<string>("");
   const [editingTrackedHours, setEditingTrackedHours] = useState(false);
   const [trackedParts, setTrackedParts] = useState({ h: 0, m: 0, s: 0 });
+  const [editingEstimatedHours, setEditingEstimatedHours] = useState(false);
+  const [estimatedParts, setEstimatedParts] = useState({ h: 0, m: 0, s: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const assigneePickerRef = useRef<HTMLDivElement>(null);
   const headerAssigneeRef = useRef<HTMLDivElement>(null);
@@ -1638,38 +1640,55 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                 {/* Tempo estimado — H : M : S */}
                 <MetaField label="Tempo estimado" icon={<Clock size={12} />}>
                   <div className="space-y-1.5">
-                    {(() => {
-                      const total = Math.round(estimatedHours * 3600);
-                      const eh = Math.floor(total / 3600);
-                      const em = Math.floor((total % 3600) / 60);
-                      const es = total % 60;
-                      const commit = (h: number, m: number, s: number) => {
-                        const hours = h + m / 60 + s / 3600;
+                    {editingEstimatedHours ? (() => {
+                      const commit = () => {
+                        const hours = estimatedParts.h + estimatedParts.m / 60 + estimatedParts.s / 3600;
                         handleFieldUpdate("estimated_hours", hours > 0 ? String(hours) : null);
+                        setEditingEstimatedHours(false);
                       };
-                      const cell = "w-full text-xs text-center border border-neutral-200 rounded-md px-1 py-1 bg-white outline-none focus:border-brand-teal";
+                      const cell = "w-full text-xs text-center border border-brand-teal rounded-md px-1 py-1 bg-white outline-none focus:ring-1 focus:ring-brand-teal/30";
                       return (
-                        <div className="flex items-center gap-1">
+                        <div
+                          className="flex items-center gap-1"
+                          onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) commit(); }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") { e.preventDefault(); commit(); }
+                            if (e.key === "Escape") setEditingEstimatedHours(false);
+                          }}
+                        >
                           <div className="flex-1">
-                            <input type="number" min={0} value={eh || ""} placeholder="0"
-                              onChange={(e) => commit(parseInt(e.target.value) || 0, em, es)} className={cell} />
+                            <input autoFocus type="number" min={0} value={estimatedParts.h || ""} placeholder="0"
+                              onChange={(e) => setEstimatedParts((p) => ({ ...p, h: parseInt(e.target.value) || 0 }))} className={cell} />
                             <p className="text-[9px] text-neutral-400 text-center mt-0.5">h</p>
                           </div>
                           <span className="text-neutral-300 pb-3">:</span>
                           <div className="flex-1">
-                            <input type="number" min={0} max={59} value={em || ""} placeholder="00"
-                              onChange={(e) => commit(eh, Math.min(59, parseInt(e.target.value) || 0), es)} className={cell} />
+                            <input type="number" min={0} max={59} value={estimatedParts.m || ""} placeholder="00"
+                              onChange={(e) => setEstimatedParts((p) => ({ ...p, m: Math.min(59, parseInt(e.target.value) || 0) }))} className={cell} />
                             <p className="text-[9px] text-neutral-400 text-center mt-0.5">min</p>
                           </div>
                           <span className="text-neutral-300 pb-3">:</span>
                           <div className="flex-1">
-                            <input type="number" min={0} max={59} value={es || ""} placeholder="00"
-                              onChange={(e) => commit(eh, em, Math.min(59, parseInt(e.target.value) || 0))} className={cell} />
+                            <input type="number" min={0} max={59} value={estimatedParts.s || ""} placeholder="00"
+                              onChange={(e) => setEstimatedParts((p) => ({ ...p, s: Math.min(59, parseInt(e.target.value) || 0) }))} className={cell} />
                             <p className="text-[9px] text-neutral-400 text-center mt-0.5">seg</p>
                           </div>
                         </div>
                       );
-                    })()}
+                    })() : (
+                      <button
+                        onClick={() => {
+                          const total = Math.round(estimatedHours * 3600);
+                          setEstimatedParts({ h: Math.floor(total / 3600), m: Math.floor((total % 3600) / 60), s: total % 60 });
+                          setEditingEstimatedHours(true);
+                        }}
+                        className="group flex items-center gap-1.5 text-xs font-medium text-brand-navy hover:text-brand-teal transition-colors"
+                        title="Clique para editar o tempo estimado"
+                      >
+                        {formatHms(estimatedHours)}
+                        <Pencil size={10} className="opacity-0 group-hover:opacity-60 transition-opacity shrink-0" />
+                      </button>
+                    )}
                     {estimatedHours > 0 && (
                       <>
                         <div className="h-1.5 rounded-full bg-neutral-200 overflow-hidden">
