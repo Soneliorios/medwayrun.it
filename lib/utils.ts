@@ -67,5 +67,15 @@ export function formatHours(hours: number | null | undefined): string {
   return `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}:${String(s).padStart(2, "0")}`;
 }
 
+/** Human-readable duration, e.g. "02h30m15s". */
+export function formatHms(hours: number | null | undefined): string {
+  if (!hours || hours < 0) return "00h00m00s";
+  const totalSeconds = Math.round(hours * 3600);
+  const h = Math.floor(totalSeconds / 3600);
+  const m = Math.floor((totalSeconds % 3600) / 60);
+  const s = totalSeconds % 60;
+  return `${String(h).padStart(2, "0")}h${String(m).padStart(2, "0")}m${String(s).padStart(2, "0")}s`;
+}
+
 export const ORG_ID =
   process.env.NEXT_PUBLIC_ORG_ID ?? "00000000-0000-0000-0000-000000000001";

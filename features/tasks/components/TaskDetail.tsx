@@ -51,7 +51,7 @@ import {
   Eye,
   Pencil,
 } from "lucide-react";
-import { cn, formatDate, formatDateFull, isOverdue, formatHours } from "@/lib/utils";
+import { cn, formatDate, formatDateFull, isOverdue, formatHours, formatHms } from "@/lib/utils";
 import { PRIORITY_LABELS, PRIORITY_COLORS, formatElapsed } from "@/types";
 import { taskService } from "../services/taskService";
 import { activityService, type TaskActivity } from "../services/activityService";
@@ -209,7 +209,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   const [deliveryLink, setDeliveryLink] = useState<string>("");
   const [deliveryNote, setDeliveryNote] = useState<string>("");
   const [editingTrackedHours, setEditingTrackedHours] = useState(false);
-  const [trackedHoursInput, setTrackedHoursInput] = useState("");
+  const [trackedParts, setTrackedParts] = useState({ h: 0, m: 0, s: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
   const assigneePickerRef = useRef<HTMLDivElement>(null);
   const headerAssigneeRef = useRef<HTMLDivElement>(null);
@@ -525,19 +525,6 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
     }
   }
 
-  function parseTimeInput(input: string): number | null {
-    const trimmed = input.trim().replace(",", ".");
-    const colonMatch = trimmed.match(/^(\d+):(\d{1,2})$/);
-    if (colonMatch) {
-      const h = parseInt(colonMatch[1], 10);
-      const m = parseInt(colonMatch[2], 10);
-      if (m < 60) return h + m / 60;
-    }
-    const num = parseFloat(trimmed);
-    if (!isNaN(num) && num >= 0) return num;
-    return null;
-  }
-
   async function handleTrackedHoursUpdate(hours: number) {
     if (!task) return;
     const rounded = Math.round(hours * 100) / 100;
@@ -549,11 +536,6 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
     });
   }
 
-  function commitTrackedHoursEdit() {
-    const parsed = parseTimeInput(trackedHoursInput);
-    if (parsed !== null) handleTrackedHoursUpdate(parsed);
-    setEditingTrackedHours(false);
-  }
 
   async function handleDeliver(opts?: { hours?: number; link?: string; note?: string }) {
     if (!task) return;
@@ -1710,39 +1692,56 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                 {/* Tempo registrado */}
                 <MetaField label="Tempo registrado" icon={<Clock size={12} />}>
                   <div className="space-y-1.5">
-                    {editingTrackedHours ? (
-                      <div className="flex items-center gap-1.5">
-                        <input
-                          autoFocus
-                          type="text"
-                          value={trackedHoursInput}
-                          onChange={(e) => setTrackedHoursInput(e.target.value)}
-                          onBlur={commitTrackedHoursEdit}
+                    {editingTrackedHours ? (() => {
+                      const commit = () => {
+                        handleTrackedHoursUpdate(trackedParts.h + trackedParts.m / 60 + trackedParts.s / 3600);
+                        setEditingTrackedHours(false);
+                      };
+                      const cell = "w-full text-xs text-center border border-brand-teal rounded-md px-1 py-1 bg-white outline-none focus:ring-1 focus:ring-brand-teal/30";
+                      return (
+                        <div
+                          className="flex items-center gap-1"
+                          onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) commit(); }}
                           onKeyDown={(e) => {
-                            if (e.key === "Enter") { e.preventDefault(); commitTrackedHoursEdit(); }
+                            if (e.key === "Enter") { e.preventDefault(); commit(); }
                             if (e.key === "Escape") setEditingTrackedHours(false);
                           }}
-                          placeholder="ex: 1:30 ou 1.5"
-                          className="text-xs border border-brand-teal rounded-md px-2 py-1 w-full bg-white outline-none focus:ring-1 focus:ring-brand-teal/30"
-                        />
-                      </div>
-                    ) : task.assignee_id === user?.id ? (
+                        >
+                          <div className="flex-1">
+                            <input autoFocus type="number" min={0} value={trackedParts.h || ""} placeholder="0"
+                              onChange={(e) => setTrackedParts((p) => ({ ...p, h: parseInt(e.target.value) || 0 }))} className={cell} />
+                            <p className="text-[9px] text-neutral-400 text-center mt-0.5">h</p>
+                          </div>
+                          <span className="text-neutral-300 pb-3">:</span>
+                          <div className="flex-1">
+                            <input type="number" min={0} max={59} value={trackedParts.m || ""} placeholder="00"
+                              onChange={(e) => setTrackedParts((p) => ({ ...p, m: Math.min(59, parseInt(e.target.value) || 0) }))} className={cell} />
+                            <p className="text-[9px] text-neutral-400 text-center mt-0.5">min</p>
+                          </div>
+                          <span className="text-neutral-300 pb-3">:</span>
+                          <div className="flex-1">
+                            <input type="number" min={0} max={59} value={trackedParts.s || ""} placeholder="00"
+                              onChange={(e) => setTrackedParts((p) => ({ ...p, s: Math.min(59, parseInt(e.target.value) || 0) }))} className={cell} />
+                            <p className="text-[9px] text-neutral-400 text-center mt-0.5">seg</p>
+                          </div>
+                        </div>
+                      );
+                    })() : task.assignee_id === user?.id ? (
                       <button
                         onClick={() => {
-                          const h = Math.floor(trackedHours);
-                          const m = Math.round((trackedHours - h) * 60);
-                          setTrackedHoursInput(m > 0 ? `${h}:${String(m).padStart(2, "0")}` : `${h}`);
+                          const total = Math.round(trackedHours * 3600);
+                          setTrackedParts({ h: Math.floor(total / 3600), m: Math.floor((total % 3600) / 60), s: total % 60 });
                           setEditingTrackedHours(true);
                         }}
                         className="group flex items-center gap-1.5 text-xs font-medium text-brand-navy hover:text-brand-teal transition-colors"
                         title="Clique para editar o tempo registrado"
                       >
-                        {formatHours(trackedHours)}
+                        {formatHms(trackedHours)}
                         <Pencil size={10} className="opacity-0 group-hover:opacity-60 transition-opacity shrink-0" />
                       </button>
                     ) : (
                       <span className="text-xs font-medium text-brand-navy" title="Somente o responsável atual pode registrar tempo">
-                        {formatHours(trackedHours)}
+                        {formatHms(trackedHours)}
                       </span>
                     )}
                     {(task as any).sla_minutes && (
