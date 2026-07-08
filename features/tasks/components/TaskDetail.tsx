@@ -492,7 +492,11 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
 
   async function handleFieldUpdate(field: string, value: string | null) {
     if (!task) return;
-    if (!boardAccess.canEdit) return; // view-only members can't change fields
+    // Creator, any responsible (assignee or in the queue) and admins can edit
+    // the card — plus anyone with board edit access.
+    const isCreator = (task as any).created_by === user?.id;
+    const isResp = task.assignee_id === user?.id || queue.some((qq) => qq.user_id === user?.id);
+    if (!(boardAccess.canEdit || !isUser || isCreator || isResp)) return;
     const snapshot = task;
     setTask((prev) => prev ? { ...prev, [field]: value } as TaskWithRelations : null);
     store.updateTask(taskId, { [field]: value } as any);
@@ -694,6 +698,10 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   // the current head) — deliver/reopen stay restricted to the active one.
   const isInQueue = !!user?.id && queue.some((q) => q.user_id === user.id);
   const canChangeStage = !isUser || !!isAssignee || isInQueue;
+  // Editing the card (title, responsible, dates, type…) — creator, any
+  // responsible, admins, or anyone with board edit access.
+  const isCreatorOfTask = !!user?.id && (task as any)?.created_by === user.id;
+  const canEditCard = boardAccess.canEdit || !isUser || !!isAssignee || isInQueue || isCreatorOfTask;
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -845,7 +853,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                     </AvatarFallback>
                   </Avatar>
                 ) : null}
-                {!isUser && queue.length === 0 && (
+                {canEditCard && queue.length === 0 && (
                   <button
                     onClick={() => setHeaderAssigneeOpen((v) => !v)}
                     title="Gerenciar responsável"
@@ -959,8 +967,9 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
             <div className="px-5 pt-4 pb-3 shrink-0">
               <textarea
                 value={task.title}
+                readOnly={!canEditCard}
                 onChange={(e) => setTask({ ...task, title: e.target.value })}
-                onBlur={(e) => handleFieldUpdate("title", e.target.value)}
+                onBlur={(e) => canEditCard && handleFieldUpdate("title", e.target.value)}
                 className="w-full text-xl font-bold text-brand-navy resize-none outline-none bg-transparent leading-snug mb-2"
                 rows={2}
               />
@@ -1396,21 +1405,21 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                         <div
                           className={cn(
                             "flex items-center gap-1 bg-white border border-neutral-200 rounded-full px-2 py-0.5",
-                            !isUser ? "cursor-pointer hover:border-destructive/40 group" : "cursor-default"
+                            canEditCard ? "cursor-pointer hover:border-destructive/40 group" : "cursor-default"
                           )}
-                          title={!isUser ? "Clique para remover" : undefined}
-                          onClick={() => !isUser && handleAssigneeChange(null)}
+                          title={canEditCard ? "Clique para remover" : undefined}
+                          onClick={() => canEditCard && handleAssigneeChange(null)}
                         >
                           <Avatar className="w-4 h-4">
                             <AvatarFallback className="text-[8px] bg-brand-teal/20 text-brand-teal">{initials}</AvatarFallback>
                           </Avatar>
-                          <span className={cn("text-[10px] text-neutral-600", !isUser && "group-hover:text-destructive")}>{name}</span>
+                          <span className={cn("text-[10px] text-neutral-600", canEditCard && "group-hover:text-destructive")}>{name}</span>
                         </div>
                       );
                     })() : (
                       <span className="text-[10px] text-neutral-400 italic">Sem responsável</span>
                     )}
-                    {!isUser && (
+                    {canEditCard && (
                       <button
                         onClick={() => setAssigneePickerOpen((v) => !v)}
                         className="w-5 h-5 rounded-full border border-dashed border-neutral-300 flex items-center justify-center text-neutral-400 hover:border-brand-teal hover:text-brand-teal transition-colors"
