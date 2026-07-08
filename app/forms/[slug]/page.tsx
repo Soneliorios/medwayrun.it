@@ -183,6 +183,9 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
             nativeExtras.is_urgent = val === 'Sim' || val === 'true' || val === '1';
           } else if (f.maps_to === 'estimated_hours' || f.maps_to === 'sla_minutes' || f.maps_to === 'priority_number') {
             nativeExtras[f.maps_to] = parseFloat(val) || null;
+          } else if (f.maps_to === 'board_project_id') {
+            // The real column is board_subproject_id (legacy forms use the old name).
+            nativeExtras.board_subproject_id = val;
           } else {
             nativeExtras[f.maps_to] = val;
           }

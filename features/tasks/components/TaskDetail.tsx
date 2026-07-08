@@ -312,11 +312,27 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   // "part" = advance the queue via the same delivery popup; "full" = deliver task
   const [deliveryMode, setDeliveryMode] = useState<"full" | "part">("full");
 
+  // If the timer is running for this task, stop it first so its elapsed time is
+  // flushed into tracked_hours (and it doesn't keep running / double-count after
+  // delivery). Keeps the task total consistent with the sum of the parts.
+  async function flushActiveTimer() {
+    const ts = useTimerStore.getState();
+    if (ts.activeTaskId !== taskId || !user?.id) return;
+    await ts.stopTimer(user.id);
+    const { data } = await (createRawClient() as any)
+      .from("tasks").select("tracked_hours").eq("id", taskId).maybeSingle();
+    if (data) {
+      setTask((t) => (t ? ({ ...t, tracked_hours: data.tracked_hours } as TaskWithRelations) : t));
+      store.updateTask(taskId, { tracked_hours: data.tracked_hours } as any);
+    }
+  }
+
   // Called from the delivery dialog when in "part" mode.
   async function handleDeliverMyPart(opts?: { hours?: number; link?: string; note?: string }) {
     if (!task) return;
     const willFinish = queueRemaining <= 1;
     if (willFinish && (await refreshPendingApproval())) { setDeliverBlockedWarning(true); return; }
+    await flushActiveTimer();
     // Record this member's part (time delta + what they delivered)
     const { finished, nextUserId } = await sequenceService.advance(taskId, {
       hours: opts?.hours,
@@ -549,6 +565,8 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
       return;
     }
 
+    await flushActiveTimer(); // no-op if already stopped by handleDeliverMyPart
+
     await handleFieldUpdate("status", "delivered");
 
     // Persist the delivery summary (date, link, note) so the "Tarefa entregue"
@@ -611,10 +629,12 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
     const { affectedUserIds } = await sequenceService.reopenFrom(taskId, myRow.id);
     // If the whole task had been delivered, bring it back to an active stage.
     if (isDelivered) await handleReopen();
-    // Notify everyone who was after me that their turn was pushed back.
+    // Notify everyone who was after me that their turn was pushed back — deduped
+    // and never to myself (the same member can appear more than once in a queue).
     const myName = orgProfiles.find((p) => p.id === user.id)?.full_name ?? "Um responsável";
+    const targets = [...new Set(affectedUserIds)].filter((id) => id && id !== user.id);
     await Promise.all(
-      affectedUserIds.map((uid) =>
+      targets.map((uid) =>
         notificationService.create({
           userId: uid,
           type: "task_assigned",
@@ -680,7 +700,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
     const name = newTagValue.trim();
     setNewTagInput(false);
     setNewTagValue("");
-    if (!task || !name) return;
+    if (!task || !name || !canEditCard) return;
     const label = await tagsService.ensureLabel(task.project_id, name);
     if (!label) return;
     // avoid duplicates
@@ -692,7 +712,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   }
 
   async function handleRemoveTag(labelId: string) {
-    if (!task) return;
+    if (!task || !canEditCard) return;
     await tagsService.detach(taskId, labelId);
     const next = (task.labels ?? []).filter((l: any) => l.id !== labelId);
     setTask((t) => (t ? { ...t, labels: next } : t));
@@ -714,6 +734,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
     return d.toISOString().slice(0, 10);
   }
   async function saveRecurrence(cfg: Record<string, unknown> | null) {
+    if (!canEditCard) return;
     setTask((t) => (t ? ({ ...t, recurrence_config: cfg } as TaskWithRelations) : t));
     store.updateTask(taskId, { recurrence_config: cfg } as any);
     await taskService.update(taskId, { recurrence_config: cfg } as any).catch(() => {});
@@ -1159,6 +1180,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                     content={task.description ?? ""}
                     onBlur={(html) => handleFieldUpdate("description", html)}
                     placeholder="Adicionar descrição detalhada..."
+                    editable={canEditCard}
                   />
                 )}
 
@@ -1239,6 +1261,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                             columnId: task.column_id,
                             parentTaskId: taskId,
                             parentTitle: task.title,
+                            parentSubprojectId: (task as any).board_subproject_id ?? null,
                           },
                         }))}
                         className="flex items-center gap-1 px-2 py-1 rounded-md text-xs bg-brand-teal text-white hover:bg-brand-teal/90 transition-colors"
@@ -1616,14 +1639,16 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                 <MetaField label="Projeto" icon={<Layers size={12} />}>
                   {boardProjects.length > 0 ? (
                     <select
+                      disabled={!canEditCard}
                       value={(task as any).board_subproject_id ?? ""}
                       onChange={(e) => {
+                        if (!canEditCard) return;
                         const v = e.target.value || null;
                         setTask((t) => t ? { ...t, board_subproject_id: v } as TaskWithRelations : t);
                         store.updateTask(taskId, { board_subproject_id: v } as any);
                         taskService.update(taskId, { board_subproject_id: v } as any).catch(() => {});
                       }}
-                      className="text-xs border border-neutral-200 rounded-md px-2 py-1 w-full bg-white outline-none focus:border-brand-teal"
+                      className="text-xs border border-neutral-200 rounded-md px-2 py-1 w-full bg-white outline-none focus:border-brand-teal disabled:opacity-60 disabled:cursor-not-allowed"
                     >
                       <option value="">— Sem projeto —</option>
                       {boardProjects.map((p) => (
@@ -2053,6 +2078,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                             <button
                               key={bl.id}
                               onClick={async () => {
+                                if (!canEditCard) return;
                                 await tagsService.attach(taskId, bl.id);
                                 setTask((t) => (t ? { ...t, labels: [...(t.labels ?? []), bl as any] } : t));
                                 store.updateTask(taskId, { labels: [...((task.labels as any[]) ?? []), bl] } as any);

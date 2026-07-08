@@ -73,7 +73,18 @@ export function RichTextEditor({
   if (!editor) return null;
 
   return (
-    <div className={cn("border border-neutral-200 rounded-xl overflow-hidden focus-within:border-brand-teal transition-colors", className)}>
+    <div
+      className={cn("border border-neutral-200 rounded-xl overflow-hidden focus-within:border-brand-teal transition-colors", className)}
+      // In read-only mode Tiptap's link clickHandler bails, so open links here.
+      onClick={!editable ? (e) => {
+        const a = (e.target as HTMLElement).closest?.("a");
+        const href = a?.getAttribute("href");
+        if (href && /^(https?:|mailto:)/i.test(href)) {
+          e.preventDefault();
+          window.open(href, "_blank", "noopener,noreferrer");
+        }
+      } : undefined}
+    >
       {editable && (
         <div className="flex items-center gap-0.5 flex-wrap px-2 py-1.5 border-b border-neutral-100 bg-neutral-50/50">
           <ToolBtn

@@ -12,7 +12,7 @@ const ALLOWED_TASK_COLUMNS = new Set<string>([
   'due_date', 'estimated_hours', 'is_urgent', 'status', 'type_id',
   'requesting_area_id', 'requested_area_id', 'desired_start_date',
   'start_date', 'delivery_date', 'sla_minutes', 'parent_task_id',
-  'priority_number', 'form_id',
+  'priority_number', 'form_id', 'board_subproject_id',
 ]);
 
 export async function submitFormToSupabase(input: {
@@ -35,19 +35,36 @@ export async function submitFormToSupabase(input: {
 
   const admin = createAdminClient();
 
+  // SECURITY: don't trust the client's board_id/stage/assignee. Derive them from
+  // the form record itself (by form_id), so a logged-in user can't post tasks
+  // into an arbitrary board or set an arbitrary assignee (IDOR).
+  const { data: form } = await (admin as any)
+    .from('forms')
+    .select('board_id, target_stage, assignee_id, org_id')
+    .eq('id', input.form_id)
+    .maybeSingle();
+
+  if (!form || form.org_id !== ORG_ID || !form.board_id) {
+    throw new Error('Formulário inválido ou sem quadro configurado.');
+  }
+
+  const boardId: string = form.board_id;
+  const stageName: string = form.target_stage ?? 'A fazer';
+  const assigneeId: string | null = form.assignee_id ?? null;
+
   // Find the target column by name within the board
   const { data: namedCol } = await (admin as any)
     .from('columns')
     .select('id')
-    .eq('project_id', input.board_id)
-    .eq('name', input.stage_name)
+    .eq('project_id', boardId)
+    .eq('name', stageName)
     .maybeSingle();
 
   // Fallback: first column by position
   const columnId: string | null = namedCol?.id ?? (await (admin as any)
     .from('columns')
     .select('id')
-    .eq('project_id', input.board_id)
+    .eq('project_id', boardId)
     .order('position')
     .limit(1)
     .maybeSingle()).data?.id ?? null;
@@ -62,14 +79,14 @@ export async function submitFormToSupabase(input: {
 
   const now = new Date().toISOString();
   const { data: created, error } = await (admin as any).from('tasks').insert({
-    project_id: input.board_id,
+    project_id: boardId,
     column_id: columnId,
     org_id: ORG_ID,
     title: input.title,
     description: input.description,
     priority: 'medium',
     position: Date.now() % 100000,
-    assignee_id: input.assignee_id,
+    assignee_id: assigneeId,
     status: 'open',
     created_at: now,
     updated_at: now,

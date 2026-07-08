@@ -150,13 +150,16 @@ export function GlobalCreateTaskModal() {
   // links the new task as a subtask (parent_task_id).
   useEffect(() => {
     function handleOpenSubtask(e: Event) {
-      const { projectId, columnId, parentTaskId: pid, parentTitle: ptitle } =
-        (e as CustomEvent<{ projectId: string; columnId?: string; parentTaskId: string; parentTitle?: string }>).detail;
+      const { projectId, columnId, parentTaskId: pid, parentTitle: ptitle, parentSubprojectId } =
+        (e as CustomEvent<{ projectId: string; columnId?: string; parentTaskId: string; parentTitle?: string; parentSubprojectId?: string | null }>).detail;
       setOpen(true);
       setSelectedProjectId(projectId);
       if (columnId) setSelectedColumnId(columnId);
       setParentTaskId(pid);
       setParentTitle(ptitle ?? null);
+      // Inherit the parent's sub-project so a board that requires one doesn't
+      // block the subtask (and it defaults to the parent's project).
+      if (parentSubprojectId) setBoardProjectId(parentSubprojectId);
     }
     window.addEventListener("open-create-subtask", handleOpenSubtask);
     return () => window.removeEventListener("open-create-subtask", handleOpenSubtask);
@@ -409,9 +412,23 @@ export function GlobalCreateTaskModal() {
     if (boardProjectRequired && !boardProjectId) return;
     setError(null);
     setLoading(true);
+    // Preserve the subtask context across "salvar e criar outra" so the next
+    // one stays a subtask of the same parent (resetFields clears it otherwise).
+    const keepParentId = parentTaskId;
+    const keepParentTitle = parentTitle;
+    const keepBoard = selectedProjectId;
+    const keepColumn = selectedColumnId;
+    const keepSubproject = boardProjectId;
     try {
       await persistTask();
       resetFields();
+      if (keepParentId) {
+        setParentTaskId(keepParentId);
+        setParentTitle(keepParentTitle);
+        setSelectedProjectId(keepBoard);
+        setSelectedColumnId(keepColumn);
+        setBoardProjectId(keepSubproject);
+      }
       setTimeout(() => titleRef.current?.focus(), 50);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Erro ao criar tarefa.");

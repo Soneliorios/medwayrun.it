@@ -112,15 +112,23 @@ export const sequenceService = {
     if (!target) return { affectedUserIds: [] };
     const tracked = await taskTrackedHours(sb, taskId);
 
-    // Reactivate the target; snapshot a new baseline and clear its delivery mark.
+    // Reactivate the target; snapshot a new baseline and wipe its (now undone)
+    // delivery so it no longer counts as delivered anywhere (e.g. the "Eu" hours).
     await (sb as any).from("task_sequences")
-      .update({ status: "active", part_start_hours: tracked, delivered_at: null })
+      .update({ status: "active", part_start_hours: tracked, delivered_at: null, hours_spent: null, delivery_note: null, delivery_link: null })
       .eq("id", rowId);
 
-    // Everyone ordered after the target waits again.
+    // Everyone ordered after the target waits again. Those who had already
+    // delivered get their delivery cleared too (their part is no longer done).
     const after = rows.filter((r) => r.order_position > target.order_position);
     await Promise.all(
-      after.map((r) => (sb as any).from("task_sequences").update({ status: "pending" }).eq("id", r.id))
+      after.map((r) => (sb as any).from("task_sequences")
+        .update(
+          r.status === "done"
+            ? { status: "pending", delivered_at: null, hours_spent: null, delivery_note: null, delivery_link: null }
+            : { status: "pending" }
+        )
+        .eq("id", r.id))
     );
 
     await (sb as any).from("tasks").update({ assignee_id: target.user_id }).eq("id", taskId);

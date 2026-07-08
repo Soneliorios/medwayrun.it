@@ -43,18 +43,26 @@ function highlightMentions(text: string, names: string[], keyPrefix: string): Re
 
 /** Render comment text with clickable URLs and highlighted @mentions. */
 function renderContent(content: string, names: string[]) {
-  const urlRe = /(https?:\/\/[^\s]+)/g;
+  // Match http(s):// URLs and also bare "www." links (same coverage as the
+  // description's Tiptap autolink). Trailing punctuation is trimmed below.
+  const urlRe = /((?:https?:\/\/|www\.)[^\s]+)/gi;
   const out: React.ReactNode[] = [];
   let last = 0, m: RegExpExecArray | null, i = 0;
   while ((m = urlRe.exec(content)) !== null) {
+    let url = m[0];
+    // Don't swallow trailing sentence punctuation.
+    const trail = url.match(/[.,;:!?)]+$/);
+    if (trail) url = url.slice(0, url.length - trail[0].length);
+    if (!url) continue;
     if (m.index > last) out.push(...highlightMentions(content.slice(last, m.index), names, `t${i}`));
-    const url = m[0];
+    const href = url.startsWith("http") ? url : `https://${url}`;
     out.push(
-      <a key={`u${i++}`} href={url} target="_blank" rel="noopener noreferrer" className="text-brand-teal underline break-all" onClick={(e) => e.stopPropagation()}>
+      <a key={`u${i++}`} href={href} target="_blank" rel="noopener noreferrer" className="text-brand-teal underline break-all" onClick={(e) => e.stopPropagation()}>
         {url}
       </a>
     );
     last = m.index + url.length;
+    urlRe.lastIndex = last;
   }
   if (last < content.length) out.push(...highlightMentions(content.slice(last), names, `t${i}`));
   return out;

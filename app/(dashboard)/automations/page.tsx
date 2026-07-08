@@ -271,6 +271,24 @@ function AutomationBuilder({
     if (!board) { setError("Selecione um quadro."); return; }
     if (triggers.length === 0) { setError("Adicione pelo menos um gatilho."); return; }
     if (actions.length === 0) { setError("Adicione pelo menos uma ação."); return; }
+    // Every stage trigger needs a chosen stage.
+    for (const t of triggers) {
+      if (TRIGGERS[t.event]?.extra === "stage" && !t.config.stage) {
+        setError(`Escolha a etapa do gatilho "${TRIGGERS[t.event].label}".`); return;
+      }
+    }
+    // Every action whose config is required must be filled.
+    const ACTION_FIELD: Record<string, string> = {
+      tag: "tag", stage: "stage", template: "title", email: "target", priority: "priority", type: "taskType",
+    };
+    for (const a of actions) {
+      const extra = ACTIONS[a.type]?.extra;
+      if (extra === "users") {
+        if (!((a.config.users as string[])?.length)) { setError(`Selecione os usuários da ação "${ACTIONS[a.type].label}".`); return; }
+      } else if (extra && ACTION_FIELD[extra] && !a.config[ACTION_FIELD[extra]]) {
+        setError(`Complete a configuração da ação "${ACTIONS[a.type].label}".`); return;
+      }
+    }
     setSaving(true);
     setError(null);
     const created = await automationService.create({
