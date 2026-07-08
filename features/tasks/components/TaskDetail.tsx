@@ -59,6 +59,7 @@ import { activityService, type TaskActivity } from "../services/activityService"
 import { approvalService } from "../services/approvalService";
 import { sequenceService, type SeqRow } from "../services/sequenceService";
 import { notificationService } from "@/features/notifications/services/notificationService";
+import { runAutomations } from "@/lib/automationEngine";
 import { useBoardAccess } from "@/lib/boardAccess";
 import { areasService } from "@/lib/areasService";
 import { attachmentService } from "@/lib/attachmentService";
@@ -600,6 +601,8 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
       taskService.update(taskId, { column_id: lastCol.id } as any).catch(() => {});
     }
 
+    // Dispara automações com gatilho "Tarefa entregue".
+    runAutomations({ type: "task_delivered" }, taskId);
   }
 
   async function handleReopen() {
@@ -685,6 +688,8 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
       setAttachments((prev) => [...prev, ...ok]);
       // Keep the board card/list badge in sync (outside the state updater).
       store.updateTask(taskId, { _attachmentCount: attachments.length + ok.length } as any);
+      // Dispara automações com gatilho "Anexo adicionado".
+      runAutomations({ type: "attachment_added" }, taskId);
     }
     const failed = uploaded.length - ok.length;
     if (failed > 0) alert(`${failed} anexo(s) não puderam ser enviados. Tente novamente.`);
@@ -1610,7 +1615,9 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                         if (!v || v === task.column_id) return;
                         setTask((t) => (t ? { ...t, column_id: v } : t));
                         store.moveTask(taskId, v, (task as any).position ?? 1000);
-                        taskService.update(taskId, { column_id: v } as any).catch(() => {});
+                        taskService.update(taskId, { column_id: v } as any)
+                          .then(() => runAutomations({ type: "stage_entered" }, taskId))
+                          .catch(() => {});
                       }}
                     >
                       <SelectTrigger className={cn("h-7 text-xs border-neutral-200", !canChangeStage && "opacity-60 cursor-not-allowed")} title={!canChangeStage ? "Somente um responsável da tarefa pode mudar a etapa" : undefined}>

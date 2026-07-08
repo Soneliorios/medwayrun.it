@@ -11,6 +11,7 @@ import {
 import { sortableKeyboardCoordinates } from "@dnd-kit/sortable";
 import { createRawClient } from "@/lib/supabase/client";
 import { useBoardStore, getDropPosition } from "../store/boardStore";
+import { runAutomations } from "@/lib/automationEngine";
 import { useRole } from "@/features/auth/hooks/useRole";
 import { useAuthStore } from "@/features/auth/store/authStore";
 
@@ -117,6 +118,11 @@ export function useBoardDnd() {
 
       if (!column) return;
 
+      // Did the drag change the task's column (stage)? Compare against the
+      // pre-drag snapshot so we only fire "stage_entered" on a real move.
+      const originColId = snapshotRef.current?.find((c) => c.tasks.some((t) => t.id === activeId))?.id;
+      const stageChanged = !!originColId && originColId !== column.id;
+
       const tasks = [...column.tasks].sort((a, b) => a.position - b.position);
       const taskIndex = tasks.findIndex((t) => t.id === activeId);
 
@@ -138,14 +144,17 @@ export function useBoardDnd() {
         if (!task) return;
 
         // Optimistic already applied, persist to Supabase
+        let ok1 = true;
         await persistTaskMove(supabase, activeId, column.id, task.position).catch(
           () => {
+            ok1 = false;
             // Rollback on error
             if (snapshotRef.current) {
               store.setColumns(snapshotRef.current);
             }
           }
         );
+        if (ok1 && stageChanged) runAutomations({ type: "stage_entered" }, activeId);
         return;
       }
 
@@ -153,13 +162,16 @@ export function useBoardDnd() {
       if (!task) return;
 
       // Persist to Supabase
+      let ok2 = true;
       await persistTaskMove(supabase, activeId, column.id, task.position).catch(
         () => {
+          ok2 = false;
           if (snapshotRef.current) {
             store.setColumns(snapshotRef.current);
           }
         }
       );
+      if (ok2 && stageChanged) runAutomations({ type: "stage_entered" }, activeId);
     },
     [store, supabase]
   );

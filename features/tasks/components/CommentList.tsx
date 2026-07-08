@@ -5,6 +5,7 @@ import { taskService } from "../services/taskService";
 import { useAuthStore } from "@/features/auth/store/authStore";
 import { useOrgMembers } from "@/lib/useOrgMembers";
 import { notificationService } from "@/features/notifications/services/notificationService";
+import { runAutomations } from "@/lib/automationEngine";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { Button } from "@/components/ui/button";
 import { Textarea } from "@/components/ui/textarea";
@@ -171,6 +172,9 @@ export function CommentList({ taskId, taskTitle }: Props) {
           })
         )
       );
+
+      // Dispara automações com gatilho "Comentário adicionado".
+      runAutomations({ type: "comment_added" }, taskId);
     } catch {
       setComments((prev) => prev.filter((c) => c.id !== optimistic.id));
     } finally {

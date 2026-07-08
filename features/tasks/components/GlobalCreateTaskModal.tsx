@@ -32,6 +32,7 @@ type OverflowCheckResult = null;
 import { getInitials } from "@/lib/utils";
 import { useBoardProjectStore } from "@/features/board/store/boardProjectStore";
 import { taskTypeService } from "@/features/board/services/taskTypeService";
+import { runAutomations } from "@/lib/automationEngine";
 import type { Column } from "@/types";
 
 type Priority = "low" | "medium" | "high" | "urgent";
@@ -378,6 +379,9 @@ export function GlobalCreateTaskModal() {
         try { alert(`${failed.length} anexo(s) não puderam ser enviados: ${failed.map((f) => f.name).join(", ")}`); } catch { /* ignore */ }
       }
     }
+
+    // Dispara automações com gatilho "Tarefa criada".
+    runAutomations({ type: "task_created" }, taskId);
 
     return taskId;
   }

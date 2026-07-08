@@ -22,6 +22,8 @@ import { PRIORITY_LABELS, PRIORITY_COLORS } from "@/types";
 import { useFilteredColumns } from "../hooks/useFilteredColumns";
 import { useSelectionStore } from "../store/selectionStore";
 import { useBoardStore } from "../store/boardStore";
+import { taskService } from "@/features/tasks/services/taskService";
+import { runAutomations } from "@/lib/automationEngine";
 import { MoreHorizontal } from "lucide-react";
 import type { TaskWithRelations } from "@/types";
 
@@ -115,8 +117,14 @@ export function BoardListView({ boardId, onTaskOpen }: { boardId: string; onTask
   const [rowMenu, setRowMenu] = useState<string | null>(null);
 
   function moveTaskTo(taskId: string, colId: string) {
+    const current = boardStore.columns.find((c) => c.tasks.some((t) => t.id === taskId))?.id;
     boardStore.moveTask(taskId, colId, 1000);
     setRowMenu(null);
+    if (current === colId) return;
+    // Persist (this path previously only updated the UI) and fire automations.
+    taskService.update(taskId, { column_id: colId, position: 1000 } as any)
+      .then(() => runAutomations({ type: "stage_entered" }, taskId))
+      .catch(() => {});
   }
   function deleteTask(taskId: string) {
     if (!confirm("Excluir esta tarefa?")) return;

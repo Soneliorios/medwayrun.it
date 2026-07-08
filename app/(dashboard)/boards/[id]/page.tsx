@@ -30,6 +30,7 @@ import { BoardProjectsView } from "../../../../features/board/components/BoardPr
 import { useProjectStore } from "@/features/projects/store/projectStore";
 import { useBoardRealtime } from "@/features/board/hooks/useBoardRealtime";
 import { useBoardData } from "@/features/board/hooks/useBoardData";
+import { sweepDueDates } from "@/lib/automationEngine";
 import { useBoardAccess } from "@/lib/boardAccess";
 import { useOrgMembers } from "@/lib/useOrgMembers";
 import { useAuthStore } from "@/features/auth/store/authStore";
@@ -84,6 +85,9 @@ export default function BoardPage({ params }: Props) {
 
   useBoardData(boardId);
   useBoardRealtime(boardId);
+
+  // Best-effort: dispara automações de "Prazo próximo" ao abrir o quadro.
+  useEffect(() => { sweepDueDates(boardId); }, [boardId]);
 
 
   // Load the user's saved filters (per-user, all boards) once the profile is ready.

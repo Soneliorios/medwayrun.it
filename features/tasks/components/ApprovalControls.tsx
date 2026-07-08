@@ -10,6 +10,7 @@ import { useAuthStore } from "@/features/auth/store/authStore";
 import { approvalService, type TaskApproval } from "../services/approvalService";
 import { activityService } from "../services/activityService";
 import { notificationService } from "@/features/notifications/services/notificationService";
+import { runAutomations } from "@/lib/automationEngine";
 
 type MockTaskApproval = TaskApproval;
 type ApprovalStatus = "approved" | "rejected" | "adjustment";
@@ -174,6 +175,8 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
       content: `${myName ?? "Alguém"} solicitou sua aprovação em "${taskTitle}"`,
     });
     await reload();
+    // Reavalia automações (condição "tem aprovação pendente" ficou verdadeira).
+    runAutomations({ type: "approval_changed" }, taskId);
   }
 
   // Only the person who requested the approval can revert it
@@ -199,6 +202,7 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
   async function resolve(status: ApprovalStatus) {
     if (!approval) return;
     const requestedBy = approval.requested_by;
+    const resolvedApproverId = approval.approver_id;
     await approvalService.resolve(approval.id, status, comment || null);
     await activityService.log({
       taskId, userId: currentUserId, userName: myName,
@@ -211,6 +215,9 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
     });
     setComment("");
     await reload();
+    // Dispara automações do resultado da aprovação (aprovada/ajuste/rejeitada).
+    const evType = status === "approved" ? "task_approved" : status === "adjustment" ? "task_adjustment" : status === "rejected" ? "task_rejected" : null;
+    if (evType) runAutomations({ type: evType, approverId: resolvedApproverId }, taskId);
   }
 
   const pending = approval?.status === "pending";
@@ -377,6 +384,8 @@ export function MyApprovals({ onOpenTask }: { onOpenTask: (id: string) => void }
     });
     setComment((prev) => ({ ...prev, [item.id]: "" }));
     await reload();
+    const evType = status === "approved" ? "task_approved" : status === "adjustment" ? "task_adjustment" : status === "rejected" ? "task_rejected" : null;
+    if (evType) runAutomations({ type: evType, approverId: item.approver_id }, item.task_id);
   }
 
   async function cancel(item: MockTaskApproval) {

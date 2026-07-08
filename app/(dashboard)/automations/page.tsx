@@ -17,6 +17,7 @@ import {
   type AutomationTrigger,
   type AutomationAction,
 } from "@/lib/automationService";
+import { invalidateAutomationCache } from "@/lib/automationEngine";
 
 // ── Trigger & action catalogs ───────────────────────────────────────────────────
 
@@ -98,21 +99,25 @@ export default function AutomationsPage() {
     setLoading(true);
     setAutomations(await automationService.list());
     setLoading(false);
+    invalidateAutomationCache();
   }
   useEffect(() => { reload(); }, []);
 
   async function toggle(id: string, is_active: boolean) {
     setAutomations((arr) => arr.map((a) => (a.id === id ? { ...a, is_active: !is_active } : a)));
     await automationService.setActive(id, !is_active);
+    invalidateAutomationCache();
   }
   async function remove(id: string) {
     if (!confirm("Excluir esta automação?")) return;
     setAutomations((arr) => arr.filter((a) => a.id !== id));
     await automationService.remove(id);
+    invalidateAutomationCache();
   }
   async function rename(id: string, name: string) {
     setAutomations((arr) => arr.map((a) => (a.id === id ? { ...a, name } : a)));
     await automationService.rename(id, name);
+    invalidateAutomationCache();
   }
 
   const filtered = selectedBoard ? automations.filter((a) => a.board_id === selectedBoard) : automations;
