@@ -34,8 +34,10 @@ export async function PATCH(
   { params }: { params: Promise<{ id: string }> }
 ) {
   const caller = await getCallerInfo();
-  if (!caller || !["owner", "admin"].includes(caller.role ?? "")) {
-    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  // Gerenciar membros/papéis e aprovar contas é exclusivo do superadmin (owner),
+  // coerente com a matriz de permissões e a UI (aba Usuários é superadmin-only).
+  if (!caller || caller.role !== "owner") {
+    return NextResponse.json({ error: "Only owner can manage members" }, { status: 403 });
   }
 
   const { id } = await params;
@@ -50,6 +52,10 @@ export async function PATCH(
 
   // Aprovar / reprovar conta (aprovação de novos cadastros).
   if (typeof body.approved === "boolean") {
+    // Não deixar o owner reprovar a si mesmo (evita se trancar para fora).
+    if (body.approved === false && id === caller.userId) {
+      return NextResponse.json({ error: "Cannot unapprove yourself" }, { status: 400 });
+    }
     updates.approved = body.approved;
   }
 
@@ -57,10 +63,6 @@ export async function PATCH(
   if (body.role !== undefined) {
     if (!["member", "admin", "owner"].includes(body.role)) {
       return NextResponse.json({ error: "Invalid role" }, { status: 400 });
-    }
-    // Only owner can promote to owner or demote an owner
-    if (body.role === "owner" && caller.role !== "owner") {
-      return NextResponse.json({ error: "Only owner can promote to owner" }, { status: 403 });
     }
     updates.role = body.role;
   }

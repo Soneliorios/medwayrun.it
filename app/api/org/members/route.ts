@@ -32,14 +32,17 @@ export async function GET() {
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
-  // Caller must belong to the org
+  // Caller must belong to the org AND be approved (contas "em análise" não veem
+  // o roster — essa rota usa service role e não passa pelo RLS).
   const { data: caller } = await admin
     .from("members")
-    .select("user_id")
+    .select("user_id, approved")
     .eq("org_id", ORG_ID)
     .eq("user_id", user.id)
     .maybeSingle();
-  if (!caller) return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  if (!caller || (caller as { approved?: boolean }).approved === false) {
+    return NextResponse.json({ error: "Forbidden" }, { status: 403 });
+  }
 
   const [{ data: membersData }, { data: profilesData }, { data: authData }] = await Promise.all([
     admin.from("members").select("user_id, role, joined_at").eq("org_id", ORG_ID),
