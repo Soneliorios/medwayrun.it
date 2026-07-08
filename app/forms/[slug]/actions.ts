@@ -1,6 +1,7 @@
 'use server';
 
 import { createAdminClient } from '@/lib/supabase/admin';
+import { createClient } from '@/lib/supabase/server';
 import { ORG_ID } from '@/lib/utils';
 
 // Columns that actually exist on public.tasks and are safe to set from a form
@@ -24,6 +25,14 @@ export async function submitFormToSupabase(input: {
   nativeExtras: Record<string, unknown>;
   attachments?: { name: string; url: string; mime: string | null; size: number | null }[];
 }) {
+  // Forms are internal-only: the submitter must be a logged-in user, and the
+  // resulting task is tagged with them as its creator (created_by).
+  const auth = await createClient();
+  const { data: { user } } = await auth.auth.getUser();
+  if (!user) {
+    throw new Error('Você precisa estar logado para enviar este formulário.');
+  }
+
   const admin = createAdminClient();
 
   // Find the target column by name within the board
@@ -66,6 +75,7 @@ export async function submitFormToSupabase(input: {
     updated_at: now,
     is_urgent: false,
     form_id: input.form_id,
+    created_by: user.id,
     ...safeExtras,
   }).select('id').single();
 

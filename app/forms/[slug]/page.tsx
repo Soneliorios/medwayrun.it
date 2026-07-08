@@ -67,6 +67,20 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
   }
   const [notFound, setNotFound] = useState(false);
   const [boardProjects, setBoardProjects] = useState<{ id: string; name: string; color: string }[]>([]);
+  const [submitter, setSubmitter] = useState<{ name: string } | null>(null);
+
+  // Forms are internal-only: the visitor is always a logged-in user. Identify
+  // them so it's clear who is submitting (they'll be tagged as the task creator).
+  useEffect(() => {
+    (async () => {
+      const supabase = createRawClient();
+      const { data: { user } } = await supabase.auth.getUser();
+      if (!user) return;
+      const { data: prof } = await (supabase as any)
+        .from('profiles').select('full_name').eq('id', user.id).maybeSingle();
+      setSubmitter({ name: prof?.full_name || user.email || 'Você' });
+    })();
+  }, []);
 
   useEffect(() => {
     async function loadForm() {
@@ -244,7 +258,15 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
         <div className="w-9 h-9 rounded-lg bg-brand-teal flex items-center justify-center text-white font-bold mb-4">M</div>
         <h1 className="text-xl font-bold text-brand-navy">{meta?.name ?? 'Formulário'}</h1>
         {meta?.description && (
-          <p className="text-sm text-neutral-500 mt-1 mb-6">{meta.description}</p>
+          <p className="text-sm text-neutral-500 mt-1">{meta.description}</p>
+        )}
+        {submitter && (
+          <p className="text-xs text-neutral-500 mt-3 mb-2 flex items-center gap-1.5 bg-neutral-50 border border-neutral-100 rounded-lg px-3 py-2">
+            <span className="w-5 h-5 rounded-full bg-brand-teal/15 text-brand-teal text-[10px] font-bold flex items-center justify-center">
+              {submitter.name.charAt(0).toUpperCase()}
+            </span>
+            Enviando como <strong className="text-neutral-700">{submitter.name}</strong>
+          </p>
         )}
 
         <div className="grid grid-cols-2 gap-4 mt-4">

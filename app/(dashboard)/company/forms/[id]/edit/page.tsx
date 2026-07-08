@@ -2,7 +2,7 @@
 
 import { use, useEffect, useState } from 'react';
 import Link from 'next/link';
-import { ChevronLeft, Copy, Check, Plus, Trash2, ArrowUp, ArrowDown, GripVertical, User, Save } from 'lucide-react';
+import { ChevronLeft, Copy, Check, Plus, Trash2, ArrowUp, ArrowDown, GripVertical, User, Save, Lock } from 'lucide-react';
 import { Type, AlignLeft, CircleDot, CheckSquare, Calendar, Hash, Upload, Minus } from 'lucide-react';
 import { createClient } from '@/lib/supabase/client';
 import { cn, ORG_ID } from '@/lib/utils';
@@ -84,8 +84,6 @@ export default function FormEditPage({ params }: { params: Promise<{ id: string 
   const [description, setDescription] = useState('');
   const [stage, setStage] = useState('');
   const [active, setActive] = useState(true);
-  const [internal, setInternal] = useState(true);
-  const [external, setExternal] = useState(false);
   const [fields, setFields] = useState<FormField[]>([]);
   const [selected, setSelected] = useState<string | null>(null);
   const [copied, setCopied] = useState(false);
@@ -141,8 +139,6 @@ export default function FormEditPage({ params }: { params: Promise<{ id: string 
         setDescription(formData.description ?? '');
         setStage(formData.target_stage ?? '');
         setActive(formData.is_active ?? true);
-        setExternal(formData.external_access ?? false);
-        setInternal(formData.internal_access ?? true);
         const boardId = formData.board_id || projs[0]?.id || '';
         setSelectedProjectId(boardId);
         if (boardId) loadBoardProjects(boardId);
@@ -237,8 +233,8 @@ export default function FormEditPage({ params }: { params: Promise<{ id: string 
           description: description || null,
           target_stage: stage,
           is_active: active,
-          external_access: external,
-          internal_access: internal,
+          external_access: false,
+          internal_access: true,
           board_id: selectedProjectId || null,
           assignee_id: assigneeId || null,
           assignee_name: member?.name || null,
@@ -391,21 +387,21 @@ export default function FormEditPage({ params }: { params: Promise<{ id: string 
 
           <div className="space-y-1.5 pt-1">
             <Toggle label="Ativo" checked={active} onChange={setActive} />
-            <Toggle label="Acesso interno" checked={internal} onChange={setInternal} />
-            <Toggle label="Acesso externo (link público)" checked={external} onChange={setExternal} />
           </div>
 
-          {external && (
-            <div className="bg-neutral-50 rounded-lg p-2 flex items-center gap-1.5">
-              <input readOnly value={publicUrl} className="flex-1 text-[10px] bg-transparent outline-none text-neutral-500" />
-              <button
-                onClick={() => { navigator.clipboard?.writeText(publicUrl); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
-                className="text-brand-teal"
-              >
-                {copied ? <Check size={13} /> : <Copy size={13} />}
-              </button>
-            </div>
-          )}
+          <p className="text-[11px] text-neutral-400 flex items-center gap-1.5">
+            <Lock size={11} /> Formulário interno: só usuários logados podem enviar, e a tarefa é criada em nome de quem enviou.
+          </p>
+          <div className="bg-neutral-50 rounded-lg p-2 flex items-center gap-1.5">
+            <input readOnly value={publicUrl} className="flex-1 text-[10px] bg-transparent outline-none text-neutral-500" />
+            <button
+              onClick={() => { navigator.clipboard?.writeText(publicUrl); setCopied(true); setTimeout(() => setCopied(false), 1500); }}
+              className="text-brand-teal"
+              title="Copiar link do formulário"
+            >
+              {copied ? <Check size={13} /> : <Copy size={13} />}
+            </button>
+          </div>
 
           {/* Pre-mapped fields */}
           <div className="pt-2">
