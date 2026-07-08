@@ -1,6 +1,8 @@
 "use client";
 
 import { create } from "zustand";
+import { createClient, createRawClient } from "@/lib/supabase/client";
+import { ORG_ID } from "@/lib/utils";
 
 export interface BoardProject {
   id: string;
@@ -13,45 +15,62 @@ export interface BoardProject {
 interface BoardProjectState {
   projects: BoardProject[];
   boardId: string | null;
-  load: (boardId: string) => void;
-  create: (boardId: string, name: string, color: string, description?: string) => BoardProject;
-  update: (id: string, updates: Partial<Pick<BoardProject, "name" | "color" | "description">>) => void;
-  delete: (id: string) => void;
+  load: (boardId: string) => Promise<void>;
+  create: (boardId: string, name: string, color: string, description?: string) => Promise<BoardProject | null>;
+  update: (id: string, updates: Partial<Pick<BoardProject, "name" | "color" | "description">>) => Promise<void>;
+  delete: (id: string) => Promise<void>;
 }
 
+function mapRow(r: any): BoardProject {
+  return { id: r.id, board_id: r.project_id, name: r.name, color: r.color, description: r.description ?? undefined };
+}
+
+/**
+ * Board sub-projects, backed by the `board_subprojects` table. This is the
+ * single source of truth shared by the board "Projetos" view, the board
+ * settings, the task-create picker and the filters — so they always agree.
+ */
 export const useBoardProjectStore = create<BoardProjectState>((set, get) => ({
   projects: [],
   boardId: null,
 
-  load(boardId) {
+  async load(boardId) {
     set({ boardId, projects: [] });
-    // Supabase path: caller should fetch from supabase and call set({ projects })
+    const sb = createClient();
+    const { data, error } = await (sb as any)
+      .from("board_subprojects")
+      .select("id, project_id, name, color, description")
+      .eq("project_id", boardId)
+      .order("name");
+    if (error) { console.error("[boardProjectStore.load]", error); return; }
+    if (get().boardId !== boardId) return; // a newer load won
+    set({ projects: ((data ?? []) as any[]).map(mapRow) });
   },
 
-  create(boardId, name, color, description) {
-    // Supabase path: caller is responsible for persisting; this is an optimistic stub
-    const project: BoardProject = {
-      id: crypto.randomUUID(),
-      board_id: boardId,
-      name,
-      color,
-      description,
-    };
+  async create(boardId, name, color, description) {
+    const sb = createRawClient();
+    const { data, error } = await (sb as any)
+      .from("board_subprojects")
+      .insert({ project_id: boardId, org_id: ORG_ID, name, color, description: description || null })
+      .select("id, project_id, name, color, description")
+      .single();
+    if (error) { console.error("[boardProjectStore.create]", error); return null; }
+    const project = mapRow(data);
     set((s) => ({ projects: [...s.projects, project] }));
     return project;
   },
 
-  update(id, updates) {
-    set((s) => ({
-      projects: s.projects.map((p) => (p.id === id ? { ...p, ...updates } : p)),
-    }));
-    // Supabase path: caller is responsible for persisting the update
+  async update(id, updates) {
+    set((s) => ({ projects: s.projects.map((p) => (p.id === id ? { ...p, ...updates } : p)) }));
+    const sb = createRawClient();
+    const { error } = await (sb as any).from("board_subprojects").update(updates).eq("id", id);
+    if (error) console.error("[boardProjectStore.update]", error);
   },
 
-  delete(id) {
-    set((s) => ({
-      projects: s.projects.filter((p) => p.id !== id),
-    }));
-    // Supabase path: caller is responsible for persisting the deletion
+  async delete(id) {
+    set((s) => ({ projects: s.projects.filter((p) => p.id !== id) }));
+    const sb = createRawClient();
+    const { error } = await (sb as any).from("board_subprojects").delete().eq("id", id);
+    if (error) console.error("[boardProjectStore.delete]", error);
   },
 }));
