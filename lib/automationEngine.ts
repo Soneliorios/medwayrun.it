@@ -67,6 +67,19 @@ const EVENT_DOMAIN: Record<EngineEvent["type"], string> = {
 
 const PRIORITY_MAP: Record<string, string> = { "Baixa": "low", "Média": "medium", "Alta": "high", "Urgente": "urgent" };
 
+// ── Dedup de disparo em rajada (mesma regra+tarefa+evento) ────────────────────
+const recentFires = new Map<string, number>();
+function firedRecently(key: string, windowMs = 8000): boolean {
+  const now = Date.now();
+  const last = recentFires.get(key);
+  if (last && now - last < windowMs) return true;
+  recentFires.set(key, now);
+  if (recentFires.size > 500) {
+    for (const [k, t] of recentFires) if (now - t > windowMs) recentFires.delete(k);
+  }
+  return false;
+}
+
 // ── Automations cache (curto, por org) ───────────────────────────────────────
 let cache: { at: number; rows: AutomationRow[] } | null = null;
 export function invalidateAutomationCache() { cache = null; }
@@ -140,7 +153,10 @@ async function runAction(a: AutomationAction, auto: AutomationRow, task: EngineT
     case "move_to_stage": {
       const target = ctx.columns.find((c) => c.name === cfg.stage);
       if (!target || target.id === task.column_id) return;
-      const pos = Date.now() % 100000;
+      // Append to the end of the target column (board positions step by ~1000).
+      const { data: last } = await (sb as any)
+        .from("tasks").select("position").eq("column_id", target.id).order("position", { ascending: false }).limit(1).maybeSingle();
+      const pos = (last?.position ?? 0) + 1000;
       await taskService.update(task.id, { column_id: target.id, position: pos } as any);
       const store = useBoardStore.getState();
       if ((store.columns as any[])[0]?.project_id === task.project_id) store.moveTask(task.id, target.id, pos);
@@ -153,6 +169,12 @@ async function runAction(a: AutomationAction, auto: AutomationRow, task: EngineT
       const existing = await sequenceService.list(task.id);
       const have = new Set(existing.map((r) => r.user_id));
       let pos = existing.length ? Math.max(...existing.map((r) => r.order_position ?? 0)) + 1 : 0;
+      // "Alocar usuários" é aditivo: preserva o responsável direto atual (tarefas
+      // sem fila) como cabeça, senão o syncHeadAndAssignee o apagaria.
+      if (existing.length === 0 && task.assignee_id && !have.has(task.assignee_id)) {
+        await (sb as any).from("task_sequences").insert({ task_id: task.id, user_id: task.assignee_id, order_position: pos++, status: "pending" });
+        have.add(task.assignee_id);
+      }
       for (const u of users) {
         if (have.has(u)) continue;
         await (sb as any).from("task_sequences").insert({ task_id: task.id, user_id: u, order_position: pos++, status: "pending" });
@@ -253,6 +275,10 @@ export async function runAutomations(ev: EngineEvent, taskId: string): Promise<v
       const sat = await Promise.all(triggers.map((t) => triggerSatisfied(t, ev, ctx)));
       const fire = logic === "AND" ? sat.every(Boolean) : sat.some(Boolean);
       if (!fire) continue;
+
+      // Dedup: evita re-executar a MESMA regra p/ a MESMA tarefa no mesmo evento
+      // em rajada (duplo-clique, re-drag), que duplicaria notificação/subtarefa.
+      if (firedRecently(`${auto.id}:${task.id}:${ev.type}`)) continue;
 
       for (const action of (auto.action_config?.actions ?? [])) {
         try { await runAction(action, auto, task as EngineTask, ctx); }

@@ -118,13 +118,13 @@ export function BoardListView({ boardId, onTaskOpen }: { boardId: string; onTask
 
   function moveTaskTo(taskId: string, colId: string) {
     const current = boardStore.columns.find((c) => c.tasks.some((t) => t.id === taskId))?.id;
+    if (current === colId) { setRowMenu(null); return; }
     boardStore.moveTask(taskId, colId, 1000);
     setRowMenu(null);
-    if (current === colId) return;
     // Persist (this path previously only updated the UI) and fire automations.
     taskService.update(taskId, { column_id: colId, position: 1000 } as any)
       .then(() => runAutomations({ type: "stage_entered" }, taskId))
-      .catch(() => {});
+      .catch(() => { if (current) boardStore.moveTask(taskId, current, 1000); }); // rollback
   }
   function deleteTask(taskId: string) {
     if (!confirm("Excluir esta tarefa?")) return;

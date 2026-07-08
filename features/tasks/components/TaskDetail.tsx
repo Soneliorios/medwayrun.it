@@ -598,7 +598,9 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
       const pos = (task as any).position ?? 1000;
       setTask((t) => (t ? { ...t, column_id: lastCol.id } : t));
       store.moveTask(taskId, lastCol.id, pos);
-      taskService.update(taskId, { column_id: lastCol.id } as any).catch(() => {});
+      // Aguarda a persistência da coluna ANTES de disparar as automações, para o
+      // motor não ler a etapa antiga (condições de etapa na entrega).
+      await taskService.update(taskId, { column_id: lastCol.id } as any).catch(() => {});
     }
 
     // Dispara automações com gatilho "Tarefa entregue".
@@ -1467,6 +1469,79 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
               {/* ── Metadata sidebar ──────────────────────────────── */}
               <div className="w-72 shrink-0 border-l border-neutral-100 overflow-y-auto p-4 space-y-4 bg-neutral-50/40">
 
+                {/* Tarefa entregue — no TOPO do painel, visível assim que abre a task */}
+                {showDeliveryBox && (
+                  <div className="rounded-xl border border-green-200 bg-green-50/60 p-3 space-y-2.5">
+                    <div className="flex items-center gap-1.5">
+                      <CheckCircle2 size={12} className="text-green-600 shrink-0" />
+                      <span className="text-[11px] font-semibold text-green-700 uppercase tracking-wide">Tarefa entregue</span>
+                    </div>
+
+                    {/* Tempo total + data da entrega */}
+                    <div className="flex items-center gap-3 text-xs text-neutral-700 flex-wrap">
+                      <span className="flex items-center gap-1"><Clock size={11} className="text-green-600" /> {formatHms(trackedHours)}</span>
+                      {deliveryDate && <span className="text-neutral-500">Entregue em {fmtBrDate(deliveryDate)}</span>}
+                    </div>
+
+                    {doneParts.length > 0 ? (
+                      // Multi-responsável: entrega de cada um, claramente separada
+                      <div className="space-y-2">
+                        {doneParts.map((q) => {
+                          const p = orgProfiles.find((x) => x.id === q.user_id);
+                          const nm = p?.full_name ?? q.user_id.slice(0, 8);
+                          return (
+                            <div key={q.id} className="rounded-lg border border-green-100 bg-white/70 p-2 space-y-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <Avatar className="w-4 h-4">
+                                    <AvatarImage src={p?.avatar_url ?? undefined} />
+                                    <AvatarFallback className="text-[8px] bg-brand-navy/10 text-brand-navy">{getInitials(nm)}</AvatarFallback>
+                                  </Avatar>
+                                  <span className="text-xs font-medium text-neutral-700 truncate">{nm}</span>
+                                </div>
+                                <span className="text-[10px] text-neutral-500 shrink-0 flex items-center gap-2">
+                                  <span className="flex items-center gap-0.5"><Clock size={9} /> {formatHms(q.hours_spent ?? 0)}</span>
+                                  {q.delivered_at && <span>{fmtBrDate(q.delivered_at)}</span>}
+                                </span>
+                              </div>
+                              {q.delivery_note && <p className="text-[11px] text-neutral-600 leading-snug">{q.delivery_note}</p>}
+                              {q.delivery_link && (
+                                <a href={q.delivery_link} target="_blank" rel="noopener noreferrer" className="text-[11px] text-brand-teal hover:underline break-all flex items-center gap-1">
+                                  <Link2 size={10} className="shrink-0" />{q.delivery_link}
+                                </a>
+                              )}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      // Responsável único
+                      <>
+                        {(task as any).delivery_link && (
+                          <div>
+                            <p className="text-[10px] text-neutral-500 mb-0.5">Link do material</p>
+                            <a
+                              href={(task as any).delivery_link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-brand-teal hover:underline break-all flex items-center gap-1"
+                            >
+                              <Link2 size={10} className="shrink-0" />
+                              {(task as any).delivery_link}
+                            </a>
+                          </div>
+                        )}
+                        {(task as any).delivery_note && (
+                          <div>
+                            <p className="text-[10px] text-neutral-500 mb-0.5">O que foi entregue</p>
+                            <p className="text-xs text-neutral-700 leading-snug">{(task as any).delivery_note}</p>
+                          </div>
+                        )}
+                      </>
+                    )}
+                  </div>
+                )}
+
                 {/* Responsáveis / Alocados */}
                 <MetaField label="Responsáveis" icon={<Users size={12} />}>
                   {queue.length > 0 ? (
@@ -2100,78 +2175,6 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                   </div>
                 </MetaField>
 
-                {/* Tarefa entregue — resumo (tempo, link, comentário); por responsável quando multi */}
-                {showDeliveryBox && (
-                  <div className="mt-1 rounded-xl border border-green-200 bg-green-50/60 p-3 space-y-2.5">
-                    <div className="flex items-center gap-1.5">
-                      <CheckCircle2 size={12} className="text-green-600 shrink-0" />
-                      <span className="text-[11px] font-semibold text-green-700 uppercase tracking-wide">Tarefa entregue</span>
-                    </div>
-
-                    {/* Tempo total + data da entrega */}
-                    <div className="flex items-center gap-3 text-xs text-neutral-700 flex-wrap">
-                      <span className="flex items-center gap-1"><Clock size={11} className="text-green-600" /> {formatHms(trackedHours)}</span>
-                      {deliveryDate && <span className="text-neutral-500">Entregue em {fmtBrDate(deliveryDate)}</span>}
-                    </div>
-
-                    {doneParts.length > 0 ? (
-                      // Multi-responsável: entrega de cada um, claramente separada
-                      <div className="space-y-2">
-                        {doneParts.map((q) => {
-                          const p = orgProfiles.find((x) => x.id === q.user_id);
-                          const nm = p?.full_name ?? q.user_id.slice(0, 8);
-                          return (
-                            <div key={q.id} className="rounded-lg border border-green-100 bg-white/70 p-2 space-y-1">
-                              <div className="flex items-center justify-between gap-2">
-                                <div className="flex items-center gap-1.5 min-w-0">
-                                  <Avatar className="w-4 h-4">
-                                    <AvatarImage src={p?.avatar_url ?? undefined} />
-                                    <AvatarFallback className="text-[8px] bg-brand-navy/10 text-brand-navy">{getInitials(nm)}</AvatarFallback>
-                                  </Avatar>
-                                  <span className="text-xs font-medium text-neutral-700 truncate">{nm}</span>
-                                </div>
-                                <span className="text-[10px] text-neutral-500 shrink-0 flex items-center gap-2">
-                                  <span className="flex items-center gap-0.5"><Clock size={9} /> {formatHms(q.hours_spent ?? 0)}</span>
-                                  {q.delivered_at && <span>{fmtBrDate(q.delivered_at)}</span>}
-                                </span>
-                              </div>
-                              {q.delivery_note && <p className="text-[11px] text-neutral-600 leading-snug">{q.delivery_note}</p>}
-                              {q.delivery_link && (
-                                <a href={q.delivery_link} target="_blank" rel="noopener noreferrer" className="text-[11px] text-brand-teal hover:underline break-all flex items-center gap-1">
-                                  <Link2 size={10} className="shrink-0" />{q.delivery_link}
-                                </a>
-                              )}
-                            </div>
-                          );
-                        })}
-                      </div>
-                    ) : (
-                      // Responsável único
-                      <>
-                        {(task as any).delivery_link && (
-                          <div>
-                            <p className="text-[10px] text-neutral-500 mb-0.5">Link do material</p>
-                            <a
-                              href={(task as any).delivery_link}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="text-xs text-brand-teal hover:underline break-all flex items-center gap-1"
-                            >
-                              <Link2 size={10} className="shrink-0" />
-                              {(task as any).delivery_link}
-                            </a>
-                          </div>
-                        )}
-                        {(task as any).delivery_note && (
-                          <div>
-                            <p className="text-[10px] text-neutral-500 mb-0.5">O que foi entregue</p>
-                            <p className="text-xs text-neutral-700 leading-snug">{(task as any).delivery_note}</p>
-                          </div>
-                        )}
-                      </>
-                    )}
-                  </div>
-                )}
               </div>
             </div>
 
