@@ -10,7 +10,6 @@ export const projectService = {
       .select("*")
       .eq("org_id", ORG_ID)
       .eq("is_archived", false)
-      .order("is_favorite", { ascending: false })
       .order("updated_at", { ascending: false });
 
     if (error) throw error;

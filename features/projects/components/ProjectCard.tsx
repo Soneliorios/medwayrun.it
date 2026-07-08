@@ -12,6 +12,8 @@ import {
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
 import { useProjectActions } from "../hooks/useProjects";
+import { useFavoriteStore } from "../store/favoriteStore";
+import { useEffect } from "react";
 
 interface Props {
   project: Project;
@@ -19,7 +21,11 @@ interface Props {
 }
 
 export function ProjectCard({ project, onEdit }: Props) {
-  const { toggleFavorite, archiveProject } = useProjectActions();
+  const { archiveProject } = useProjectActions();
+  const isFavorite = useFavoriteStore((s) => s.ids.includes(project.id));
+  const toggleFavorite = useFavoriteStore((s) => s.toggle);
+  const loadFavorites = useFavoriteStore((s) => s.load);
+  useEffect(() => { loadFavorites(); }, [loadFavorites]);
 
   return (
     <div className="group relative bg-white rounded-xl border border-neutral-100 shadow-sm hover:shadow-md transition-all duration-150 overflow-hidden">
@@ -42,12 +48,12 @@ export function ProjectCard({ project, onEdit }: Props) {
               onClick={() => toggleFavorite(project.id)}
               className={cn(
                 "w-7 h-7 rounded-md flex items-center justify-center transition-colors",
-                project.is_favorite
+                isFavorite
                   ? "text-brand-yellow"
                   : "text-neutral-300 hover:text-brand-yellow opacity-0 group-hover:opacity-100"
               )}
             >
-              <Star size={14} fill={project.is_favorite ? "currentColor" : "none"} />
+              <Star size={14} fill={isFavorite ? "currentColor" : "none"} />
             </button>
 
             <DropdownMenu>

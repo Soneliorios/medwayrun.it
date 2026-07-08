@@ -15,6 +15,7 @@ import {
 import { ProjectForm } from "@/features/projects/components/ProjectForm";
 import { useProjectStore } from "@/features/projects/store/projectStore";
 import { useProjectActions } from "@/features/projects/hooks/useProjects";
+import { useFavoriteStore } from "@/features/projects/store/favoriteStore";
 import { createRawClient } from "@/lib/supabase/client";
 import { useBoardAccessMap } from "@/lib/boardAccess";
 import { cn } from "@/lib/utils";
@@ -50,7 +51,12 @@ async function computeStats(): Promise<Record<string, ProjectStats>> {
 
 export function ProjectsExplorer({ title = "Quadros", noun = "quadro" }: { title?: string; noun?: string } = {}) {
   const projects = useProjectStore((s) => s.projects);
-  const { toggleFavorite, archiveProject } = useProjectActions();
+  const { archiveProject } = useProjectActions();
+  const favIds = useFavoriteStore((s) => s.ids);
+  const toggleFavorite = useFavoriteStore((s) => s.toggle);
+  const loadFavorites = useFavoriteStore((s) => s.load);
+  useEffect(() => { loadFavorites(); }, [loadFavorites]);
+  const isFav = (id: string) => favIds.includes(id);
   const [search, setSearch] = useState("");
   const [showCreate, setShowCreate] = useState(false);
   const [editProject, setEditProject] = useState<Project | null>(null);
@@ -76,10 +82,13 @@ export function ProjectsExplorer({ title = "Quadros", noun = "quadro" }: { title
     // Hide boards the user cannot view (private without access). While access is
     // loading, don't hide anything to avoid a flash of empty state.
     if (!accessLoading) list = list.filter((p) => accessMap[p.id]?.canView !== false);
-    if (filterBy === "favorites") list = list.filter((p) => p.is_favorite);
+    if (filterBy === "favorites") list = list.filter((p) => isFav(p.id));
     // "active" = has open tasks; "all" = everything
     if (filterBy === "active") list = list.filter((p) => (stats[p.id]?.total ?? 0) > (stats[p.id]?.delivered ?? 0));
     const sorted = [...list].sort((a, b) => {
+      // My favorites always float to the top.
+      const fa = isFav(a.id) ? 1 : 0, fb = isFav(b.id) ? 1 : 0;
+      if (fa !== fb) return fb - fa;
       if (sortBy === "name") return a.name.localeCompare(b.name);
       if (sortBy === "progress") {
         const pa = stats[a.id] ? stats[a.id].delivered / Math.max(stats[a.id].total, 1) : 0;
@@ -89,7 +98,7 @@ export function ProjectsExplorer({ title = "Quadros", noun = "quadro" }: { title
       return (b.updated_at ?? "").localeCompare(a.updated_at ?? "");
     });
     return sorted;
-  }, [projects, search, filterBy, sortBy, stats]);
+  }, [projects, search, filterBy, sortBy, stats, favIds]);
 
   const total = filtered.length;
   const pageCount = Math.max(1, Math.ceil(total / PAGE_SIZE));
@@ -138,7 +147,7 @@ export function ProjectsExplorer({ title = "Quadros", noun = "quadro" }: { title
         ) : view === "cards" ? (
           <div className="grid sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-3 max-w-6xl">
             {pageItems.map((p) => (
-              <BoardCard key={p.id} project={p} stats={stats[p.id]} onEdit={setEditProject} onFavorite={toggleFavorite} onArchive={archiveProject} onDuplicate={duplicate} />
+              <BoardCard key={p.id} project={p} favorite={isFav(p.id)} stats={stats[p.id]} onEdit={setEditProject} onFavorite={toggleFavorite} onArchive={archiveProject} onDuplicate={duplicate} />
             ))}
           </div>
         ) : (
@@ -163,7 +172,7 @@ export function ProjectsExplorer({ title = "Quadros", noun = "quadro" }: { title
                         <Link href={`/boards/${p.id}`} className="flex items-center gap-2 text-sm font-medium text-brand-navy hover:text-brand-teal">
                           <span className="w-2.5 h-2.5 rounded-sm" style={{ background: p.color }} />
                           {p.name}
-                          {p.is_favorite && <Star size={11} className="text-brand-yellow" fill="currentColor" />}
+                          {isFav(p.id) && <Star size={11} className="text-brand-yellow" fill="currentColor" />}
                         </Link>
                       </td>
                       <td className="px-4 py-2.5 text-xs text-neutral-500">{s?.total ?? 0}</td>
@@ -212,8 +221,9 @@ export function ProjectsExplorer({ title = "Quadros", noun = "quadro" }: { title
   );
 }
 
-function BoardCard({ project, stats, onEdit, onFavorite, onArchive, onDuplicate }: {
+function BoardCard({ project, favorite, stats, onEdit, onFavorite, onArchive, onDuplicate }: {
   project: Project;
+  favorite: boolean;
   stats?: ProjectStats;
   onEdit: (p: Project) => void;
   onFavorite: (id: string) => void;
@@ -231,8 +241,8 @@ function BoardCard({ project, stats, onEdit, onFavorite, onArchive, onDuplicate 
             <h3 className="font-semibold text-brand-navy hover:text-brand-teal transition-colors truncate text-sm">{project.name}</h3>
           </Link>
           <div className="flex items-center gap-0.5 shrink-0">
-            <button onClick={() => onFavorite(project.id)} className={cn("w-6 h-6 rounded flex items-center justify-center transition-colors", project.is_favorite ? "text-brand-yellow" : "text-neutral-200 hover:text-brand-yellow opacity-0 group-hover:opacity-100")}>
-              <Star size={13} fill={project.is_favorite ? "currentColor" : "none"} />
+            <button onClick={() => onFavorite(project.id)} className={cn("w-6 h-6 rounded flex items-center justify-center transition-colors", favorite ? "text-brand-yellow" : "text-neutral-200 hover:text-brand-yellow opacity-0 group-hover:opacity-100")}>
+              <Star size={13} fill={favorite ? "currentColor" : "none"} />
             </button>
             <DropdownMenu>
               <DropdownMenuTrigger className="w-6 h-6 rounded flex items-center justify-center text-neutral-200 hover:text-neutral-600 hover:bg-neutral-100 transition-colors opacity-0 group-hover:opacity-100"><MoreHorizontal size={13} /></DropdownMenuTrigger>
