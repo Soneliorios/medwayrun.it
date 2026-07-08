@@ -113,9 +113,9 @@ export default function MePage() {
       ? tasksToShow.filter((t) => t.project_id === filterProject)
       : tasksToShow;
 
-    // Filter by stage (by name, so it works across boards)
+    // Filter by stage — filterStage holds a specific column_id (etapa+quadro).
     if (filterStage) {
-      result = result.filter((t) => stagesById[(t as any).column_id]?.name === filterStage);
+      result = result.filter((t) => (t as any).column_id === filterStage);
     }
 
     // Filter by status chips (tasks + created tabs) or legacy showDelivered checkbox
@@ -145,14 +145,38 @@ export default function MePage() {
 
   const showFilterBar = activeTab === "tasks" || activeTab === "created";
 
-  // Etapas disponíveis no filtro (por nome; limitadas ao projeto selecionado, se houver).
-  const stageOptions = Array.from(
-    new Set(
-      Object.values(stagesById)
-        .filter((s) => !filterProject || s.project_id === filterProject)
-        .map((s) => s.name)
-    )
-  ).sort((a, b) => a.localeCompare(b));
+  // Filtro de etapa DINÂMICO: só as etapas onde eu de fato tenho tarefas (na aba
+  // atual), rotuladas "Etapa — Quadro". filterStage guarda o column_id específico.
+  const activeBaseTasks = activeTab === "created" ? createdByMe : activeTab === "following" ? followingTasks : myTasks;
+  const stageOptions = (() => {
+    // Respeita o filtro de status (Abertas/Entregues/Todas) para não oferecer
+    // etapas cujas tarefas estão ocultas no momento.
+    const statusOk = (t: TaskWithRelations) => {
+      if (activeTab === "tasks" || activeTab === "created") {
+        if (filterStatus === "open") return t.status !== "delivered";
+        if (filterStatus === "delivered") return t.status === "delivered";
+        return true;
+      }
+      return showDelivered ? true : t.status !== "delivered";
+    };
+    const seen = new Map<string, string>(); // column_id -> "Etapa — Quadro"
+    for (const t of activeBaseTasks) {
+      if (!statusOk(t)) continue;
+      const colId = (t as any).column_id as string | null;
+      const st = colId ? stagesById[colId] : null;
+      if (!colId || !st) continue;
+      if (filterProject && st.project_id !== filterProject) continue;
+      if (!seen.has(colId)) {
+        const board = projects.find((p) => p.id === st.project_id)?.name ?? "";
+        seen.set(colId, board ? `${st.name} — ${board}` : st.name);
+      }
+    }
+    return [...seen.entries()].map(([id, label]) => ({ id, label })).sort((a, b) => a.label.localeCompare(b.label));
+  })();
+
+  // Reseta o filtro de etapa ao trocar de aba (o column_id selecionado pode não
+  // existir na outra aba, o que esconderia tudo).
+  useEffect(() => { setFilterStage(""); }, [activeTab]);
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -240,11 +264,11 @@ export default function MePage() {
             <select
               value={filterStage}
               onChange={(e) => setFilterStage(e.target.value)}
-              className="text-xs border border-neutral-200 rounded-lg px-2 py-1 bg-white focus:outline-none focus:border-brand-teal text-neutral-600"
+              className="text-xs border border-neutral-200 rounded-lg px-2 py-1 bg-white focus:outline-none focus:border-brand-teal text-neutral-600 max-w-[220px]"
             >
               <option value="">Todas as etapas</option>
-              {stageOptions.map((name) => (
-                <option key={name} value={name}>{name}</option>
+              {stageOptions.map((o) => (
+                <option key={o.id} value={o.id}>{o.label}</option>
               ))}
             </select>
           )}
