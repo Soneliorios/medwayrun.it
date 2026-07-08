@@ -40,7 +40,7 @@ export async function GET() {
   );
 
   const [{ data: membersData }, { data: { users } }] = await Promise.all([
-    admin.from("members").select("user_id, role, joined_at").eq("org_id", ORG_ID),
+    admin.from("members").select("user_id, role, joined_at, approved").eq("org_id", ORG_ID),
     admin.auth.admin.listUsers({ perPage: 1000 }),
   ]);
 
@@ -49,7 +49,7 @@ export async function GET() {
   const result = users
     .filter((u) => memberMap.has(u.id))
     .map((u) => {
-      const m = memberMap.get(u.id)!;
+      const m = memberMap.get(u.id)! as { role: string; joined_at: string; approved?: boolean };
       return {
         id: u.id,
         email: u.email ?? "",
@@ -58,6 +58,7 @@ export async function GET() {
           ?? "Sem nome",
         role: m.role as string,
         joined_at: m.joined_at as string,
+        approved: m.approved !== false, // default a true se coluna ainda não existir
       };
     })
     .sort((a, b) => {

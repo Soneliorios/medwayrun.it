@@ -25,6 +25,7 @@ interface SupabaseOrgUser {
   full_name: string;
   role: string; // "owner" | "admin" | "member" | "viewer"
   joined_at: string;
+  approved: boolean;
 }
 
 const SB_ROLE_LABEL: Record<string, string> = {
@@ -123,6 +124,18 @@ export default function AdminPage() {
     setActionLoading(userId);
     await fetch(`/api/admin/users/${userId}`, { method: "DELETE" });
     setConfirmRemove(null);
+    setActionLoading(null);
+    await loadSbUsers();
+  }
+
+  // Aprovar um novo cadastro (libera o acesso).
+  async function handleApproveUser(userId: string) {
+    setActionLoading(userId);
+    await fetch(`/api/admin/users/${userId}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ approved: true }),
+    });
     setActionLoading(null);
     await loadSbUsers();
   }
@@ -451,6 +464,53 @@ export default function AdminPage() {
           <div className="space-y-5 pt-2">
 
             <>
+                {/* Contas aguardando aprovação (novos cadastros) */}
+                {!sbUsersLoading && sbUsers.some((u) => !u.approved) && (
+                  <section className="bg-white rounded-xl border border-amber-200 overflow-hidden">
+                    <div className="flex items-center gap-2 px-5 py-3 border-b border-amber-100 bg-amber-50/60">
+                      <UserPlus size={15} className="text-amber-600 shrink-0" />
+                      <h2 className="text-sm font-semibold text-amber-800">Contas aguardando aprovação</h2>
+                      <span className="ml-auto text-xs font-medium text-amber-700 bg-amber-100 rounded-full px-2 py-0.5">
+                        {sbUsers.filter((u) => !u.approved).length}
+                      </span>
+                    </div>
+                    <div className="divide-y divide-neutral-50">
+                      {sbUsers.filter((u) => !u.approved).map((u) => {
+                        const isLoading = actionLoading === u.id;
+                        return (
+                          <div key={u.id} className="flex items-center gap-3 px-5 py-3">
+                            <div className="w-9 h-9 rounded-full bg-amber-100 flex items-center justify-center text-xs font-bold text-amber-700 shrink-0">
+                              {u.full_name.split(" ").slice(0, 2).map((w) => w[0]).join("").toUpperCase()}
+                            </div>
+                            <div className="flex-1 min-w-0">
+                              <p className="text-sm font-medium text-neutral-800 truncate">{u.full_name}</p>
+                              <p className="text-xs text-neutral-400 truncate">{u.email}</p>
+                            </div>
+                            {isLoading ? (
+                              <Loader2 size={14} className="animate-spin text-neutral-300 shrink-0" />
+                            ) : (
+                              <div className="flex items-center gap-2 shrink-0">
+                                <button
+                                  onClick={() => handleApproveUser(u.id)}
+                                  className="inline-flex items-center gap-1 text-xs font-medium text-white bg-green-600 hover:bg-green-700 rounded-lg px-3 py-1.5 transition-colors"
+                                >
+                                  <Check size={13} /> Aprovar
+                                </button>
+                                <button
+                                  onClick={() => setConfirmRemove(u.id)}
+                                  className="text-xs font-medium text-neutral-500 border border-neutral-200 rounded-lg px-3 py-1.5 hover:bg-neutral-50 transition-colors"
+                                >
+                                  Rejeitar
+                                </button>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </section>
+                )}
+
                 {/* Stats */}
                 {!sbUsersLoading && (
                   <div className="grid grid-cols-3 gap-3">

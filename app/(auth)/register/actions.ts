@@ -38,15 +38,17 @@ export async function signUpAction(
     return error.message;
   }
 
-  // Auto-add new user to the org members table (requires service role to bypass RLS)
+  // Auto-add new user to the org members table (requires service role to bypass RLS).
+  // approved=false: a conta fica "em análise" até o superadmin aprovar.
   if (data.user?.id) {
     const admin = createAdminClient();
     await admin.from("members").insert({
       org_id: ORG_ID,
       user_id: data.user.id,
       role: "member",
+      approved: false,
     });
   }
 
-  redirect("/login?registered=1");
+  redirect("/login?pending=1");
 }

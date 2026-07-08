@@ -41,6 +41,7 @@ export async function GET(request: NextRequest) {
           org_id: process.env.NEXT_PUBLIC_ORG_ID ?? "00000000-0000-0000-0000-000000000001",
           user_id: user.id,
           role: "member",
+          approved: false, // conta em análise até o superadmin aprovar
         },
         { onConflict: "org_id,user_id", ignoreDuplicates: true }
       );

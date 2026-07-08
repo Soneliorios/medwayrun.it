@@ -39,24 +39,39 @@ export async function PATCH(
   }
 
   const { id } = await params;
-  const { role } = await request.json() as { role: string };
-
-  if (!["member", "admin", "owner"].includes(role)) {
-    return NextResponse.json({ error: "Invalid role" }, { status: 400 });
-  }
-  // Only owner can promote to owner or demote an owner
-  if ((role === "owner") && caller.role !== "owner") {
-    return NextResponse.json({ error: "Only owner can promote to owner" }, { status: 403 });
-  }
+  const body = await request.json() as { role?: string; approved?: boolean };
 
   const admin = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
   );
 
+  const updates: Record<string, unknown> = {};
+
+  // Aprovar / reprovar conta (aprovação de novos cadastros).
+  if (typeof body.approved === "boolean") {
+    updates.approved = body.approved;
+  }
+
+  // Alterar papel.
+  if (body.role !== undefined) {
+    if (!["member", "admin", "owner"].includes(body.role)) {
+      return NextResponse.json({ error: "Invalid role" }, { status: 400 });
+    }
+    // Only owner can promote to owner or demote an owner
+    if (body.role === "owner" && caller.role !== "owner") {
+      return NextResponse.json({ error: "Only owner can promote to owner" }, { status: 403 });
+    }
+    updates.role = body.role;
+  }
+
+  if (Object.keys(updates).length === 0) {
+    return NextResponse.json({ error: "Nothing to update" }, { status: 400 });
+  }
+
   const { error } = await admin
     .from("members")
-    .update({ role })
+    .update(updates)
     .eq("user_id", id)
     .eq("org_id", ORG_ID);
 
