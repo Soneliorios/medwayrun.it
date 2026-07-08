@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Zap, Plus, ArrowRight, Clock, UserCheck, MoveRight, Bell, Tag, Trash2,
   X, Mail, Flag, UserMinus, GitBranch, ClipboardCheck,
-  MessageSquare, Paperclip, CheckCircle2, XCircle,
+  MessageSquare, Paperclip, CheckCircle2, XCircle, MapPin, Hourglass,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -20,18 +20,24 @@ import {
 
 // ── Trigger & action catalogs ───────────────────────────────────────────────────
 
-// extra: "stage" → dropdown of the board's stages; "approver" → qualquer/usuário X;
+// kind: "event" dispara no momento em que acontece; "condition" é um estado que
+// precisa ser verdadeiro (combinável via E/OU com os demais).
+// extra: "stage" → dropdown das etapas do quadro; "approver" → qualquer/usuário X;
 // "days" → dias antes do prazo.
-const TRIGGERS: Record<string, { label: string; icon: React.ElementType; extra?: "stage" | "approver" | "days" }> = {
-  task_created: { label: "Tarefa criada", icon: Plus },
-  stage_entered: { label: "Tarefa entrar na etapa", icon: MoveRight, extra: "stage" },
-  task_approved: { label: "Tarefa aprovada", icon: CheckCircle2, extra: "approver" },
-  task_adjustment: { label: "Aprovação pediu ajuste", icon: ClipboardCheck, extra: "approver" },
-  task_rejected: { label: "Tarefa rejeitada", icon: XCircle, extra: "approver" },
-  task_delivered: { label: "Tarefa entregue", icon: UserCheck },
-  comment_added: { label: "Comentário adicionado", icon: MessageSquare },
-  attachment_added: { label: "Anexo adicionado", icon: Paperclip },
-  due_date_near: { label: "Prazo próximo", icon: Clock, extra: "days" },
+const TRIGGERS: Record<string, { label: string; icon: React.ElementType; kind: "event" | "condition"; extra?: "stage" | "approver" | "days" }> = {
+  // Eventos (disparam no momento em que ocorrem)
+  task_created: { label: "Tarefa criada", icon: Plus, kind: "event" },
+  stage_entered: { label: "Entrou na etapa (ao mover)", icon: MoveRight, kind: "event", extra: "stage" },
+  task_approved: { label: "Tarefa aprovada", icon: CheckCircle2, kind: "event", extra: "approver" },
+  task_adjustment: { label: "Aprovação pediu ajuste", icon: ClipboardCheck, kind: "event", extra: "approver" },
+  task_rejected: { label: "Tarefa rejeitada", icon: XCircle, kind: "event", extra: "approver" },
+  task_delivered: { label: "Tarefa entregue", icon: UserCheck, kind: "event" },
+  comment_added: { label: "Comentário adicionado", icon: MessageSquare, kind: "event" },
+  attachment_added: { label: "Anexo adicionado", icon: Paperclip, kind: "event" },
+  due_date_near: { label: "Prazo próximo", icon: Clock, kind: "event", extra: "days" },
+  // Condições (estado atual — não precisa ter mudado agora)
+  in_stage: { label: "Está na etapa", icon: MapPin, kind: "condition", extra: "stage" },
+  approval_pending: { label: "Tem aprovação pendente", icon: Hourglass, kind: "condition", extra: "approver" },
 };
 
 const ACTIONS: Record<string, { label: string; icon: React.ElementType; extra?: "users" | "tag" | "stage" | "email" | "priority" | "type" | "template" }> = {
@@ -70,7 +76,7 @@ function triggerExtraLabel(t: AutomationTrigger): string | null {
   const c = t.config ?? {};
   if (c.stage) return String(c.stage);
   if (c.approverName) return String(c.approverName);
-  if (t.event === "task_approved" || t.event === "task_adjustment" || t.event === "task_rejected") return "qualquer usuário";
+  if (TRIGGERS[t.event]?.extra === "approver") return "qualquer usuário";
   if (c.days != null) return `${c.days}d antes`;
   return null;
 }
@@ -338,13 +344,21 @@ function AutomationBuilder({
                 </div>
               )}
             </div>
+            <p className="text-[10px] text-neutral-400 mb-2 leading-snug">
+              Combine <strong>eventos</strong> (disparam ao acontecer) e <strong>condições</strong> (estado atual, ex.: “está na etapa X”, “tem aprovação pendente”). Com <strong>Todos (E)</strong> a regra só roda quando tudo for verdadeiro.
+            </p>
             <div className="space-y-2">
               {triggers.map((t, i) => (
                 <div key={i} className="border border-neutral-100 rounded-lg p-2.5 bg-neutral-50/50">
                   <div className="flex items-center gap-2">
                     {i > 0 && <span className="text-[9px] font-bold text-neutral-400 uppercase w-7 shrink-0">{logic === "AND" ? "E" : "OU"}</span>}
                     <select value={t.event} onChange={(e) => setTriggerEvent(i, e.target.value)} className="flex-1 text-xs border border-neutral-200 rounded-lg px-2 py-1.5 bg-white outline-none focus:border-brand-teal">
-                      {Object.entries(TRIGGERS).map(([v, tr]) => <option key={v} value={v}>{tr.label}</option>)}
+                      <optgroup label="Eventos (disparam ao acontecer)">
+                        {Object.entries(TRIGGERS).filter(([, tr]) => tr.kind === "event").map(([v, tr]) => <option key={v} value={v}>{tr.label}</option>)}
+                      </optgroup>
+                      <optgroup label="Condições (estado atual)">
+                        {Object.entries(TRIGGERS).filter(([, tr]) => tr.kind === "condition").map(([v, tr]) => <option key={v} value={v}>{tr.label}</option>)}
+                      </optgroup>
                     </select>
                     {triggers.length > 1 && (
                       <button onClick={() => removeTrigger(i)} className="text-neutral-300 hover:text-destructive shrink-0"><Trash2 size={12} /></button>
