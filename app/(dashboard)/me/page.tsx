@@ -35,6 +35,8 @@ export default function MePage() {
   const [activeTab, setActiveTab] = useState("tasks");
   const { profile, user } = useAuthStore();
   const [tasks, setTasks] = useState<TaskWithRelations[]>([]);
+  const [responsibleIds, setResponsibleIds] = useState<Set<string>>(new Set());
+  const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
 
   // Sort/filter state (shared between tasks and created tabs)
@@ -51,15 +53,28 @@ export default function MePage() {
     if (!userId) return;
     try {
       const supabase = createClient();
+      const raw = createRawClient();
+      // Task ids where I'm a responsible (anywhere in the queue) or a follower.
+      const [{ data: seq }, { data: fol }] = await Promise.all([
+        (raw as any).from("task_sequences").select("task_id").eq("user_id", userId),
+        (raw as any).from("task_followers").select("task_id").eq("user_id", userId),
+      ]);
+      const respIds = new Set<string>(((seq ?? []) as any[]).map((r) => r.task_id));
+      const folIds = new Set<string>(((fol ?? []) as any[]).map((r) => r.task_id));
+      const extraIds = Array.from(new Set<string>([...respIds, ...folIds]));
+      const orParts = [`assignee_id.eq.${userId}`, `created_by.eq.${userId}`];
+      if (extraIds.length) orParts.push(`id.in.(${extraIds.join(",")})`);
       const [{ data }, { data: typesData }] = await Promise.all([
         supabase
           .from("tasks")
           .select(`*, assignee:profiles!tasks_assignee_id_fkey(id, full_name, avatar_url)`)
-          .or(`assignee_id.eq.${userId},created_by.eq.${userId}`)
+          .or(orParts.join(","))
           .neq("status", "archived")
           .order("created_at", { ascending: false }),
         supabase.from("task_types").select("project_id, name, default_hours"),
       ]);
+      setResponsibleIds(respIds);
+      setFollowingIds(folIds);
       // Fallback: a task with no explicit estimate inherits its type's estimate.
       const hoursByKey = new Map(
         (typesData ?? []).map((t: any) => [`${t.project_id}|${t.name}`, t.default_hours])
@@ -77,8 +92,10 @@ export default function MePage() {
 
   useEffect(() => { reloadTasks(); }, [reloadTasks]);
 
-  const myTasks = tasks.filter((t) => (t as any).assignee_id === userId);
+  // "Para mim" = I'm a responsible (current assignee OR anywhere in the queue).
+  const myTasks = tasks.filter((t) => (t as any).assignee_id === userId || responsibleIds.has(t.id));
   const createdByMe = tasks.filter((t) => (t as any).created_by === userId);
+  const followingTasks = tasks.filter((t) => followingIds.has(t.id));
 
   function applySortAndFilter(tasksToShow: TaskWithRelations[]): TaskWithRelations[] {
     // Filter by project
@@ -246,13 +263,16 @@ export default function MePage() {
           />
         )}
         {activeTab === "following" && (
-          <div className="flex flex-col items-center justify-center py-16 text-neutral-400">
-            <Eye size={32} className="mb-2 opacity-30" />
-            <p className="text-sm">Nenhuma tarefa sendo acompanhada.</p>
-          </div>
+          <TaskList
+            tasks={applySortAndFilter(followingTasks)}
+            emptyText="Você não está acompanhando nenhuma tarefa."
+            showDelivered={filterStatus !== "open"}
+            onOpen={setOpenTaskId}
+            onChanged={reloadTasks}
+          />
         )}
         {activeTab === "approvals" && <MyApprovals onOpenTask={setOpenTaskId} />}
-        {activeTab === "calendar" && <MiniCalendar tasks={myTasks} />}
+        {activeTab === "calendar" && <MiniCalendar tasks={myTasks} onOpen={setOpenTaskId} />}
         {activeTab === "time" && (
           <>
             {null /* LiquidTimeSummary removed — migrated to Supabase */}
@@ -574,7 +594,7 @@ function ManualTimeModal({ taskTitle, onClose, onSave }: { taskTitle: string; on
   );
 }
 
-function MiniCalendar({ tasks }: { tasks: TaskWithRelations[] }) {
+function MiniCalendar({ tasks, onOpen }: { tasks: TaskWithRelations[]; onOpen: (id: string) => void }) {
   const today = new Date();
   const [monthOffset, setMonthOffset] = useState(0);
 
@@ -668,17 +688,20 @@ function MiniCalendar({ tasks }: { tasks: TaskWithRelations[] }) {
                 {date.getDate()}
               </span>
               {dayTasks.length > 0 && (
-                <div className="flex flex-wrap gap-0.5 mt-1">
-                  {dayTasks.slice(0, 3).map((t) => (
-                    <span
+                <div className="flex flex-col gap-0.5 mt-1 overflow-hidden">
+                  {dayTasks.slice(0, 2).map((t) => (
+                    <button
                       key={t.id}
-                      className="w-1.5 h-1.5 rounded-full shrink-0"
-                      style={{ background: PRIORITY_COLORS[t.priority] ?? "#ccc" }}
+                      onClick={() => onOpen(t.id)}
                       title={t.title}
-                    />
+                      className="flex items-center gap-1 text-left truncate hover:bg-neutral-100 rounded px-0.5 -mx-0.5 transition-colors"
+                    >
+                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: PRIORITY_COLORS[t.priority] ?? "#ccc" }} />
+                      <span className="text-[9px] text-neutral-500 truncate leading-tight">{t.title}</span>
+                    </button>
                   ))}
-                  {dayTasks.length > 3 && (
-                    <span className="text-[8px] text-neutral-400 leading-none mt-0.5">+{dayTasks.length - 3}</span>
+                  {dayTasks.length > 2 && (
+                    <span className="text-[8px] text-neutral-400 leading-none">+{dayTasks.length - 2}</span>
                   )}
                 </div>
               )}
@@ -707,14 +730,21 @@ function Timesheet() {
 
   const reload = useCallback(async () => {
     const supabase = createClient();
-    const { data } = await supabase
-      .from("time_entries")
-      .select("started_at, duration_minutes")
-      .eq("user_id", userId);
+    const raw = createRawClient();
+    const [{ data: entries }, { data: deliveries }] = await Promise.all([
+      supabase.from("time_entries").select("started_at, duration_minutes").eq("user_id", userId),
+      // Parts this user delivered — count their spent time on the delivery day.
+      (raw as any).from("task_sequences").select("delivered_at, hours_spent").eq("user_id", userId).not("delivered_at", "is", null),
+    ]);
     const map: Record<string, number> = {};
-    (data ?? []).forEach((e: any) => {
+    ((entries ?? []) as any[]).forEach((e) => {
       const date = (e.started_at as string).slice(0, 10);
       map[date] = (map[date] ?? 0) + (e.duration_minutes ?? 0);
+    });
+    ((deliveries ?? []) as any[]).forEach((d) => {
+      if (!d.delivered_at || !d.hours_spent) return;
+      const date = (d.delivered_at as string).slice(0, 10);
+      map[date] = (map[date] ?? 0) + Math.round((d.hours_spent as number) * 60);
     });
     setMinutesByDate(map);
   }, [userId]);
