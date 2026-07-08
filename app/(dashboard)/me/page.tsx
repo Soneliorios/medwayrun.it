@@ -42,8 +42,11 @@ export default function MePage() {
   // Sort/filter state (shared between tasks and created tabs)
   const [sortBy, setSortBy] = useState<SortBy>("due_date");
   const [filterProject, setFilterProject] = useState<string>("");
+  const [filterStage, setFilterStage] = useState<string>(""); // por NOME da etapa (entre quadros)
   const [showDelivered, setShowDelivered] = useState(false);
   const [filterStatus, setFilterStatus] = useState<"open" | "delivered" | "all">("open");
+  // column_id -> etapa (nome/cor/quadro) para exibir e filtrar por etapa no /me.
+  const [stagesById, setStagesById] = useState<Record<string, { name: string; color: string; project_id: string }>>({});
 
   const projects = useProjectStore((s) => s.projects);
 
@@ -64,7 +67,7 @@ export default function MePage() {
       const extraIds = Array.from(new Set<string>([...respIds, ...folIds]));
       const orParts = [`assignee_id.eq.${userId}`, `created_by.eq.${userId}`];
       if (extraIds.length) orParts.push(`id.in.(${extraIds.join(",")})`);
-      const [{ data }, { data: typesData }] = await Promise.all([
+      const [{ data }, { data: typesData }, { data: colsData }] = await Promise.all([
         supabase
           .from("tasks")
           .select(`*, assignee:profiles!tasks_assignee_id_fkey(id, full_name, avatar_url)`)
@@ -72,9 +75,16 @@ export default function MePage() {
           .neq("status", "archived")
           .order("created_at", { ascending: false }),
         supabase.from("task_types").select("project_id, name, default_hours"),
+        supabase.from("columns").select("id, name, color, project_id"),
       ]);
       setResponsibleIds(respIds);
       setFollowingIds(folIds);
+      // Mapa de etapas (por coluna) para exibir/filtrar a etapa de cada tarefa.
+      const stageMap: Record<string, { name: string; color: string; project_id: string }> = {};
+      ((colsData ?? []) as any[]).forEach((c) => {
+        stageMap[c.id] = { name: c.name, color: c.color ?? "#A0A4A8", project_id: c.project_id };
+      });
+      setStagesById(stageMap);
       // Fallback: a task with no explicit estimate inherits its type's estimate.
       const hoursByKey = new Map(
         (typesData ?? []).map((t: any) => [`${t.project_id}|${t.name}`, t.default_hours])
@@ -103,6 +113,11 @@ export default function MePage() {
       ? tasksToShow.filter((t) => t.project_id === filterProject)
       : tasksToShow;
 
+    // Filter by stage (by name, so it works across boards)
+    if (filterStage) {
+      result = result.filter((t) => stagesById[(t as any).column_id]?.name === filterStage);
+    }
+
     // Filter by status chips (tasks + created tabs) or legacy showDelivered checkbox
     if (activeTab === "tasks" || activeTab === "created") {
       if (filterStatus === "open") result = result.filter((t) => t.status !== "delivered");
@@ -129,6 +144,15 @@ export default function MePage() {
   }
 
   const showFilterBar = activeTab === "tasks" || activeTab === "created";
+
+  // Etapas disponíveis no filtro (por nome; limitadas ao projeto selecionado, se houver).
+  const stageOptions = Array.from(
+    new Set(
+      Object.values(stagesById)
+        .filter((s) => !filterProject || s.project_id === filterProject)
+        .map((s) => s.name)
+    )
+  ).sort((a, b) => a.localeCompare(b));
 
   return (
     <div className="flex flex-col h-full overflow-hidden">
@@ -203,12 +227,24 @@ export default function MePage() {
           {projects.length > 0 && (
             <select
               value={filterProject}
-              onChange={(e) => setFilterProject(e.target.value)}
+              onChange={(e) => { setFilterProject(e.target.value); setFilterStage(""); }}
               className="text-xs border border-neutral-200 rounded-lg px-2 py-1 bg-white focus:outline-none focus:border-brand-teal text-neutral-600"
             >
               <option value="">Todos os projetos</option>
               {projects.map((p) => (
                 <option key={p.id} value={p.id}>{p.name}</option>
+              ))}
+            </select>
+          )}
+          {stageOptions.length > 0 && (
+            <select
+              value={filterStage}
+              onChange={(e) => setFilterStage(e.target.value)}
+              className="text-xs border border-neutral-200 rounded-lg px-2 py-1 bg-white focus:outline-none focus:border-brand-teal text-neutral-600"
+            >
+              <option value="">Todas as etapas</option>
+              {stageOptions.map((name) => (
+                <option key={name} value={name}>{name}</option>
               ))}
             </select>
           )}
@@ -248,6 +284,7 @@ export default function MePage() {
           <TaskList
             tasks={applySortAndFilter(myTasks)}
             emptyText="Nenhuma tarefa alocada para você."
+            stagesById={stagesById}
             showDelivered={filterStatus !== "open"}
             onOpen={setOpenTaskId}
             onChanged={reloadTasks}
@@ -257,6 +294,7 @@ export default function MePage() {
           <TaskList
             tasks={applySortAndFilter(createdByMe)}
             emptyText="Você ainda não criou nenhuma tarefa."
+            stagesById={stagesById}
             showDelivered={filterStatus !== "open"}
             onOpen={setOpenTaskId}
             onChanged={reloadTasks}
@@ -266,6 +304,7 @@ export default function MePage() {
           <TaskList
             tasks={applySortAndFilter(followingTasks)}
             emptyText="Você não está acompanhando nenhuma tarefa."
+            stagesById={stagesById}
             showDelivered={filterStatus !== "open"}
             onOpen={setOpenTaskId}
             onChanged={reloadTasks}
@@ -297,12 +336,14 @@ function TaskList({
   showDelivered,
   onOpen,
   onChanged,
+  stagesById,
 }: {
   tasks: TaskWithRelations[];
   emptyText: string;
   showDelivered?: boolean;
   onOpen: (id: string) => void;
   onChanged: () => void;
+  stagesById: Record<string, { name: string; color: string; project_id: string }>;
 }) {
   if (tasks.length === 0) {
     return (
@@ -325,7 +366,7 @@ function TaskList({
             Em aberto · {open.length}
           </p>
           <div className="space-y-2">
-            {open.map(t => <TaskRow key={t.id} task={t} onOpen={onOpen} onChanged={onChanged} />)}
+            {open.map(t => <TaskRow key={t.id} task={t} onOpen={onOpen} onChanged={onChanged} stage={stagesById[(t as any).column_id]} />)}
           </div>
         </div>
       )}
@@ -335,7 +376,7 @@ function TaskList({
             Entregues · {done.length}
           </p>
           <div className="space-y-2 opacity-60">
-            {done.map(t => <TaskRow key={t.id} task={t} onOpen={onOpen} onChanged={onChanged} />)}
+            {done.map(t => <TaskRow key={t.id} task={t} onOpen={onOpen} onChanged={onChanged} stage={stagesById[(t as any).column_id]} />)}
           </div>
         </div>
       )}
@@ -343,7 +384,7 @@ function TaskList({
   );
 }
 
-function TaskRow({ task: taskProp, onOpen, onChanged }: { task: TaskWithRelations; onOpen: (id: string) => void; onChanged: () => void }) {
+function TaskRow({ task: taskProp, onOpen, onChanged, stage }: { task: TaskWithRelations; onOpen: (id: string) => void; onChanged: () => void; stage?: { name: string; color: string; project_id: string } }) {
   const [task, setTaskState] = useState(taskProp);
   const [adjustOpen, setAdjustOpen] = useState(false);
   const { user } = useAuthStore();
@@ -443,6 +484,15 @@ function TaskRow({ task: taskProp, onOpen, onChanged }: { task: TaskWithRelation
               <span className="flex items-center gap-1 shrink-0">
                 <span className="w-2 h-2 rounded-full shrink-0" style={{ background: (proj as { color?: string }).color ?? "#00205B" }} />
                 <span className="text-[10px] text-neutral-400 truncate max-w-[100px]">{proj.name}</span>
+              </span>
+            )}
+            {stage && (
+              <span
+                className="shrink-0 text-[10px] font-medium px-1.5 py-0.5 rounded-full truncate max-w-[120px]"
+                style={{ background: `${stage.color}20`, color: stage.color }}
+                title={`Etapa: ${stage.name}`}
+              >
+                {stage.name}
               </span>
             )}
           </div>
