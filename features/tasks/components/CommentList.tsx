@@ -24,27 +24,39 @@ interface Comment {
   profiles?: { full_name: string | null; avatar_url: string | null } | null;
 }
 
-/** Render comment text with @mentions of known members highlighted. */
-function renderWithMentions(content: string, names: string[]) {
-  if (names.length === 0) return content;
-  // Longest names first so "Ana Paula" wins over "Ana".
-  const sorted = [...names].sort((a, b) => b.length - a.length);
+/** Highlight @mentions of known members within a plain-text segment. */
+function highlightMentions(text: string, names: string[], keyPrefix: string): React.ReactNode[] {
+  if (names.length === 0) return [text];
+  const sorted = [...names].sort((a, b) => b.length - a.length); // "Ana Paula" before "Ana"
   const escaped = sorted.map((n) => n.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"));
   const re = new RegExp(`@(${escaped.join("|")})`, "g");
   const out: React.ReactNode[] = [];
-  let last = 0;
-  let m: RegExpExecArray | null;
-  let i = 0;
-  while ((m = re.exec(content)) !== null) {
-    if (m.index > last) out.push(content.slice(last, m.index));
-    out.push(
-      <span key={`m${i++}`} className="text-brand-teal font-medium">
-        {m[0]}
-      </span>
-    );
+  let last = 0, m: RegExpExecArray | null, i = 0;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) out.push(text.slice(last, m.index));
+    out.push(<span key={`${keyPrefix}m${i++}`} className="text-brand-teal font-medium">{m[0]}</span>);
     last = m.index + m[0].length;
   }
-  if (last < content.length) out.push(content.slice(last));
+  if (last < text.length) out.push(text.slice(last));
+  return out;
+}
+
+/** Render comment text with clickable URLs and highlighted @mentions. */
+function renderContent(content: string, names: string[]) {
+  const urlRe = /(https?:\/\/[^\s]+)/g;
+  const out: React.ReactNode[] = [];
+  let last = 0, m: RegExpExecArray | null, i = 0;
+  while ((m = urlRe.exec(content)) !== null) {
+    if (m.index > last) out.push(...highlightMentions(content.slice(last, m.index), names, `t${i}`));
+    const url = m[0];
+    out.push(
+      <a key={`u${i++}`} href={url} target="_blank" rel="noopener noreferrer" className="text-brand-teal underline break-all" onClick={(e) => e.stopPropagation()}>
+        {url}
+      </a>
+    );
+    last = m.index + url.length;
+  }
+  if (last < content.length) out.push(...highlightMentions(content.slice(last), names, `t${i}`));
   return out;
 }
 
@@ -197,7 +209,7 @@ export function CommentList({ taskId, taskTitle }: Props) {
                   </span>
                 </div>
                 <p className="text-xs text-neutral-700 leading-relaxed whitespace-pre-wrap">
-                  {renderWithMentions(comment.content, memberNames)}
+                  {renderContent(comment.content, memberNames)}
                 </p>
               </div>
               {user?.id === comment.user_id && (

@@ -46,7 +46,11 @@ export function RichTextEditor({
       // explicitly disable them here to avoid duplicates if a future version adds them
       StarterKit.configure({ }),
       Underline,
-      Link.configure({ openOnClick: false, autolink: true }),
+      Link.configure({
+        openOnClick: true,
+        autolink: true,
+        HTMLAttributes: { target: "_blank", rel: "noopener noreferrer", class: "text-brand-teal underline" },
+      }),
       Placeholder.configure({ placeholder }),
     ],
     content,
