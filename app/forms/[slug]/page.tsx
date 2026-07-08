@@ -149,6 +149,12 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
     return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
   }
 
+  // Datas no padrão brasileiro (dd/mm/aaaa) ao gravar no corpo da tarefa.
+  function formatBrDate(v: string) {
+    const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(v);
+    return m ? `${m[3]}/${m[2]}/${m[1]}` : v;
+  }
+
   async function submit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
@@ -181,7 +187,8 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
             nativeExtras[f.maps_to] = val;
           }
         } else {
-          customLines.push(`<p><strong>${escapeHtml(f.label)}:</strong> ${escapeHtml(val)}</p>`);
+          const display = f.type === 'date' ? formatBrDate(val) : val;
+          customLines.push(`<p><strong>${escapeHtml(f.label)}:</strong> ${escapeHtml(display)}</p>`);
         }
       });
 
