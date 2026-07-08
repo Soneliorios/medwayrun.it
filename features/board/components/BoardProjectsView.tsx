@@ -32,7 +32,7 @@ export function BoardProjectsView({ boardId, onTaskOpen }: Props) {
 
   const projectStats = useMemo(() => {
     return projects.map((bp) => {
-      const tasks = allTasks.filter((t) => (t as any).board_project_id === bp.id);
+      const tasks = allTasks.filter((t) => (t as any).board_subproject_id === bp.id);
       const total = tasks.length;
       const delivered = tasks.filter((t) => t.status === "delivered" || t.column_id === lastCol?.id).length;
       const trackedHours = tasks.reduce((sum, t) => sum + (t.tracked_hours ?? 0), 0);
@@ -49,7 +49,7 @@ export function BoardProjectsView({ boardId, onTaskOpen }: Props) {
     });
   }, [projects, allTasks, sortedColumns, lastCol]);
 
-  const unassigned = useMemo(() => allTasks.filter((t) => !(t as any).board_project_id), [allTasks]);
+  const unassigned = useMemo(() => allTasks.filter((t) => !(t as any).board_subproject_id), [allTasks]);
 
   if (projects.length === 0) {
     return (

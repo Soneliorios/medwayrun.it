@@ -56,6 +56,10 @@ export function GlobalCreateTaskModal() {
   const [description, setDescription] = useState("");
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null);
   const [selectedColumnId, setSelectedColumnId] = useState<string | null>(null);
+  // Subtask mode: when set, the new task is linked to this parent and the board
+  // is locked to the parent's board (a subtask always lives in the same board).
+  const [parentTaskId, setParentTaskId] = useState<string | null>(null);
+  const [parentTitle, setParentTitle] = useState<string | null>(null);
   const [priority, setPriority] = useState<Priority>("medium");
   const [dueDate, setDueDate] = useState("");
   const [desiredStartDate, setDesiredStartDate] = useState("");
@@ -140,6 +144,22 @@ export function GlobalCreateTaskModal() {
     }
     window.addEventListener("open-create-task-in-column", handleOpenInColumn);
     return () => window.removeEventListener("open-create-task-in-column", handleOpenInColumn);
+  }, []);
+
+  // Listen for "Nova subtarefa" from TaskDetail — locks to the parent's board and
+  // links the new task as a subtask (parent_task_id).
+  useEffect(() => {
+    function handleOpenSubtask(e: Event) {
+      const { projectId, columnId, parentTaskId: pid, parentTitle: ptitle } =
+        (e as CustomEvent<{ projectId: string; columnId?: string; parentTaskId: string; parentTitle?: string }>).detail;
+      setOpen(true);
+      setSelectedProjectId(projectId);
+      if (columnId) setSelectedColumnId(columnId);
+      setParentTaskId(pid);
+      setParentTitle(ptitle ?? null);
+    }
+    window.addEventListener("open-create-subtask", handleOpenSubtask);
+    return () => window.removeEventListener("open-create-subtask", handleOpenSubtask);
   }, []);
 
   // Focus title on open
@@ -257,6 +277,8 @@ export function GlobalCreateTaskModal() {
     setShowSubtasks(false);
     setNewChecklistItem("");
     setNewSubtask("");
+    setParentTaskId(null);
+    setParentTitle(null);
   }
 
   function reset() {
@@ -311,7 +333,7 @@ export function GlobalCreateTaskModal() {
       estimated_hours: estimatedHours ?? undefined,
       position: lastPos,
       assignee_id: assignees[0] || undefined,
-      board_project_id: boardProjectId || undefined,
+      board_subproject_id: boardProjectId || undefined,
       // Store the type as denormalized text (the field every board screen
       // reads). We intentionally do NOT set type_id: board types live in
       // localStorage with non-UUID ids that would violate the tasks.type_id
@@ -319,6 +341,8 @@ export function GlobalCreateTaskModal() {
       task_type: taskType || undefined,
       recurrence_config: recurrenceConfig,
       created_by: user?.id || undefined,
+      // Link to the parent when created via "Nova subtarefa".
+      parent_task_id: parentTaskId || undefined,
     } as any);
     const taskId: string | undefined = created?.id;
     if (!taskId) return null;
@@ -422,8 +446,13 @@ export function GlobalCreateTaskModal() {
             <div className="relative">
               <button
                 type="button"
-                onClick={() => togglePicker("project")}
-                className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-neutral-100 hover:bg-neutral-200 text-sm font-medium text-neutral-700 transition-colors"
+                onClick={() => { if (!parentTaskId) togglePicker("project"); }}
+                disabled={!!parentTaskId}
+                title={parentTaskId ? "Subtarefas são criadas sempre no quadro atual" : undefined}
+                className={cn(
+                  "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-neutral-100 text-sm font-medium text-neutral-700 transition-colors",
+                  parentTaskId ? "opacity-70 cursor-not-allowed" : "hover:bg-neutral-200"
+                )}
               >
                 <span
                   className="w-2.5 h-2.5 rounded-full shrink-0"
@@ -435,10 +464,10 @@ export function GlobalCreateTaskModal() {
                 <span className="max-w-[140px] truncate">
                   {selectedProject?.name ?? "Selecionar quadro"}
                 </span>
-                <ChevronDown size={12} />
+                {!parentTaskId && <ChevronDown size={12} />}
               </button>
 
-              {activePicker === "project" && (
+              {!parentTaskId && activePicker === "project" && (
                 <div className="absolute top-full left-0 mt-1 w-56 bg-white rounded-xl shadow-xl border border-neutral-100 py-1 z-10 max-h-52 overflow-y-auto">
                   {projects.length === 0 ? (
                     <p className="px-3 py-2 text-xs text-neutral-400">
@@ -472,6 +501,14 @@ export function GlobalCreateTaskModal() {
                 </div>
               )}
             </div>
+
+            {/* Subtask indicator */}
+            {parentTaskId && (
+              <span className="flex items-center gap-1 px-2 py-1 rounded-lg bg-brand-teal/10 text-brand-teal text-xs font-medium max-w-[220px]">
+                <GitBranch size={12} className="shrink-0" />
+                <span className="truncate">Subtarefa de: {parentTitle ?? "tarefa atual"}</span>
+              </span>
+            )}
 
             {/* Column/Stage selector */}
             {selectedProjectId && (

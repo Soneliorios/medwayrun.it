@@ -54,7 +54,7 @@ export type TaskWithRelations = Task & {
   subtasks?: TaskWithRelations[];
   _commentCount?: number;
   _attachmentCount?: number;
-  board_project_id?: string | null;
+  board_subproject_id?: string | null;
 };
 
 export type ColumnWithTasks = Column & {

@@ -50,6 +50,7 @@ import {
   Download,
   Eye,
   Pencil,
+  RotateCcw,
 } from "lucide-react";
 import { cn, formatDate, formatDateFull, isOverdue, formatHours, formatHms } from "@/lib/utils";
 import { PRIORITY_LABELS, PRIORITY_COLORS, formatElapsed } from "@/types";
@@ -57,6 +58,7 @@ import { taskService } from "../services/taskService";
 import { activityService, type TaskActivity } from "../services/activityService";
 import { approvalService } from "../services/approvalService";
 import { sequenceService, type SeqRow } from "../services/sequenceService";
+import { notificationService } from "@/features/notifications/services/notificationService";
 import { useBoardAccess } from "@/lib/boardAccess";
 import { areasService } from "@/lib/areasService";
 import { attachmentService } from "@/lib/attachmentService";
@@ -304,6 +306,8 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
     ?? queue.find((r) => r.status !== "done")?.user_id ?? null;
   // Only the current responsible (head of the queue) may deliver their part.
   const isActiveResponsible = !!activeQueueUserId && activeQueueUserId === user?.id;
+  // A responsible who already delivered their part (can reopen it at any time).
+  const myDoneRow = queue.find((r) => r.status === "done" && r.user_id === user?.id) ?? null;
 
   // "part" = advance the queue via the same delivery popup; "full" = deliver task
   const [deliveryMode, setDeliveryMode] = useState<"full" | "part">("full");
@@ -522,7 +526,9 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
 
   async function handleTrackedHoursUpdate(hours: number) {
     if (!task) return;
-    const rounded = Math.round(hours * 100) / 100;
+    // Round to the nearest second (not to 0.01h). Rounding to hundredths of an
+    // hour turned 1min (0.0167h) into 0.02h = 72s, adding a phantom +12s.
+    const rounded = Math.round(hours * 3600) / 3600;
     setTask((t) => t ? { ...t, tracked_hours: rounded } : t);
     store.updateTask(taskId, { tracked_hours: rounded } as any);
     await taskService.update(taskId, { tracked_hours: rounded } as any).catch(() => {
@@ -544,6 +550,27 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
     }
 
     await handleFieldUpdate("status", "delivered");
+
+    // Persist the delivery summary (date, link, note) so the "Tarefa entregue"
+    // box shows what was delivered. For a single responsible (no queue) the
+    // dialog's time is the task total; with a queue the total is already
+    // accumulated and each part's time lives on task_sequences.
+    // Split guaranteed columns from the newer link/note columns so a pending
+    // migration (supabase_task_delivery_details.sql) can't block the whole save.
+    const basePatch: Record<string, unknown> = { delivery_date: new Date().toISOString() };
+    if (queue.length === 0 && typeof opts?.hours === "number") {
+      basePatch.tracked_hours = Math.round(opts.hours * 3600) / 3600;
+    }
+    const notePatch: Record<string, unknown> = {};
+    if (opts?.link != null) notePatch.delivery_link = opts.link || null;
+    if (opts?.note != null) notePatch.delivery_note = opts.note || null;
+    setTask((t) => (t ? ({ ...t, ...basePatch, ...notePatch } as any) : t));
+    store.updateTask(taskId, { ...basePatch, ...notePatch } as any);
+    taskService.update(taskId, basePatch as any).catch((e) => console.error("[handleDeliver] persist delivery", e));
+    if (Object.keys(notePatch).length) {
+      taskService.update(taskId, notePatch as any).catch((e) =>
+        console.error("[handleDeliver] link/note — rode supabase_task_delivery_details.sql", e));
+    }
 
     // Move to the last column ("Concluído")
     const sorted = [...boardColumns].sort((a, b) => a.position - b.position);
@@ -572,6 +599,32 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
       store.moveTask(taskId, targetCol.id, pos);
       taskService.update(taskId, { column_id: targetCol.id } as any).catch(() => {});
     }
+  }
+
+  // A responsible who already delivered reopens THEIR part: the queue returns to
+  // them (they become active again), everyone after them goes back to pending,
+  // and those pushed back are notified they must wait longer.
+  async function handleReopenMyPart() {
+    if (!task || !user?.id) return;
+    const myRow = queue.find((q) => q.user_id === user.id && q.status === "done");
+    if (!myRow) return;
+    const { affectedUserIds } = await sequenceService.reopenFrom(taskId, myRow.id);
+    // If the whole task had been delivered, bring it back to an active stage.
+    if (isDelivered) await handleReopen();
+    // Notify everyone who was after me that their turn was pushed back.
+    const myName = orgProfiles.find((p) => p.id === user.id)?.full_name ?? "Um responsável";
+    await Promise.all(
+      affectedUserIds.map((uid) =>
+        notificationService.create({
+          userId: uid,
+          type: "task_assigned",
+          content: `${myName} reabriu a parte em "${task.title}". Sua vez foi adiada — pode ser necessário esperar mais.`,
+          taskId,
+          fromUserId: user.id,
+        })
+      )
+    );
+    await loadQueue();
   }
 
   async function handleDeleteTask() {
@@ -703,6 +756,14 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   const isCreatorOfTask = !!user?.id && (task as any)?.created_by === user.id;
   const canEditCard = boardAccess.canEdit || !isUser || !!isAssignee || isInQueue || isCreatorOfTask;
 
+  // Delivery summary ("Tarefa entregue" box). Shows when the task is delivered
+  // OR any responsible in the queue has delivered their part (parcial).
+  const doneParts = queue.filter((q) => q.status === "done");
+  const showDeliveryBox = isDelivered || doneParts.length > 0;
+  const deliveryDate = (task as any)?.delivery_date as string | null | undefined;
+  const fmtBrDate = (iso?: string | null) =>
+    iso ? new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" }) : "";
+
   // ── Render ─────────────────────────────────────────────────────────────────
 
   const isPage = variant === "page";
@@ -759,7 +820,17 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
               })()}
 
               {/* Deliver / Reopen button */}
-              {isDelivered ? (
+              {myDoneRow ? (
+                // A responsible who already delivered can always reopen their part.
+                <button
+                  onClick={handleReopenMyPart}
+                  title="Reabrir sua parte — a fila volta para você e os próximos são avisados que precisam esperar mais"
+                  className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all border bg-green-100 text-green-700 border-green-200 hover:bg-amber-100 hover:text-amber-700 hover:border-amber-300"
+                >
+                  <RotateCcw size={12} />
+                  Reabrir minha parte
+                </button>
+              ) : isDelivered ? (
                 <button
                   onClick={canActOnTask ? handleReopen : undefined}
                   title={canActOnTask ? "Clique para reabrir a tarefa" : "Somente o responsável pode reabrir"}
@@ -1162,7 +1233,14 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                         {subtasks.length} subtarefa{subtasks.length !== 1 ? "s" : ""}
                       </p>
                       <button
-                        onClick={() => window.dispatchEvent(new CustomEvent("open-create-task"))}
+                        onClick={() => window.dispatchEvent(new CustomEvent("open-create-subtask", {
+                          detail: {
+                            projectId: task.project_id,
+                            columnId: task.column_id,
+                            parentTaskId: taskId,
+                            parentTitle: task.title,
+                          },
+                        }))}
                         className="flex items-center gap-1 px-2 py-1 rounded-md text-xs bg-brand-teal text-white hover:bg-brand-teal/90 transition-colors"
                       >
                         <Plus size={11} />
@@ -1989,32 +2067,75 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
                   </div>
                 </MetaField>
 
-                {/* Detalhes da entrega — visible to leadership after delivery */}
-                {isDelivered && ((task as any).delivery_link || (task as any).delivery_note) && (
-                  <div className="mt-1 rounded-xl border border-green-200 bg-green-50/60 p-3 space-y-2">
-                    <div className="flex items-center gap-1.5 mb-1">
-                      <CheckCircle2 size={11} className="text-green-600 shrink-0" />
-                      <span className="text-[10px] font-semibold text-green-700 uppercase tracking-wide">Detalhes da entrega</span>
+                {/* Tarefa entregue — resumo (tempo, link, comentário); por responsável quando multi */}
+                {showDeliveryBox && (
+                  <div className="mt-1 rounded-xl border border-green-200 bg-green-50/60 p-3 space-y-2.5">
+                    <div className="flex items-center gap-1.5">
+                      <CheckCircle2 size={12} className="text-green-600 shrink-0" />
+                      <span className="text-[11px] font-semibold text-green-700 uppercase tracking-wide">Tarefa entregue</span>
                     </div>
-                    {(task as any).delivery_link && (
-                      <div>
-                        <p className="text-[10px] text-neutral-500 mb-0.5">Link do material</p>
-                        <a
-                          href={(task as any).delivery_link}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="text-xs text-brand-teal hover:underline break-all flex items-center gap-1"
-                        >
-                          <Link2 size={10} className="shrink-0" />
-                          {(task as any).delivery_link}
-                        </a>
+
+                    {/* Tempo total + data da entrega */}
+                    <div className="flex items-center gap-3 text-xs text-neutral-700 flex-wrap">
+                      <span className="flex items-center gap-1"><Clock size={11} className="text-green-600" /> {formatHms(trackedHours)}</span>
+                      {deliveryDate && <span className="text-neutral-500">Entregue em {fmtBrDate(deliveryDate)}</span>}
+                    </div>
+
+                    {doneParts.length > 0 ? (
+                      // Multi-responsável: entrega de cada um, claramente separada
+                      <div className="space-y-2">
+                        {doneParts.map((q) => {
+                          const p = orgProfiles.find((x) => x.id === q.user_id);
+                          const nm = p?.full_name ?? q.user_id.slice(0, 8);
+                          return (
+                            <div key={q.id} className="rounded-lg border border-green-100 bg-white/70 p-2 space-y-1">
+                              <div className="flex items-center justify-between gap-2">
+                                <div className="flex items-center gap-1.5 min-w-0">
+                                  <Avatar className="w-4 h-4">
+                                    <AvatarImage src={p?.avatar_url ?? undefined} />
+                                    <AvatarFallback className="text-[8px] bg-brand-navy/10 text-brand-navy">{getInitials(nm)}</AvatarFallback>
+                                  </Avatar>
+                                  <span className="text-xs font-medium text-neutral-700 truncate">{nm}</span>
+                                </div>
+                                <span className="text-[10px] text-neutral-500 shrink-0 flex items-center gap-2">
+                                  <span className="flex items-center gap-0.5"><Clock size={9} /> {formatHms(q.hours_spent ?? 0)}</span>
+                                  {q.delivered_at && <span>{fmtBrDate(q.delivered_at)}</span>}
+                                </span>
+                              </div>
+                              {q.delivery_note && <p className="text-[11px] text-neutral-600 leading-snug">{q.delivery_note}</p>}
+                              {q.delivery_link && (
+                                <a href={q.delivery_link} target="_blank" rel="noopener noreferrer" className="text-[11px] text-brand-teal hover:underline break-all flex items-center gap-1">
+                                  <Link2 size={10} className="shrink-0" />{q.delivery_link}
+                                </a>
+                              )}
+                            </div>
+                          );
+                        })}
                       </div>
-                    )}
-                    {(task as any).delivery_note && (
-                      <div>
-                        <p className="text-[10px] text-neutral-500 mb-0.5">O que foi entregue</p>
-                        <p className="text-xs text-neutral-700 leading-snug">{(task as any).delivery_note}</p>
-                      </div>
+                    ) : (
+                      // Responsável único
+                      <>
+                        {(task as any).delivery_link && (
+                          <div>
+                            <p className="text-[10px] text-neutral-500 mb-0.5">Link do material</p>
+                            <a
+                              href={(task as any).delivery_link}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="text-xs text-brand-teal hover:underline break-all flex items-center gap-1"
+                            >
+                              <Link2 size={10} className="shrink-0" />
+                              {(task as any).delivery_link}
+                            </a>
+                          </div>
+                        )}
+                        {(task as any).delivery_note && (
+                          <div>
+                            <p className="text-[10px] text-neutral-500 mb-0.5">O que foi entregue</p>
+                            <p className="text-xs text-neutral-700 leading-snug">{(task as any).delivery_note}</p>
+                          </div>
+                        )}
+                      </>
                     )}
                   </div>
                 )}

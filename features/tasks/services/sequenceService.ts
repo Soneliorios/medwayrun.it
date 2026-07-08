@@ -98,4 +98,32 @@ export const sequenceService = {
     }
     return { finished: true, nextUserId: null };
   },
+
+  /**
+   * A member who already delivered reopens their part. Their row becomes active
+   * again (fresh baseline), everyone after them goes back to pending, and the
+   * task's assignee returns to them. Returns the users who were pushed back so
+   * they can be notified that they must wait longer.
+   */
+  async reopenFrom(taskId: string, rowId: string): Promise<{ affectedUserIds: string[] }> {
+    const sb = createRawClient();
+    const rows = await this.list(taskId);
+    const target = rows.find((r) => r.id === rowId);
+    if (!target) return { affectedUserIds: [] };
+    const tracked = await taskTrackedHours(sb, taskId);
+
+    // Reactivate the target; snapshot a new baseline and clear its delivery mark.
+    await (sb as any).from("task_sequences")
+      .update({ status: "active", part_start_hours: tracked, delivered_at: null })
+      .eq("id", rowId);
+
+    // Everyone ordered after the target waits again.
+    const after = rows.filter((r) => r.order_position > target.order_position);
+    await Promise.all(
+      after.map((r) => (sb as any).from("task_sequences").update({ status: "pending" }).eq("id", r.id))
+    );
+
+    await (sb as any).from("tasks").update({ assignee_id: target.user_id }).eq("id", taskId);
+    return { affectedUserIds: after.map((r) => r.user_id) };
+  },
 };

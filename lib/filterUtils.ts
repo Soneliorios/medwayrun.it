@@ -148,7 +148,7 @@ export function taskMatchesFilters(
 
   // Board projects (internal)
   if (filters.boardProjectIds?.length) {
-    const bp = (task as any).board_project_id as string | null | undefined;
+    const bp = (task as any).board_subproject_id as string | null | undefined;
     if (!bp || !filters.boardProjectIds.includes(bp)) return false;
   }
 
