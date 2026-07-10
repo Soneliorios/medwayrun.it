@@ -76,8 +76,8 @@ import { ApprovalBanner } from "./ApprovalControls";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
 import { useRole } from "@/features/auth/hooks/useRole";
-import { createClient, createRawClient } from "@/lib/supabase/client";
-import { ORG_ID } from "@/lib/utils";
+import { createRawClient } from "@/lib/supabase/client";
+import { useOrgMembers } from "@/lib/useOrgMembers";
 import { taskTypeService } from "@/features/board/services/taskTypeService";
 import type { TaskWithRelations } from "@/types";
 
@@ -227,7 +227,9 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
   const isTimerActive = timerStore.activeTaskId === taskId;
   const elapsed = timerStore.getElapsedForTask(taskId);
 
-  const [orgProfiles, setOrgProfiles] = useState<Array<{ id: string; full_name: string | null; avatar_url: string | null }>>([]);
+  // Roster da org via cache global compartilhado (fetch único por sessão) — antes
+  // cada TaskDetail refazia o fetch, então "Criado por" e os pickers demoravam.
+  const orgProfiles = useOrgMembers();
   // Current user first in member pickers (assignee/followers) for quick self-pick.
   const orgProfilesMeFirst = useMemo(() => {
     const uid = user?.id;
@@ -235,30 +237,6 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
     const me = orgProfiles.find((p) => p.id === uid);
     return me ? [me, ...orgProfiles.filter((p) => p.id !== uid)] : orgProfiles;
   }, [orgProfiles, user?.id]);
-  useEffect(() => {
-    async function loadOrgProfiles() {
-      // Primary: service-role endpoint accessible to any org member (bypasses
-      // profiles RLS that would otherwise hide everyone but the current user).
-      try {
-        const res = await fetch("/api/org/members");
-        if (res.ok) {
-          const members = (await res.json()) as Array<{ id: string; full_name: string | null; avatar_url: string | null }>;
-          if (Array.isArray(members) && members.length > 0) {
-            setOrgProfiles(members.map((m) => ({ id: m.id, full_name: m.full_name, avatar_url: m.avatar_url })));
-            return;
-          }
-        }
-      } catch { /* fall through */ }
-      // Fallback: direct query
-      const sb = createClient();
-      const { data } = await sb
-        .from("members")
-        .select("user_id, profiles!inner(id, full_name, avatar_url)")
-        .eq("org_id", ORG_ID);
-      setOrgProfiles((data ?? []).map((m: any) => m.profiles));
-    }
-    loadOrgProfiles();
-  }, []);
 
   // Areas (managed by superadmin) for the "Área solicitante" dropdown
   const [areas, setAreas] = useState<{ id: string; name: string }[]>([]);

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef } from "react";
+import { useState, useEffect, useMemo, useRef } from "react";
 import { useRouter } from "next/navigation";
 import {
   X,
@@ -33,6 +33,7 @@ import { getInitials } from "@/lib/utils";
 import { fetchBoardSubprojects, type BoardProject } from "@/features/board/store/boardProjectStore";
 import { taskTypeService } from "@/features/board/services/taskTypeService";
 import { runAutomations } from "@/lib/automationEngine";
+import { useOrgMembers } from "@/lib/useOrgMembers";
 import type { Column } from "@/types";
 
 type Priority = "low" | "medium" | "high" | "urgent";
@@ -94,18 +95,12 @@ export function GlobalCreateTaskModal() {
   const [newTypeName, setNewTypeName] = useState("");
   const [estimatedHours, setEstimatedHours] = useState<number | null>(null);
   const [overflowWarning, setOverflowWarning] = useState<OverflowCheckResult | null>(null);
-  const [orgMembers, setOrgMembers] = useState<OrgMember[]>([]);
-
-  useEffect(() => {
-    (async () => {
-      try {
-        const res = await fetch("/api/org/members");
-        if (!res.ok) return;
-        const members = (await res.json()) as Array<{ id: string; full_name: string | null }>;
-        setOrgMembers(members.map((m) => ({ id: m.id, name: m.full_name ?? m.id })));
-      } catch { /* ignore */ }
-    })();
-  }, []);
+  // Roster via cache global compartilhado (fetch único por sessão).
+  const orgMembersRaw = useOrgMembers();
+  const orgMembers = useMemo<OrgMember[]>(
+    () => orgMembersRaw.map((m) => ({ id: m.id, name: m.full_name })),
+    [orgMembersRaw]
+  );
 
   const memberName = (id: string) => orgMembers.find((m) => m.id === id)?.name ?? id;
 
