@@ -147,10 +147,12 @@ interface Props {
   taskId: string;
   onClose: () => void;
   variant?: "modal" | "page";
+  /** Abre o popup de entrega automaticamente (ex.: ao arrastar p/ "Concluído"). */
+  autoOpenDelivery?: boolean;
 }
 
 
-export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
+export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDelivery = false }: Props) {
   const [task, setTask] = useState<TaskWithRelations | null>(null);
   // Board-level edit permission (view-only members can't change fields)
   const { access: boardAccess } = useBoardAccess((task as any)?.project_id ?? "");
@@ -278,6 +280,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
 
   // Responsible queue (fila) — the head drives the assignee
   const [queue, setQueue] = useState<SeqRow[]>([]);
+  const [queueLoaded, setQueueLoaded] = useState(false);
   async function loadQueue() {
     let rows = await sequenceService.list(taskId);
     if (rows.length > 0) {
@@ -298,6 +301,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
       }
     }
     setQueue(rows);
+    setQueueLoaded(true);
   }
   useEffect(() => { loadQueue(); /* eslint-disable-next-line */ }, [taskId]);
   const queueRemaining = queue.filter((r) => r.status !== "done").length;
@@ -791,6 +795,21 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   const deliveryDate = (task as any)?.delivery_date as string | null | undefined;
   const fmtBrDate = (iso?: string | null) =>
     iso ? new Date(iso).toLocaleDateString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric" }) : "";
+
+  // Quando aberto via arrastar-para-"Concluído", abre o popup de entrega assim
+  // que a task e a fila carregam (uma vez só). Espelha a lógica do botão Entregar.
+  const autoDeliveryDoneRef = useRef(false);
+  useEffect(() => {
+    if (!autoOpenDelivery || autoDeliveryDoneRef.current) return;
+    if (!task || !queueLoaded) return;
+    autoDeliveryDoneRef.current = true;
+    if (isDelivered) return;
+    if (queueRemaining > 0) {
+      if (isActiveResponsible) openDeliveryDialog("part");
+    } else if (canActOnTask) {
+      openDeliveryDialog("full");
+    }
+  }, [autoOpenDelivery, task, queueLoaded, isDelivered, queueRemaining, isActiveResponsible, canActOnTask]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Render ─────────────────────────────────────────────────────────────────
 

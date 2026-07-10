@@ -69,6 +69,18 @@ export default function BoardPage({ params }: Props) {
 
   const [activeTab, setActiveTab] = useState<BoardView>("kanban");
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
+  const [deliverOnOpen, setDeliverOnOpen] = useState(false);
+
+  // Arrastar uma task para a coluna "Concluído" abre o popup de entrega.
+  useEffect(() => {
+    function onOpenDelivery(e: Event) {
+      const { taskId } = (e as CustomEvent<{ taskId: string }>).detail;
+      setDeliverOnOpen(true);
+      setOpenTaskId(taskId);
+    }
+    window.addEventListener("open-task-delivery", onOpenDelivery);
+    return () => window.removeEventListener("open-task-delivery", onOpenDelivery);
+  }, []);
   const [filterSidebarOpen, setFilterSidebarOpen] = useState(false);
 
   const selectedCount = useSelectionStore((s) => s.selectedIds.size);
@@ -260,7 +272,11 @@ export default function BoardPage({ params }: Props) {
 
       {/* Task detail */}
       {openTaskId && (
-        <TaskDetail taskId={openTaskId} onClose={() => setOpenTaskId(null)} />
+        <TaskDetail
+          taskId={openTaskId}
+          autoOpenDelivery={deliverOnOpen}
+          onClose={() => { setOpenTaskId(null); setDeliverOnOpen(false); }}
+        />
       )}
 
 

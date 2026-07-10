@@ -126,6 +126,18 @@ export function useBoardDnd() {
       const tasks = [...column.tasks].sort((a, b) => a.position - b.position);
       const taskIndex = tasks.findIndex((t) => t.id === activeId);
 
+      // Dropping into the "done"/last column triggers the delivery flow: roll the
+      // move back and open the delivery popup — the card only lands (and stays) in
+      // Concluído if the delivery is confirmed there.
+      const sortedCols = [...store.columns].sort((a, b) => a.position - b.position);
+      const doneCol = store.columns.find((c) => (c as any).is_done_column) ?? sortedCols[sortedCols.length - 1];
+      const movedTask = column.tasks.find((t) => t.id === activeId);
+      if (stageChanged && doneCol && column.id === doneCol.id && (movedTask as any)?.status !== "delivered") {
+        if (snapshotRef.current) store.setColumns(snapshotRef.current); // desfaz o move otimista
+        window.dispatchEvent(new CustomEvent("open-task-delivery", { detail: { taskId: activeId } }));
+        return;
+      }
+
       // If dropped on same task (no-op) and same column
       if (activeId === overId) {
         // Check if same column — recalculate within column
