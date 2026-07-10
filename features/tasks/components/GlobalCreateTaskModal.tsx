@@ -129,13 +129,14 @@ export function GlobalCreateTaskModal() {
   useEffect(() => {
     function handleOpen() {
       setOpen(true);
-      if (!selectedProjectId && projects.length > 0) {
-        setSelectedProjectId(projects[0].id);
-      }
+      // Abre já no quadro que o usuário está vendo (não no 1º da lista) — assim
+      // "Nova tarefa" no Marketing Ops começa no Marketing Ops (e seus projetos).
+      const currentBoard = useBoardStore.getState().columns[0]?.project_id ?? null;
+      setSelectedProjectId(currentBoard ?? projects[0]?.id ?? null);
     }
     window.addEventListener("open-create-task", handleOpen);
     return () => window.removeEventListener("open-create-task", handleOpen);
-  }, [projects, selectedProjectId]);
+  }, [projects]);
 
   // Listen for quick-add from Kanban column — pre-selects project + column
   useEffect(() => {
