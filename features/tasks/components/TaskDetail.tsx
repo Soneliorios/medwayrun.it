@@ -56,7 +56,7 @@ import { cn, formatDate, formatDateFull, isOverdue, formatHours, formatHms } fro
 import { PRIORITY_LABELS, PRIORITY_COLORS, formatElapsed } from "@/types";
 import { taskService } from "../services/taskService";
 import { activityService, type TaskActivity } from "../services/activityService";
-import { approvalService } from "../services/approvalService";
+import { approvalService, type TaskApproval } from "../services/approvalService";
 import { sequenceService, type SeqRow } from "../services/sequenceService";
 import { notificationService } from "@/features/notifications/services/notificationService";
 import { runAutomations } from "@/lib/automationEngine";
@@ -76,7 +76,7 @@ import { ApprovalBanner } from "./ApprovalControls";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
 import { useRole } from "@/features/auth/hooks/useRole";
-import { createRawClient } from "@/lib/supabase/client";
+import { createClient, createRawClient } from "@/lib/supabase/client";
 import { useOrgMembers } from "@/lib/useOrgMembers";
 import { taskTypeService } from "@/features/board/services/taskTypeService";
 import type { TaskWithRelations } from "@/types";
@@ -247,11 +247,20 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
   const [approvalBlockStatus, setApprovalBlockStatus] = useState<"pending" | "adjustment" | "rejected" | null>(null);
   const pendingApproval = approvalBlockStatus !== null;
   const [deliverBlockedWarning, setDeliverBlockedWarning] = useState(false);
+  // Entrega "estacionada": registrada e aguardando a aprovação pendente ser aprovada.
+  const [parkedDelivery, setParkedDelivery] = useState(false);
+  // Confirmação antes de estacionar a entrega (há aprovação pendente).
+  const [parkConfirm, setParkConfirm] = useState<{
+    mode: "full" | "part";
+    opts: { hours: number; link: string; note: string };
+    approval: TaskApproval;
+  } | null>(null);
   async function refreshPendingApproval() {
     const rows = await approvalService.getForTask(taskId);
-    const latest = rows[0]?.status;
-    const blocking = latest && latest !== "approved" ? (latest as "pending" | "adjustment" | "rejected") : null;
+    const latest = rows[0];
+    const blocking = latest?.status && latest.status !== "approved" ? (latest.status as "pending" | "adjustment" | "rejected") : null;
     setApprovalBlockStatus(blocking);
+    setParkedDelivery(!!(latest?.status === "pending" && latest.deliver_on_approve));
     return blocking !== null;
   }
   useEffect(() => { refreshPendingApproval(); /* eslint-disable-next-line */ }, [taskId]);
@@ -308,11 +317,64 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
     }
   }
 
+  // Ponto único de entrega (parte OU total). Decide entre: entregar normalmente,
+  // ESTACIONAR (se há aprovação pendente → concretiza ao aprovar) ou bloquear
+  // (aprovação rejeitada/pediu ajuste → precisa nova aprovação).
+  async function submitDelivery(mode: "full" | "part", opts: { hours: number; link: string; note: string }) {
+    const rows = await approvalService.getForTask(taskId);
+    const latest = rows[0];
+    if (latest && latest.status === "pending") {
+      // Há aprovação pendente → confirmar e estacionar a entrega.
+      setDeliveryDialogOpen(false);
+      setParkConfirm({ mode, opts, approval: latest });
+      return;
+    }
+    if (latest && (latest.status === "adjustment" || latest.status === "rejected")) {
+      // Reprovada / pediu ajuste → não entrega até haver nova aprovação aprovada.
+      setApprovalBlockStatus(latest.status);
+      setDeliveryDialogOpen(false);
+      setDeliverBlockedWarning(true);
+      return;
+    }
+    // Aprovada ou sem aprovação → entrega normal.
+    setDeliveryDialogOpen(false);
+    if (mode === "part") await handleDeliverMyPart(opts);
+    else await handleDeliver(opts);
+  }
+
+  // Estaciona a entrega: anexa o payload à aprovação pendente. Ela só será
+  // concretizada quando o aprovador aprovar (deliveryService.finalize).
+  async function confirmPark() {
+    if (!parkConfirm || !task) return;
+    const { mode, opts, approval } = parkConfirm;
+    const alreadyParked = !!approval.deliver_on_approve; // re-park: não duplicar avisos
+    // Para o timer e consolida o tempo em tracked_hours ANTES de guardar o payload,
+    // igual aos caminhos de entrega ao vivo — senão o timer segue contando enquanto
+    // aguarda aprovação e desincroniza as horas/partes da fila.
+    await flushActiveTimer();
+    const myName = orgProfiles.find((p) => p.id === user?.id)?.full_name ?? null;
+    const ok = await approvalService.setDeliverOnApprove(approval.id, {
+      mode, hours: opts.hours, note: opts.note || null, link: opts.link || null,
+    });
+    if (!ok) { setParkConfirm(null); return; } // ex.: migração ainda não aplicada
+    if (!alreadyParked) {
+      await activityService.log({
+        taskId, userId: user?.id ?? null, userName: myName,
+        action: "Anexou uma entrega à aprovação (aguardando aprovação)",
+      });
+      if (approval.approver_id) await notificationService.create({
+        userId: approval.approver_id, type: "approval_requested", taskId, fromUserId: user?.id ?? null,
+        content: `${myName ?? "Alguém"} anexou uma entrega à sua aprovação em "${task.title}" — será concretizada ao aprovar`,
+      });
+    }
+    setParkConfirm(null);
+    setDeliverBlockedWarning(false);
+    setParkedDelivery(true);
+  }
+
   // Called from the delivery dialog when in "part" mode.
   async function handleDeliverMyPart(opts?: { hours?: number; link?: string; note?: string }) {
     if (!task) return;
-    const willFinish = queueRemaining <= 1;
-    if (willFinish && (await refreshPendingApproval())) { setDeliverBlockedWarning(true); return; }
     await flushActiveTimer();
     // Record this member's part (time delta + what they delivered)
     const { finished, nextUserId } = await sequenceService.advance(taskId, {
@@ -448,6 +510,23 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId]);
 
+  // Mantém o estado de aprovação/entrega vivo: quando o aprovador resolve (em
+  // outra aba/máquina) a entrega estacionada é finalizada headless — aqui
+  // reavaliamos o banner "parcialmente entregue", a fila e a própria task.
+  useEffect(() => {
+    const sb = createClient();
+    const channel = sb
+      .channel(`task-detail-approvals:${taskId}`)
+      .on("postgres_changes", { event: "*", schema: "public", table: "task_approvals", filter: `task_id=eq.${taskId}` }, () => {
+        refreshPendingApproval();
+        loadQueue();
+        taskService.get(taskId).then((t) => { if (t) setTask(t); });
+      })
+      .subscribe();
+    return () => { sb.removeChannel(channel); };
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [taskId]);
+
   // Close assignee picker on outside click
   useEffect(() => {
     if (!assigneePickerOpen) return;
@@ -540,13 +619,8 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
   async function handleDeliver(opts?: { hours?: number; link?: string; note?: string }) {
     if (!task) return;
     if (isDelivered) return;
-
-    // Cannot deliver while an approval is pending — keep it open and warn.
-    if (await refreshPendingApproval()) {
-      setDeliveryDialogOpen(false);
-      setDeliverBlockedWarning(true);
-      return;
-    }
+    // Gate de aprovação (estacionar/bloquear) é feito em submitDelivery, ANTES
+    // de chegar aqui — aqui a entrega já está liberada para concretizar.
 
     await flushActiveTimer(); // no-op if already stopped by handleDeliverMyPart
 
@@ -573,9 +647,10 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
         console.error("[handleDeliver] link/note — rode supabase_task_delivery_details.sql", e));
     }
 
-    // Move to the last column ("Concluído")
+    // Move to the "done" column (is_done_column marcada, senão a última por posição
+    // — mesma resolução do resto do app e do deliveryService.finalize).
     const sorted = [...boardColumns].sort((a, b) => a.position - b.position);
-    const lastCol = sorted[sorted.length - 1];
+    const lastCol = boardColumns.find((c) => (c as any).is_done_column) ?? sorted[sorted.length - 1];
     if (lastCol && lastCol.id !== task.column_id) {
       const pos = (task as any).position ?? 1000;
       setTask((t) => (t ? { ...t, column_id: lastCol.id } : t));
@@ -739,7 +814,8 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
   // automatically make it re-deliverable (the delivered badge disappears).
   const lastColumnId = useMemo(() => {
     if (!boardColumns.length) return null;
-    return [...boardColumns].sort((a, b) => a.position - b.position).at(-1)?.id ?? null;
+    const done = boardColumns.find((c) => (c as any).is_done_column);
+    return (done ?? [...boardColumns].sort((a, b) => a.position - b.position).at(-1))?.id ?? null;
   }, [boardColumns]);
   const isDelivered =
     (task as any)?.status === "delivered" &&
@@ -887,12 +963,8 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                 )
               ) : (
                 <button
-                  onClick={canActOnTask ? async () => {
-                    if (await refreshPendingApproval()) { setDeliverBlockedWarning(true); return; }
-                    setDeliverBlockedWarning(false);
-                    openDeliveryDialog("full");
-                  } : undefined}
-                  title={!canActOnTask ? "Somente o responsável pode entregar" : approvalBlockStatus === "adjustment" ? "Aprovação pediu ajustes — não pode ser entregue" : approvalBlockStatus === "rejected" ? "Aprovação reprovada — não pode ser entregue" : approvalBlockStatus === "pending" ? "Aprovação pendente — não pode ser entregue" : undefined}
+                  onClick={canActOnTask ? () => { setDeliverBlockedWarning(false); openDeliveryDialog("full"); } : undefined}
+                  title={!canActOnTask ? "Somente o responsável pode entregar" : approvalBlockStatus === "adjustment" ? "Aprovação pediu ajustes — corrija e solicite nova aprovação" : approvalBlockStatus === "rejected" ? "Aprovação reprovada — solicite nova aprovação" : approvalBlockStatus === "pending" ? "Aprovação pendente — a entrega ficará parcial até ser aprovada" : undefined}
                   className={cn(
                     "flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all border",
                     canActOnTask
@@ -1158,18 +1230,30 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                 {/* APPROVAL */}
                 <ApprovalBanner taskId={taskId} taskTitle={task.title} />
 
-                {/* Delivery blocked — approval not approved */}
-                {deliverBlockedWarning && pendingApproval && (
+                {/* Entrega estacionada — aguardando aprovação */}
+                {parkedDelivery && (
+                  <div className="mb-4 flex items-start gap-2 rounded-lg border border-blue-200 bg-blue-50 p-3">
+                    <Clock size={15} className="text-blue-500 shrink-0 mt-0.5" />
+                    <div className="flex-1">
+                      <p className="text-xs font-semibold text-blue-700">Parcialmente entregue — aguardando aprovação</p>
+                      <p className="text-[11px] text-blue-600 mt-0.5">
+                        A entrega foi registrada, mas só será concretizada quando a aprovação for aprovada.
+                        Se for reprovada ou pedir ajuste, a entrega é cancelada e você precisa refazer.
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                {/* Delivery blocked — aprovação reprovada / pediu ajuste */}
+                {deliverBlockedWarning && (approvalBlockStatus === "adjustment" || approvalBlockStatus === "rejected") && (
                   <div className="mb-4 flex items-start gap-2 rounded-lg border border-amber-200 bg-amber-50 p-3">
                     <AlertCircle size={15} className="text-amber-500 shrink-0 mt-0.5" />
                     <div className="flex-1">
                       <p className="text-xs font-semibold text-amber-700">Não é possível entregar</p>
                       <p className="text-[11px] text-amber-600 mt-0.5">
                         {approvalBlockStatus === "adjustment"
-                          ? "A aprovação pediu ajustes. Faça as correções e obtenha a aprovação antes de entregar."
-                          : approvalBlockStatus === "rejected"
-                          ? "A aprovação foi reprovada. É preciso ser aprovada antes de entregar."
-                          : "Esta tarefa tem uma aprovação pendente. Ela precisa ser aprovada antes de ser entregue."}
+                          ? "A aprovação pediu ajustes. Faça as correções e solicite uma nova aprovação antes de entregar."
+                          : "A aprovação foi reprovada. Solicite uma nova aprovação antes de entregar."}
                       </p>
                     </div>
                     <button onClick={() => setDeliverBlockedWarning(false)} className="text-amber-400 hover:text-amber-600 shrink-0">
@@ -2355,15 +2439,50 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
               <button
                 onClick={async () => {
                   const totalSec = (parseInt(deliveryH) || 0) * 3600 + (parseInt(deliveryM) || 0) * 60 + (parseInt(deliveryS) || 0);
-                  setDeliveryDialogOpen(false);
                   const opts = { hours: totalSec / 3600, link: deliveryLink.trim(), note: deliveryNote.trim() };
-                  if (deliveryMode === "part") await handleDeliverMyPart(opts);
-                  else await handleDeliver(opts);
+                  await submitDelivery(deliveryMode, opts);
                 }}
                 className="px-5 py-2 text-sm font-semibold bg-green-600 text-white rounded-lg hover:bg-green-700 transition-colors flex items-center gap-1.5"
               >
                 <CheckCircle2 size={14} />
                 {deliveryMode === "part" && queueRemaining > 1 ? "Entregar minha parte" : "Confirmar entrega"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Confirmação de entrega estacionada (há aprovação pendente) */}
+      {parkConfirm && (
+        <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/50 p-4" onClick={() => setParkConfirm(null)}>
+          <div className="bg-white rounded-2xl shadow-2xl w-full max-w-md" onClick={(e) => e.stopPropagation()}>
+            <div className="p-6">
+              <div className="flex items-start gap-3">
+                <div className="w-9 h-9 rounded-full bg-blue-50 flex items-center justify-center shrink-0">
+                  <Clock size={18} className="text-blue-500" />
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-sm font-semibold text-brand-navy">Há uma aprovação pendente</h3>
+                  <p className="text-xs text-neutral-500 mt-1.5 leading-relaxed">
+                    Sua entrega ficará <strong>registrada como parcial</strong> e só será concretizada
+                    quando a aprovação for <strong>aprovada</strong>. Se for reprovada ou pedir ajuste,
+                    a entrega é cancelada e você precisará refazer. Deseja continuar?
+                  </p>
+                </div>
+              </div>
+            </div>
+            <div className="flex gap-2 justify-end px-6 pb-6">
+              <button
+                onClick={() => setParkConfirm(null)}
+                className="px-4 py-2 text-sm text-neutral-600 hover:text-neutral-800 hover:bg-neutral-100 rounded-lg transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={confirmPark}
+                className="px-5 py-2 text-sm font-semibold bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors"
+              >
+                Registrar entrega parcial
               </button>
             </div>
           </div>

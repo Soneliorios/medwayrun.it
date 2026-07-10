@@ -8,6 +8,7 @@ import { useOrgMembers } from "@/lib/useOrgMembers";
 import { teamService } from "@/lib/teamService";
 import { useAuthStore } from "@/features/auth/store/authStore";
 import { approvalService, type TaskApproval } from "../services/approvalService";
+import { deliveryService } from "../services/deliveryService";
 import { activityService } from "../services/activityService";
 import { notificationService } from "@/features/notifications/services/notificationService";
 import { runAutomations } from "@/lib/automationEngine";
@@ -112,6 +113,7 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
   const [approverOpen, setApproverOpen] = useState(false);
   const [approverSearch, setApproverSearch] = useState("");
   const [comment, setComment] = useState("");
+  const [busy, setBusy] = useState(false); // trava enquanto resolve (evita duplo-clique)
   // Só mostra o seletor de aprovador depois que a pessoa confirma que a tarefa
   // precisa de aprovação (pergunta "Necessita de aprovação?" → botão "Sim").
   const [needsApproval, setNeedsApproval] = useState(false);
@@ -187,7 +189,10 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
   const canRevert = !!approval && !!currentUserId && approval.requested_by === currentUserId;
   async function revert() {
     if (!approval || !canRevert) return;
-    if (!confirm("Reverter esta aprovação? A solicitação será removida.")) return;
+    const msg = approval.deliver_on_approve
+      ? "Reverter esta aprovação? A entrega anexada (aguardando aprovação) também será cancelada — você precisará entregar de novo."
+      : "Reverter esta aprovação? A solicitação será removida.";
+    if (!confirm(msg)) return;
     const approverId = approval.approver_id;
     await approvalService.revert(approval.id);
     await activityService.log({
@@ -204,24 +209,51 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
   }
 
   async function resolve(status: ApprovalStatus) {
-    if (!approval) return;
-    const requestedBy = approval.requested_by;
-    const resolvedApproverId = approval.approver_id;
-    await approvalService.resolve(approval.id, status, comment || null);
-    await activityService.log({
-      taskId, userId: currentUserId, userName: myName,
-      action: RESOLVE_ACTION[status], field: "aprovacao", toValue: comment || null,
-    });
-    // Notify whoever requested the approval
-    if (requestedBy) await notificationService.create({
-      userId: requestedBy, type: "approval_resolved", taskId, fromUserId: currentUserId,
-      content: `Sua solicitação em "${taskTitle}" foi ${RESOLVE_LABEL[status]} por ${myName ?? "um aprovador"}${comment ? ` — "${comment}"` : ""}`,
-    });
-    setComment("");
-    await reload();
-    // Dispara automações do resultado da aprovação (aprovada/ajuste/rejeitada).
-    const evType = status === "approved" ? "task_approved" : status === "adjustment" ? "task_adjustment" : status === "rejected" ? "task_rejected" : null;
-    if (evType) runAutomations({ type: evType, approverId: resolvedApproverId }, taskId);
+    if (!approval || busy) return;
+    setBusy(true);
+    try {
+      const requestedBy = approval.requested_by;
+      const resolvedApproverId = approval.approver_id;
+      const parked = approval.deliver_on_approve;
+      const parkedPayload = approval.deliver_payload;
+      // Transição condicional: só segue se REALMENTE resolveu uma pendência (evita
+      // finalizar a entrega duas vezes em duplo-clique / falha transitória).
+      const ok = await approvalService.resolve(approval.id, status, comment || null);
+      if (!ok) { await reload(); return; }
+      await activityService.log({
+        taskId, userId: currentUserId, userName: myName,
+        action: RESOLVE_ACTION[status], field: "aprovacao", toValue: comment || null,
+      });
+      // Notify whoever requested the approval
+      if (requestedBy) await notificationService.create({
+        userId: requestedBy, type: "approval_resolved", taskId, fromUserId: currentUserId,
+        content: `Sua solicitação em "${taskTitle}" foi ${RESOLVE_LABEL[status]} por ${myName ?? "um aprovador"}${comment ? ` — "${comment}"` : ""}`,
+      });
+      // Entrega estacionada nesta aprovação: aprovar concretiza; rejeitar/ajuste cancela.
+      if (parked) {
+        if (status === "approved") {
+          await deliveryService.finalize(taskId, parkedPayload ?? undefined);
+          await approvalService.clearDeliverOnApprove(approval.id); // one-shot: não replayar
+          if (requestedBy) await notificationService.create({
+            userId: requestedBy, type: "approval_resolved", taskId, fromUserId: currentUserId,
+            content: `Sua entrega em "${taskTitle}" foi concretizada após a aprovação`,
+          });
+        } else {
+          await approvalService.clearDeliverOnApprove(approval.id);
+          if (requestedBy) await notificationService.create({
+            userId: requestedBy, type: "approval_resolved", taskId, fromUserId: currentUserId,
+            content: `A entrega em "${taskTitle}" foi cancelada (${RESOLVE_LABEL[status]}). Refaça e solicite aprovação novamente.`,
+          });
+        }
+      }
+      setComment("");
+      await reload();
+      // Dispara automações do resultado da aprovação (aprovada/ajuste/rejeitada).
+      const evType = status === "approved" ? "task_approved" : status === "adjustment" ? "task_adjustment" : status === "rejected" ? "task_rejected" : null;
+      if (evType) runAutomations({ type: evType, approverId: resolvedApproverId }, taskId);
+    } finally {
+      setBusy(false);
+    }
   }
 
   const pending = approval?.status === "pending";
@@ -352,6 +384,15 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
               </button>
             )}
           </div>
+          {approval.deliver_on_approve && (
+            <div className="flex items-start gap-1.5 rounded-md bg-white/70 border border-amber-200 px-2 py-1.5">
+              <CheckCircle2 size={12} className="text-blue-500 shrink-0 mt-0.5" />
+              <span className="text-[11px] text-amber-700">
+                Há uma <strong>entrega anexada</strong> — ao aprovar, ela será concretizada automaticamente
+                (avança a fila ou conclui a tarefa). Ao pedir ajuste/reprovar, a entrega é cancelada.
+              </span>
+            </div>
+          )}
           {canActOnIt && (
             <>
               <input
@@ -361,13 +402,13 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
                 className="w-full text-xs border border-amber-200 rounded-md px-2 py-1.5 bg-white outline-none focus:border-amber-400"
               />
               <div className="flex gap-2 flex-wrap">
-                <button onClick={() => resolve("approved")} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-green-600 text-white font-medium hover:opacity-90">
+                <button disabled={busy} onClick={() => resolve("approved")} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-green-600 text-white font-medium hover:opacity-90 disabled:opacity-50">
                   <CheckCircle2 size={12} /> Aprovar
                 </button>
-                <button onClick={() => resolve("adjustment")} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-amber-500 text-white font-medium hover:opacity-90">
+                <button disabled={busy} onClick={() => resolve("adjustment")} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-amber-500 text-white font-medium hover:opacity-90 disabled:opacity-50">
                   <RotateCcw size={12} /> Ajuste
                 </button>
-                <button onClick={() => resolve("rejected")} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-destructive text-white font-medium hover:opacity-90">
+                <button disabled={busy} onClick={() => resolve("rejected")} className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-md bg-destructive text-white font-medium hover:opacity-90 disabled:opacity-50">
                   <XCircle size={12} /> Rejeitar
                 </button>
               </div>
@@ -385,6 +426,7 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
 export function MyApprovals({ onOpenTask }: { onOpenTask: (id: string) => void }) {
   const [items, setItems] = useState<MockTaskApproval[]>([]);
   const [comment, setComment] = useState<Record<string, string>>({});
+  const [busyId, setBusyId] = useState<string | null>(null); // aprovação sendo resolvida
   const currentUserId = useAuthStore((s) => s.profile?.id ?? null);
   const myName = useAuthStore((s) => s.profile?.full_name ?? null);
   const members = useOrgMembers();
@@ -409,24 +451,52 @@ export function MyApprovals({ onOpenTask }: { onOpenTask: (id: string) => void }
   }, [currentUserId]);
 
   async function resolve(item: MockTaskApproval, status: ApprovalStatus) {
-    const c = comment[item.id] || null;
-    await approvalService.resolve(item.id, status, c);
-    await activityService.log({
-      taskId: item.task_id, userId: currentUserId, userName: myName,
-      action: RESOLVE_ACTION[status], field: "aprovacao", toValue: c,
-    });
-    if (item.requested_by) await notificationService.create({
-      userId: item.requested_by, type: "approval_resolved", taskId: item.task_id, fromUserId: currentUserId,
-      content: `Sua solicitação em "${item.task_title}" foi ${RESOLVE_LABEL[status]} por ${myName ?? "um aprovador"}${c ? ` — "${c}"` : ""}`,
-    });
-    setComment((prev) => ({ ...prev, [item.id]: "" }));
-    await reload();
-    const evType = status === "approved" ? "task_approved" : status === "adjustment" ? "task_adjustment" : status === "rejected" ? "task_rejected" : null;
-    if (evType) runAutomations({ type: evType, approverId: item.approver_id }, item.task_id);
+    if (busyId) return;
+    setBusyId(item.id);
+    try {
+      const c = comment[item.id] || null;
+      // Transição condicional: só segue se realmente resolveu uma pendência.
+      const ok = await approvalService.resolve(item.id, status, c);
+      if (!ok) { await reload(); return; }
+      await activityService.log({
+        taskId: item.task_id, userId: currentUserId, userName: myName,
+        action: RESOLVE_ACTION[status], field: "aprovacao", toValue: c,
+      });
+      if (item.requested_by) await notificationService.create({
+        userId: item.requested_by, type: "approval_resolved", taskId: item.task_id, fromUserId: currentUserId,
+        content: `Sua solicitação em "${item.task_title}" foi ${RESOLVE_LABEL[status]} por ${myName ?? "um aprovador"}${c ? ` — "${c}"` : ""}`,
+      });
+      // Entrega estacionada nesta aprovação: aprovar concretiza; rejeitar/ajuste cancela.
+      if (item.deliver_on_approve) {
+        if (status === "approved") {
+          await deliveryService.finalize(item.task_id, item.deliver_payload ?? undefined);
+          await approvalService.clearDeliverOnApprove(item.id); // one-shot: não replayar
+          if (item.requested_by) await notificationService.create({
+            userId: item.requested_by, type: "approval_resolved", taskId: item.task_id, fromUserId: currentUserId,
+            content: `Sua entrega em "${item.task_title}" foi concretizada após a aprovação`,
+          });
+        } else {
+          await approvalService.clearDeliverOnApprove(item.id);
+          if (item.requested_by) await notificationService.create({
+            userId: item.requested_by, type: "approval_resolved", taskId: item.task_id, fromUserId: currentUserId,
+            content: `A entrega em "${item.task_title}" foi cancelada (${RESOLVE_LABEL[status]}). Refaça e solicite aprovação novamente.`,
+          });
+        }
+      }
+      setComment((prev) => ({ ...prev, [item.id]: "" }));
+      await reload();
+      const evType = status === "approved" ? "task_approved" : status === "adjustment" ? "task_adjustment" : status === "rejected" ? "task_rejected" : null;
+      if (evType) runAutomations({ type: evType, approverId: item.approver_id }, item.task_id);
+    } finally {
+      setBusyId(null);
+    }
   }
 
   async function cancel(item: MockTaskApproval) {
-    if (!confirm("Cancelar esta solicitação de aprovação?")) return;
+    const msg = item.deliver_on_approve
+      ? "Cancelar esta solicitação? A entrega anexada (aguardando aprovação) também será cancelada — será preciso entregar de novo."
+      : "Cancelar esta solicitação de aprovação?";
+    if (!confirm(msg)) return;
     await approvalService.revert(item.id);
     await activityService.log({
       taskId: item.task_id, userId: currentUserId, userName: myName,
@@ -475,13 +545,13 @@ export function MyApprovals({ onOpenTask }: { onOpenTask: (id: string) => void }
                     placeholder="Observação..."
                     className="flex-1 min-w-[120px] text-xs border border-neutral-200 rounded-md px-2 py-1.5 bg-white outline-none focus:border-brand-teal"
                   />
-                  <button onClick={() => resolve(item, "approved")} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-green-600 text-white hover:opacity-90">
+                  <button disabled={busyId === item.id} onClick={() => resolve(item, "approved")} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-green-600 text-white hover:opacity-90 disabled:opacity-50">
                     <CheckCircle2 size={12} /> Aprovar
                   </button>
-                  <button onClick={() => resolve(item, "adjustment")} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-amber-500 text-white hover:opacity-90">
+                  <button disabled={busyId === item.id} onClick={() => resolve(item, "adjustment")} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-amber-500 text-white hover:opacity-90 disabled:opacity-50">
                     <RotateCcw size={12} /> Ajuste
                   </button>
-                  <button onClick={() => resolve(item, "rejected")} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-destructive text-white hover:opacity-90">
+                  <button disabled={busyId === item.id} onClick={() => resolve(item, "rejected")} className="flex items-center gap-1 text-xs px-2.5 py-1.5 rounded-md bg-destructive text-white hover:opacity-90 disabled:opacity-50">
                     <XCircle size={12} /> Rejeitar
                   </button>
                 </div>

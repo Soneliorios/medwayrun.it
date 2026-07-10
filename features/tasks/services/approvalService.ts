@@ -1,6 +1,14 @@
 import { createRawClient } from "@/lib/supabase/client";
 import { ORG_ID } from "@/lib/utils";
 
+/** Entrega estacionada anexada a uma aprovação (concretizada ao aprovar). */
+export interface DeliverPayload {
+  mode?: "full" | "part";
+  hours?: number;
+  note?: string | null;
+  link?: string | null;
+}
+
 export interface TaskApproval {
   id: string;
   task_id: string;
@@ -11,6 +19,9 @@ export interface TaskApproval {
   comment: string | null;
   requested_at: string;
   resolved_at: string | null;
+  // Entrega "parcial" aguardando esta aprovação (patch supabase_delivery_on_approval.sql).
+  deliver_on_approve?: boolean;
+  deliver_payload?: DeliverPayload | null;
 }
 
 export const approvalService = {
@@ -76,13 +87,42 @@ export const approvalService = {
     return true;
   },
 
+  /**
+   * Resolve uma aprovação PENDENTE. A transição é condicional (só afeta linha com
+   * status "pending") e retorna true apenas se realmente transicionou — assim um
+   * duplo-clique / re-disparo não roda a finalização de entrega duas vezes.
+   */
   async resolve(id: string, status: "approved" | "rejected" | "adjustment", comment: string | null): Promise<boolean> {
+    const sb = createRawClient();
+    const { data, error } = await (sb as any)
+      .from("task_approvals")
+      .update({ status, comment, resolved_at: new Date().toISOString() })
+      .eq("id", id)
+      .eq("status", "pending")
+      .select("id");
+    if (error) { console.error("[approvalService.resolve]", error); return false; }
+    return (data?.length ?? 0) > 0;
+  },
+
+  /** Anexa uma entrega "estacionada" a esta aprovação (concretiza ao aprovar). */
+  async setDeliverOnApprove(id: string, payload: DeliverPayload): Promise<boolean> {
     const sb = createRawClient();
     const { error } = await (sb as any)
       .from("task_approvals")
-      .update({ status, comment, resolved_at: new Date().toISOString() })
+      .update({ deliver_on_approve: true, deliver_payload: payload })
       .eq("id", id);
-    if (error) { console.error("[approvalService.resolve]", error); return false; }
+    if (error) { console.error("[approvalService.setDeliverOnApprove]", error); return false; }
+    return true;
+  },
+
+  /** Cancela a entrega estacionada (ex.: aprovação rejeitada / pediu ajuste). */
+  async clearDeliverOnApprove(id: string): Promise<boolean> {
+    const sb = createRawClient();
+    const { error } = await (sb as any)
+      .from("task_approvals")
+      .update({ deliver_on_approve: false, deliver_payload: null })
+      .eq("id", id);
+    if (error) { console.error("[approvalService.clearDeliverOnApprove]", error); return false; }
     return true;
   },
 };
