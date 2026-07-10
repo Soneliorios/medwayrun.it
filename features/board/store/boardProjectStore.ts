@@ -26,6 +26,24 @@ function mapRow(r: any): BoardProject {
 }
 
 /**
+ * Busca os sub-projetos de UM quadro sem tocar no store global. Use quando
+ * precisar da lista de outro quadro (ex.: o modal de criar tarefa) sem
+ * contaminar o `boardProjectStore` que a view do quadro atual consome — senão
+ * os projetos "vazam" entre quadros.
+ */
+export async function fetchBoardSubprojects(boardId: string): Promise<BoardProject[]> {
+  if (!boardId) return [];
+  const sb = createClient();
+  const { data, error } = await (sb as any)
+    .from("board_subprojects")
+    .select("id, project_id, name, color, description")
+    .eq("project_id", boardId)
+    .order("name");
+  if (error) { console.error("[fetchBoardSubprojects]", error); return []; }
+  return ((data ?? []) as any[]).map(mapRow);
+}
+
+/**
  * Board sub-projects, backed by the `board_subprojects` table. This is the
  * single source of truth shared by the board "Projetos" view, the board
  * settings, the task-create picker and the filters — so they always agree.

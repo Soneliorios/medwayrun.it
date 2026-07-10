@@ -76,7 +76,6 @@ import { ApprovalBanner } from "./ApprovalControls";
 import { Avatar, AvatarFallback, AvatarImage } from "@/components/ui/avatar";
 import { getInitials } from "@/lib/utils";
 import { useRole } from "@/features/auth/hooks/useRole";
-import { useBoardProjectStore } from "@/features/board/store/boardProjectStore";
 import { createClient, createRawClient } from "@/lib/supabase/client";
 import { ORG_ID } from "@/lib/utils";
 import { taskTypeService } from "@/features/board/services/taskTypeService";
@@ -218,7 +217,6 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
   const timerStore = useTimerStore();
   const projectStore = useProjectStore();
   const boardColumns = useBoardStore((s) => s.columns);
-  const boardProjectStore = useBoardProjectStore();
   const subtasks = useMemo(
     () => boardColumns.flatMap((c) => c.tasks).filter((t: any) => t.parent_task_id === taskId),
     [boardColumns, taskId]
@@ -461,7 +459,9 @@ export function TaskDetail({ taskId, onClose, variant = "modal" }: Props) {
     taskService.get(taskId).then((t) => {
       setTask(t);
       setLoading(false);
-      if (t?.project_id) boardProjectStore.load(t.project_id);
+      // NÃO tocar no boardProjectStore global aqui: o picker usa o estado local
+      // `boardProjects` (fetch scopado abaixo). Escrever no store global fazia os
+      // sub-projetos vazarem entre quadros (ex.: abrir task de outro quadro no /me).
     });
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId]);

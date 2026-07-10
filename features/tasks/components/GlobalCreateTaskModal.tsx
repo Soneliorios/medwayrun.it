@@ -30,7 +30,7 @@ import { createRawClient } from "@/lib/supabase/client";
 import { PRIORITY_LABELS, PRIORITY_COLORS } from "@/types";
 type OverflowCheckResult = null;
 import { getInitials } from "@/lib/utils";
-import { useBoardProjectStore } from "@/features/board/store/boardProjectStore";
+import { fetchBoardSubprojects, type BoardProject } from "@/features/board/store/boardProjectStore";
 import { taskTypeService } from "@/features/board/services/taskTypeService";
 import { runAutomations } from "@/lib/automationEngine";
 import type { Column } from "@/types";
@@ -120,7 +120,9 @@ export function GlobalCreateTaskModal() {
   const router = useRouter();
   const projects = useProjectStore((s) => s.projects);
   const boardColumns = useBoardStore((s) => s.columns);
-  const boardProjectStore = useBoardProjectStore();
+  // Sub-projetos do quadro selecionado NO MODAL — estado local, isolado do store
+  // global do board (evita vazar projetos entre quadros).
+  const [modalBoardProjects, setModalBoardProjects] = useState<BoardProject[]>([]);
   const { user } = useAuthStore();
 
   // Listen for the global event from TopNav "Nova tarefa" button
@@ -213,12 +215,17 @@ export function GlobalCreateTaskModal() {
       });
   }, [selectedProjectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load board projects when board changes
+  // Load board projects when board changes — em estado LOCAL (não no store
+  // global), senão os sub-projetos vazam para a view do quadro atual.
   useEffect(() => {
-    if (selectedProjectId) {
-      boardProjectStore.load(selectedProjectId);
-      setBoardProjectId(null);
-    }
+    setBoardProjectId(null);
+    if (!selectedProjectId) { setModalBoardProjects([]); return; }
+    let cancelled = false;
+    const pid = selectedProjectId;
+    fetchBoardSubprojects(pid).then((list) => {
+      if (!cancelled && pid === selectedProjectId) setModalBoardProjects(list);
+    });
+    return () => { cancelled = true; };
   }, [selectedProjectId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Load this board's task types from the database. No fallback/auto-seed:
@@ -259,6 +266,7 @@ export function GlobalCreateTaskModal() {
 
   function resetFields() {
     setTitle("");
+    setModalBoardProjects([]);
     setDescription("");
     setPriority("medium");
     setDueDate("");
@@ -391,7 +399,7 @@ export function GlobalCreateTaskModal() {
     reset();
   }
 
-  const boardProjects = boardProjectStore.projects;
+  const boardProjects = modalBoardProjects;
   const boardProjectRequired = boardProjects.length > 0;
 
   async function handleSubmit(e: React.FormEvent) {
