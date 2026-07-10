@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Zap, Plus, ArrowRight, Clock, UserCheck, MoveRight, Bell, Tag, Trash2,
   X, Mail, Flag, UserMinus, GitBranch, ClipboardCheck,
-  MessageSquare, Paperclip, CheckCircle2, XCircle, MapPin, Hourglass,
+  MessageSquare, Paperclip, CheckCircle2, XCircle, MapPin, Hourglass, Pencil,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -87,6 +87,7 @@ export default function AutomationsPage() {
   const [automations, setAutomations] = useState<AutomationRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [showCreate, setShowCreate] = useState(false);
+  const [editing, setEditing] = useState<AutomationRow | null>(null);
   const [selectedBoard, setSelectedBoard] = useState<string>(""); // board_id
 
   const boardName = useMemo(() => {
@@ -199,7 +200,8 @@ export default function AutomationsPage() {
                     <button onClick={() => toggle(auto.id, auto.is_active)} className={cn("w-8 h-4 rounded-full relative transition-all", auto.is_active ? "bg-brand-teal" : "bg-neutral-200")}>
                       <span className={cn("absolute top-0.5 w-3 h-3 rounded-full bg-white shadow transition-all", auto.is_active ? "left-[18px]" : "left-0.5")} />
                     </button>
-                    <button onClick={() => remove(auto.id)} className="text-neutral-300 hover:text-destructive"><Trash2 size={13} /></button>
+                    <button onClick={() => setEditing(auto)} className="text-neutral-300 hover:text-brand-navy" title="Editar automação"><Pencil size={13} /></button>
+                    <button onClick={() => remove(auto.id)} className="text-neutral-300 hover:text-destructive" title="Excluir automação"><Trash2 size={13} /></button>
                   </div>
                 </div>
               </div>
@@ -215,12 +217,14 @@ export default function AutomationsPage() {
         </div>
       </div>
 
-      {showCreate && (
+      {(showCreate || editing) && (
         <AutomationBuilder
+          key={editing?.id ?? "new"}
           projects={projects}
           defaultBoardId={selectedBoard || projects[0]?.id || ""}
-          onClose={() => setShowCreate(false)}
-          onSaved={() => { setShowCreate(false); reload(); }}
+          editing={editing}
+          onClose={() => { setShowCreate(false); setEditing(null); }}
+          onSaved={() => { setShowCreate(false); setEditing(null); reload(); }}
         />
       )}
     </div>
@@ -230,19 +234,26 @@ export default function AutomationsPage() {
 // ── Builder modal ────────────────────────────────────────────────────────────────
 
 function AutomationBuilder({
-  projects, defaultBoardId, onClose, onSaved,
+  projects, defaultBoardId, editing, onClose, onSaved,
 }: {
   projects: { id: string; name: string }[];
   defaultBoardId: string;
+  editing?: AutomationRow | null;
   onClose: () => void;
   onSaved: () => void;
 }) {
   const members = useOrgMembers();
-  const [name, setName] = useState("");
-  const [board, setBoard] = useState(defaultBoardId);
-  const [logic, setLogic] = useState<"AND" | "OR">("OR");
-  const [triggers, setTriggers] = useState<AutomationTrigger[]>([{ event: "task_created", config: {} }]);
-  const [actions, setActions] = useState<AutomationAction[]>([{ type: "send_notification", config: {} }]);
+  const [name, setName] = useState(editing?.name ?? "");
+  const [board, setBoard] = useState(editing?.board_id || defaultBoardId);
+  const [logic, setLogic] = useState<"AND" | "OR">(editing?.trigger_config?.logic === "AND" ? "AND" : "OR");
+  const [triggers, setTriggers] = useState<AutomationTrigger[]>(() => {
+    const t = editing ? readTriggers(editing) : [];
+    return t.length ? t : [{ event: "task_created", config: {} }];
+  });
+  const [actions, setActions] = useState<AutomationAction[]>(() => {
+    const a = editing ? readActions(editing) : [];
+    return a.length ? a : [{ type: "send_notification", config: {} }];
+  });
   const [stages, setStages] = useState<BoardStage[]>([]);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -254,7 +265,20 @@ function AutomationBuilder({
     const sb = createRawClient();
     (sb as any).from("columns").select("id, name, position").eq("project_id", board).order("position")
       .then(({ data }: { data: BoardStage[] | null }) => {
-        if (!cancelled) setStages((data ?? []).map((c) => ({ id: c.id, name: c.name })));
+        if (cancelled) return;
+        const list = (data ?? []).map((c) => ({ id: c.id, name: c.name }));
+        setStages(list);
+        // As etapas são guardadas por NOME em config.stage. Ao trocar o quadro na
+        // edição (ou se uma etapa foi renomeada/excluída), o nome antigo não
+        // existe mais aqui: limpamos para forçar re-seleção e disparar a
+        // validação "Escolha a etapa". Só poda quando já sabemos as etapas do
+        // quadro (list não-vazia) — evita zerar tudo durante o carregamento.
+        if (list.length === 0) return;
+        const names = new Set(list.map((s) => s.name));
+        const prune = (cfg: Record<string, unknown>) =>
+          cfg && cfg.stage && !names.has(String(cfg.stage)) ? { ...cfg, stage: "" } : cfg;
+        setTriggers((arr) => arr.map((t) => (TRIGGERS[t.event]?.extra === "stage" ? { ...t, config: prune(t.config) } : t)));
+        setActions((arr) => arr.map((a) => (ACTIONS[a.type]?.extra === "stage" ? { ...a, config: prune(a.config) } : a)));
       });
     return () => { cancelled = true; };
   }, [board]);
@@ -302,15 +326,18 @@ function AutomationBuilder({
     }
     setSaving(true);
     setError(null);
-    const created = await automationService.create({
+    const payload = {
       board_id: board,
       name: name.trim() || "Nova automação",
       logic,
       triggers,
       actions,
-    });
+    };
+    const saved = editing
+      ? await automationService.update(editing.id, payload)
+      : await automationService.create(payload);
     setSaving(false);
-    if (!created) { setError("Não foi possível salvar. Tente novamente."); return; }
+    if (!saved) { setError("Não foi possível salvar. Tente novamente."); return; }
     onSaved();
   }
 
@@ -318,7 +345,7 @@ function AutomationBuilder({
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl shadow-2xl w-full max-w-lg max-h-[88vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-5 py-3 border-b border-neutral-100 sticky top-0 bg-white z-10">
-          <h3 className="text-sm font-semibold text-brand-navy">Nova automação</h3>
+          <h3 className="text-sm font-semibold text-brand-navy">{editing ? "Editar automação" : "Nova automação"}</h3>
           <button onClick={onClose} className="text-neutral-400 hover:text-neutral-600"><X size={16} /></button>
         </div>
 
@@ -408,7 +435,7 @@ function AutomationBuilder({
         <div className="flex gap-2 px-5 py-3 border-t border-neutral-100 sticky bottom-0 bg-white">
           <Button variant="outline" size="sm" className="flex-1" onClick={onClose}>Cancelar</Button>
           <Button size="sm" className="flex-1 bg-brand-teal hover:opacity-90 text-white" onClick={save} disabled={saving}>
-            {saving ? "Salvando..." : "Criar automação"}
+            {saving ? "Salvando..." : editing ? "Salvar alterações" : "Criar automação"}
           </Button>
         </div>
       </div>

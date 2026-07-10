@@ -80,6 +80,40 @@ export const automationService = {
     return data as AutomationRow;
   },
 
+  async update(
+    id: string,
+    input: {
+      board_id: string;
+      name: string;
+      logic: "AND" | "OR";
+      triggers: AutomationTrigger[];
+      actions: AutomationAction[];
+    }
+  ): Promise<AutomationRow | null> {
+    const sb = createRawClient();
+    // Mesma estrutura do create: resumo legível nas colunas simples + estrutura
+    // completa (multi-gatilho / ações sequenciais) nos jsonb.
+    const row = {
+      board_id: input.board_id,
+      name: input.name,
+      trigger_event: input.triggers.length === 1 ? input.triggers[0].event : "multi",
+      trigger_config: { logic: input.logic, triggers: input.triggers } as AutomationTriggerConfig,
+      action_type: input.actions.length === 1 ? input.actions[0].type : "multi",
+      action_config: { actions: input.actions } as AutomationActionConfig,
+    };
+    const { data, error } = await (sb as any)
+      .from("automations")
+      .update(row)
+      .eq("id", id)
+      .select(COLS)
+      .single();
+    if (error) {
+      console.error("[automationService.update]", error);
+      return null;
+    }
+    return data as AutomationRow;
+  },
+
   async setActive(id: string, is_active: boolean): Promise<void> {
     const sb = createRawClient();
     const { error } = await (sb as any).from("automations").update({ is_active }).eq("id", id);

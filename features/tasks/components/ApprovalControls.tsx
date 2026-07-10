@@ -112,6 +112,9 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
   const [approverOpen, setApproverOpen] = useState(false);
   const [approverSearch, setApproverSearch] = useState("");
   const [comment, setComment] = useState("");
+  // Só mostra o seletor de aprovador depois que a pessoa confirma que a tarefa
+  // precisa de aprovação (pergunta "Necessita de aprovação?" → botão "Sim").
+  const [needsApproval, setNeedsApproval] = useState(false);
   const currentUserId = useAuthStore((s) => s.profile?.id ?? null);
   const myName = useAuthStore((s) => s.profile?.full_name ?? null);
   const approverRef = useRef<HTMLDivElement>(null);
@@ -150,7 +153,7 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
     setAllApprovals(rows);
     setApproval(rows[0] ?? null);
   }
-  useEffect(() => { reload(); /* eslint-disable-next-line */ }, [taskId]);
+  useEffect(() => { reload(); setNeedsApproval(false); /* eslint-disable-next-line */ }, [taskId]);
 
   // Close approver dropdown on outside click
   useEffect(() => {
@@ -175,6 +178,7 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
       content: `${myName ?? "Alguém"} solicitou sua aprovação em "${taskTitle}"`,
     });
     await reload();
+    setNeedsApproval(false);
     // Reavalia automações (condição "tem aprovação pendente" ficou verdadeira).
     runAutomations({ type: "approval_changed" }, taskId);
   }
@@ -227,6 +231,30 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
     <div className="mb-4">
       {!approval || approval.status !== "pending" ? (
         <div className="rounded-lg border border-neutral-100 bg-neutral-50/60 p-3">
+          {!needsApproval ? (
+            <div className="flex items-center gap-2 flex-wrap">
+              <ShieldCheck size={14} className="text-neutral-400 shrink-0" />
+              <span className="text-xs font-medium text-neutral-600">Necessita de aprovação?</span>
+              <button
+                onClick={() => setNeedsApproval(true)}
+                className="ml-auto text-xs px-3 py-1.5 rounded-md bg-brand-navy text-white font-medium hover:bg-brand-navy-light"
+              >
+                Sim
+              </button>
+              {approval && (
+                <span className={cn("w-full mt-1 text-[11px] flex items-center gap-1.5", statusColor(approval.status))}>
+                  <StatusIcon status={approval.status} size={12} />
+                  Última: {statusLabel(approval.status)} por {nameOf(approval.approver_id)}
+                  {approval.comment ? ` — "${approval.comment}"` : ""}
+                  {canRevert && (
+                    <button onClick={revert} className="ml-1 flex items-center gap-1 text-neutral-400 hover:text-destructive transition-colors" title="Reverter aprovação (só quem solicitou)">
+                      <RotateCcw size={11} /> Reverter
+                    </button>
+                  )}
+                </span>
+              )}
+            </div>
+          ) : (
           <div className="flex items-center gap-2 flex-wrap">
             <ShieldCheck size={14} className="text-neutral-400 shrink-0" />
             <span className="text-xs text-neutral-500">Aprovador:</span>
@@ -278,13 +306,21 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
                 </div>
               )}
             </div>
-            <button
-              onClick={request}
-              disabled={!approverName}
-              className="ml-auto text-xs px-3 py-1.5 rounded-md bg-brand-navy text-white font-medium hover:bg-brand-navy-light disabled:opacity-50"
-            >
-              Solicitar aprovação
-            </button>
+            <div className="ml-auto flex items-center gap-2">
+              <button
+                onClick={() => { setNeedsApproval(false); setApproverOpen(false); }}
+                className="text-xs px-2 py-1.5 rounded-md text-neutral-500 hover:text-neutral-700 hover:bg-neutral-100 transition-colors"
+              >
+                Cancelar
+              </button>
+              <button
+                onClick={request}
+                disabled={!approverName}
+                className="text-xs px-3 py-1.5 rounded-md bg-brand-navy text-white font-medium hover:bg-brand-navy-light disabled:opacity-50"
+              >
+                Solicitar aprovação
+              </button>
+            </div>
             {approval && (
               <span className={cn("w-full mt-1 text-[11px] flex items-center gap-1.5", statusColor(approval.status))}>
                 <StatusIcon status={approval.status} size={12} />
@@ -298,6 +334,7 @@ export function ApprovalBanner({ taskId, taskTitle }: { taskId: string; taskTitl
               </span>
             )}
           </div>
+          )}
           <ApprovalHistory approvals={allApprovals} nameOf={nameOf} />
         </div>
       ) : (
