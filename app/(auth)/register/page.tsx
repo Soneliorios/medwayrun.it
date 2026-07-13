@@ -23,10 +23,6 @@ export default function RegisterPage() {
     e.preventDefault();
     setError(null);
 
-    if (!email.toLowerCase().endsWith("@medway.com.br")) {
-      setError("Apenas emails @medway.com.br podem criar conta.");
-      return;
-    }
     if (password.length < 8) {
       setError("A senha deve ter pelo menos 8 caracteres.");
       return;
@@ -86,7 +82,8 @@ export default function RegisterPage() {
           Criar conta
         </h2>
         <p className="text-sm text-neutral-500">
-          Apenas emails <strong>@medway.com.br</strong> são aceitos.
+          Qualquer email pode se cadastrar. A conta fica <strong>em análise</strong> até
+          ser aprovada — fale com <strong>Sonelio Rios</strong> para liberar o acesso.
         </p>
       </div>
 
@@ -118,7 +115,7 @@ export default function RegisterPage() {
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="seu@medway.com.br"
+            placeholder="seu@email.com"
             required
             autoComplete="email"
             className={cn(
