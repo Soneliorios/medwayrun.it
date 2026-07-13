@@ -80,6 +80,7 @@ export default function CompanyTasksPage() {
           columns:columns(id, name, color),
           projects:projects(id, name, color)
         `)
+        .is("deleted_at", null)
         .order("created_at", { ascending: false })
         .limit(200);
 

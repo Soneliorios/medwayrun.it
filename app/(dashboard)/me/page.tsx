@@ -73,6 +73,7 @@ export default function MePage() {
           .select(`*, assignee:profiles!tasks_assignee_id_fkey(id, full_name, avatar_url)`)
           .or(orParts.join(","))
           .neq("status", "archived")
+          .is("deleted_at", null)
           .order("created_at", { ascending: false }),
         supabase.from("task_types").select("project_id, name, default_hours"),
         supabase.from("columns").select("id, name, color, project_id"),

@@ -34,7 +34,8 @@ async function computeStats(): Promise<Record<string, ProjectStats>> {
   const supabase = createRawClient();
   const { data, error } = await (supabase as any)
     .from("tasks")
-    .select("project_id, tracked_hours, status");
+    .select("project_id, tracked_hours, status")
+    .is("deleted_at", null);
   if (error) { console.error("[ProjectsExplorer.computeStats]", error); return out; }
   const byProj: Record<string, any[]> = {};
   (data ?? []).forEach((t: any) => { (byProj[t.project_id] ??= []).push(t); });

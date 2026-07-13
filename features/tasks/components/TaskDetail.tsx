@@ -157,6 +157,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
   // Board-level edit permission (view-only members can't change fields)
   const { access: boardAccess } = useBoardAccess((task as any)?.project_id ?? "");
   const [loading, setLoading] = useState(true);
+  const [notFound, setNotFound] = useState(false); // task inexistente ou na Lixeira
   const [activeTab, setActiveTab] = useState<DetailTab>("description");
   const [newChecklistItem, setNewChecklistItem] = useState("");
   const [newTagInput, setNewTagInput] = useState(false);
@@ -511,8 +512,10 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
   // Load task
   useEffect(() => {
     setLoading(true);
+    setNotFound(false);
     taskService.get(taskId).then((t) => {
       setTask(t);
+      setNotFound(!t); // null = inexistente ou na Lixeira
       setLoading(false);
       // NÃO tocar no boardProjectStore global aqui: o picker usa o estado local
       // `boardProjects` (fetch scopado abaixo). Escrever no store global fazia os
@@ -740,10 +743,19 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
   }
 
   async function handleDeleteTask() {
+    if (!task) return;
+    const snapshot = task;
     store.removeTask(taskId);
-    await taskService.delete(taskId);
     setDeleteConfirm(false);
-    onClose();
+    try {
+      await taskService.delete(taskId);
+      onClose();
+    } catch (e) {
+      console.error("[handleDeleteTask]", e);
+      // Rollback: reação otimista já removeu o card; devolve em caso de falha.
+      if (snapshot.column_id) store.addTask(snapshot.column_id, snapshot as any);
+      alert("Não foi possível excluir a tarefa. Tente novamente.");
+    }
   }
 
   async function handleAddChecklistItem(e: React.FormEvent) {
@@ -941,7 +953,18 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
         style={isPage ? undefined : { width: '90vw', maxWidth: '1280px', height: '88vh' }}
         onClick={isPage ? undefined : (e) => e.stopPropagation()}
       >
-        {loading || !task ? (
+        {notFound ? (
+          <div className="p-8 flex flex-col items-center justify-center text-center gap-3 h-full">
+            <div className="w-12 h-12 rounded-full bg-neutral-100 flex items-center justify-center">
+              <Trash2 size={22} className="text-neutral-400" />
+            </div>
+            <div>
+              <h3 className="text-sm font-semibold text-brand-navy">Tarefa não encontrada</h3>
+              <p className="text-xs text-neutral-500 mt-1">Ela pode ter sido apagada e estar na Lixeira do quadro (recuperável por 7 dias).</p>
+            </div>
+            <button onClick={onClose} className="mt-1 text-xs px-3 py-1.5 rounded-md border border-neutral-200 text-neutral-600 hover:bg-neutral-50">Fechar</button>
+          </div>
+        ) : loading || !task ? (
           <div className="p-6 space-y-4">
             <Skeleton className="h-8 w-3/4" />
             <Skeleton className="h-4 w-1/2" />
@@ -2328,7 +2351,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
             {/* ── Footer ────────────────────────────────────────────── */}
             <div className="px-5 py-3 border-t border-neutral-100 flex justify-between items-center shrink-0 bg-white">
               <button
-                onClick={handleDeleteTask}
+                onClick={() => setDeleteConfirm(true)}
                 className="flex items-center gap-1.5 text-xs text-neutral-400 hover:text-destructive hover:bg-destructive/5 px-2 py-1.5 rounded-md transition-colors"
               >
                 <Trash2 size={12} />
@@ -2367,7 +2390,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
               <div>
                 <h3 className="font-semibold text-brand-navy text-sm">Excluir tarefa</h3>
                 <p className="text-xs text-neutral-500 mt-1">
-                  Tem certeza que deseja excluir <span className="font-medium text-neutral-700">"{task.title}"</span>? Esta ação não pode ser desfeita.
+                  Excluir <span className="font-medium text-neutral-700">"{task.title}"</span>? Ela vai para a <span className="font-medium text-neutral-700">Lixeira</span> do quadro e pode ser recuperada por <span className="font-medium text-neutral-700">7 dias</span>.
                 </p>
               </div>
             </div>

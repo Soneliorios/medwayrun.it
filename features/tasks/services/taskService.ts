@@ -3,7 +3,7 @@ import { ORG_ID } from "@/lib/utils";
 import type { TaskWithRelations, InsertTask } from "@/types";
 
 export const taskService = {
-  async get(id: string): Promise<TaskWithRelations> {
+  async get(id: string): Promise<TaskWithRelations | null> {
     const supabase = createClient();
     const { data, error } = await supabase
       .from("tasks")
@@ -15,9 +15,11 @@ export const taskService = {
         _commentCount:comments(count)
       `)
       .eq("id", id)
-      .single();
+      .is("deleted_at", null)
+      .maybeSingle();
 
     if (error) throw error;
+    if (!data) return null; // não existe ou está na Lixeira
 
     return {
       ...(data as any),
@@ -63,10 +65,40 @@ export const taskService = {
     if (error) throw error;
   },
 
+  /** Soft delete: manda a task para a Lixeira (recuperável por 7 dias). */
   async delete(id: string): Promise<void> {
+    const supabase = createRawClient();
+    const { error } = await supabase.from("tasks").update({ deleted_at: new Date().toISOString() }).eq("id", id);
+    if (error) throw error;
+  },
+
+  /** Restaura uma task da Lixeira. */
+  async restore(id: string): Promise<void> {
+    const supabase = createRawClient();
+    const { error } = await supabase.from("tasks").update({ deleted_at: null }).eq("id", id);
+    if (error) throw error;
+  },
+
+  /** Exclusão PERMANENTE (hard delete) — usada na Lixeira ("excluir de vez"). */
+  async purge(id: string): Promise<void> {
     const supabase = createRawClient();
     const { error } = await supabase.from("tasks").delete().eq("id", id);
     if (error) throw error;
+  },
+
+  /** Tarefas apagadas de um quadro nos últimos 7 dias (para a Lixeira). */
+  async listDeleted(boardId: string): Promise<TaskWithRelations[]> {
+    const supabase = createClient();
+    const since = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString();
+    const { data, error } = await supabase
+      .from("tasks")
+      .select(`*, assignee:profiles!tasks_assignee_id_fkey(id, full_name, avatar_url)`)
+      .eq("project_id", boardId)
+      .not("deleted_at", "is", null)
+      .gte("deleted_at", since)
+      .order("deleted_at", { ascending: false });
+    if (error) { console.error("[taskService.listDeleted]", error); return []; }
+    return (data ?? []) as unknown as TaskWithRelations[];
   },
 
   async getComments(taskId: string) {

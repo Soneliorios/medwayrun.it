@@ -130,6 +130,7 @@ export function TopNav() {
           .eq("org_id", ORG_ID)
           .in("project_id", accessibleIds)
           .ilike("title", `%${q}%`)
+          .is("deleted_at", null)
           .limit(5);
         taskHits = ((data ?? []) as any[]).map((t) => ({ id: t.id, label: t.title }));
       }

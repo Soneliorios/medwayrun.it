@@ -80,12 +80,13 @@ export function BatchActionBar() {
   }
 
   async function handleDelete() {
-    if (!confirm(`Excluir ${count} tarefa(s)? Esta ação não pode ser desfeita.`)) return;
+    if (!confirm(`Excluir ${count} tarefa(s)? Elas vão para a Lixeira do quadro e podem ser recuperadas por 7 dias.`)) return;
     setLoading("delete");
     try {
       const supabase = createRawClient();
       const ids = [...selectedIds];
-      const { error } = await supabase.from("tasks").delete().in("id", ids);
+      // Soft delete: marca deleted_at (recuperável na Lixeira por 7 dias).
+      const { error } = await supabase.from("tasks").update({ deleted_at: new Date().toISOString() }).in("id", ids);
       if (error) { console.error("[BatchActionBar.delete] error:", error); return; }
       ids.forEach((id) => store.removeTask(id));
       clearSelection();

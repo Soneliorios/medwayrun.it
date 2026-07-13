@@ -304,7 +304,7 @@ export async function sweepDueDates(boardId: string): Promise<void> {
     if (!autos.length) return;
     const sb = createRawClient();
     const { data: tasks } = await (sb as any)
-      .from("tasks").select("id, due_date, status").eq("project_id", boardId).not("due_date", "is", null);
+      .from("tasks").select("id, due_date, status").eq("project_id", boardId).not("due_date", "is", null).is("deleted_at", null);
     const now = Date.now();
     for (const auto of autos) {
       const trg = (auto.trigger_config?.triggers ?? []).find((t) => t.event === "due_date_near");

@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useBoardStore } from "../store/boardStore";
+import { taskService } from "@/features/tasks/services/taskService";
 import type { TaskWithRelations, ColumnWithTasks } from "@/types";
 
 export function useBoardRealtime(projectId: string) {
@@ -38,9 +39,25 @@ export function useBoardRealtime(projectId: string) {
               );
             }
           } else if (eventType === "UPDATE") {
+            // Soft delete chega como UPDATE (deleted_at setado) — trata como remoção
+            // para o card sumir do board em outros clientes (e neste).
+            if ((newRow as any).deleted_at) {
+              store.removeTask((newRow as any).id);
+              return;
+            }
             const localTask = store.columns
               .flatMap((c) => c.tasks)
               .find((t) => t.id === (newRow as any).id);
+
+            // Restaurado (ou update de task ausente do store): não está no board.
+            // updateTask seria no-op — busca a linha hidratada (joins) e re-insere.
+            if (!localTask) {
+              const rid = (newRow as any).id;
+              taskService.get(rid)
+                .then((t) => { if (t) store.addTask((t as any).column_id, t as unknown as TaskWithRelations); })
+                .catch(() => { /* task pode ter sumido — ignora */ });
+              return;
+            }
 
             // Only apply server update if it's "newer" (avoid overwriting optimistic)
             if (

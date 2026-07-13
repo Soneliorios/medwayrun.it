@@ -43,7 +43,9 @@ import { encodeFilters, decodeFilters } from "@/lib/filterUtils";
 import { cn } from "@/lib/utils";
 import { useUiPref } from "@/lib/useUiPref";
 import Link from "next/link";
-import { Settings } from "lucide-react";
+import { Settings, Trash2 } from "lucide-react";
+import { BoardTrashModal } from "@/features/board/components/BoardTrashModal";
+import { loadBoardData } from "@/features/board/hooks/useBoardData";
 import { PRIORITY_LABELS, PRIORITY_COLORS } from "@/types";
 
 type BoardView = "kanban" | "list" | "calendar" | "gantt" | "dashboard" | "projects";
@@ -70,6 +72,7 @@ export default function BoardPage({ params }: Props) {
   const [activeTab, setActiveTab] = useState<BoardView>("kanban");
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
   const [deliverOnOpen, setDeliverOnOpen] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false);
 
   // Arrastar uma task para a coluna "Concluído" abre o popup de entrega.
   useEffect(() => {
@@ -223,6 +226,13 @@ export default function BoardPage({ params }: Props) {
               </span>
             )}
           </button>
+          <button
+            onClick={() => setTrashOpen(true)}
+            title="Lixeira do quadro (tarefas apagadas, 7 dias)"
+            className="w-7 h-7 flex items-center justify-center rounded-md text-neutral-400 hover:text-brand-navy hover:bg-neutral-50 transition-colors"
+          >
+            <Trash2 size={13} />
+          </button>
           <Link
             href={`/boards/${boardId}/settings`}
             className="w-7 h-7 flex items-center justify-center rounded-md text-neutral-400 hover:text-brand-navy hover:bg-neutral-50 transition-colors"
@@ -279,6 +289,13 @@ export default function BoardPage({ params }: Props) {
         />
       )}
 
+      {/* Lixeira do quadro (tarefas apagadas nos últimos 7 dias) */}
+      <BoardTrashModal
+        boardId={boardId}
+        open={trashOpen}
+        onClose={() => setTrashOpen(false)}
+        onChanged={() => loadBoardData(boardId)}
+      />
 
     </div>
   );

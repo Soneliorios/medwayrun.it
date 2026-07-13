@@ -56,6 +56,7 @@ export async function loadBoardData(pid: string) {
       _attachmentCount:task_attachments(count)
     `)
     .eq("project_id", pid)
+    .is("deleted_at", null)
     .order("position", { ascending: true });
 
   if (tasksError) console.error("[loadBoardData] tasks error:", tasksError);

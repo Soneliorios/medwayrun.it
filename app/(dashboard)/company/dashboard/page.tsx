@@ -28,7 +28,8 @@ export default function CompanyDashboardPage() {
         const supabase = createRawClient();
         const { data } = await supabase
           .from("tasks")
-          .select("id, status, priority, is_urgent, due_date, project_id");
+          .select("id, status, priority, is_urgent, due_date, project_id")
+          .is("deleted_at", null);
         const tasks: any[] = data ?? [];
         const now = new Date();
 

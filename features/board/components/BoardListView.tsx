@@ -127,9 +127,11 @@ export function BoardListView({ boardId, onTaskOpen }: { boardId: string; onTask
       .catch(() => { if (current) boardStore.moveTask(taskId, current, 1000); }); // rollback
   }
   function deleteTask(taskId: string) {
-    if (!confirm("Excluir esta tarefa?")) return;
+    if (!confirm("Excluir esta tarefa? Ela vai para a Lixeira do quadro e pode ser recuperada por 7 dias.")) return;
     boardStore.removeTask(taskId);
     setRowMenu(null);
+    // Soft delete real (antes só sumia da UI e voltava ao recarregar).
+    taskService.delete(taskId).catch((e) => console.error("[BoardListView.deleteTask]", e));
   }
   function duplicateTask(_t: ListTask) {
     setRowMenu(null);
