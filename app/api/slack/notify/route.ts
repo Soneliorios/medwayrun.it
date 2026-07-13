@@ -23,6 +23,20 @@ async function slack(method: string, token: string, body: Record<string, unknown
   return res.json() as Promise<any>;
 }
 
+// ATENÇÃO: métodos de LEITURA do Slack (ex.: users.lookupByEmail) NÃO aceitam
+// JSON — exigem application/x-www-form-urlencoded. Enviados como JSON, o Slack
+// ignora os campos e responde { ok:false, error:"invalid_arguments" }
+// ("missing required field: email") — o que fazia toda notificação resolver 0
+// destinatários. chat.postMessage aceita JSON e continua no helper acima.
+async function slackForm(method: string, token: string, params: Record<string, string>) {
+  const res = await fetch(`https://slack.com/api/${method}`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded", Authorization: `Bearer ${token}` },
+    body: new URLSearchParams(params).toString(),
+  });
+  return res.json() as Promise<any>;
+}
+
 // Diagnóstico leve: confirma se o SLACK_BOT_TOKEN está disponível em produção
 // (sem expor o token). Não requer auth — retorna só um booleano.
 export async function GET() {
@@ -69,7 +83,7 @@ export async function POST(request: Request) {
       const { data: got } = await admin.auth.admin.getUserById(uid);
       const email = got?.user?.email;
       if (!email) { failed.push(uid); continue; }
-      const lookup = await slack("users.lookupByEmail", token, { email });
+      const lookup = await slackForm("users.lookupByEmail", token, { email });
       const slackUserId = lookup?.user?.id;
       if (!lookup?.ok || !slackUserId) { failed.push(email); continue; }
       // Posta direto no user id — o Slack abre o DM. (conversations.open exigiria
