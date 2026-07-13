@@ -4,7 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import {
   Zap, Plus, ArrowRight, Clock, UserCheck, MoveRight, Bell, Tag, Trash2,
   X, Mail, Flag, UserMinus, GitBranch, ClipboardCheck,
-  MessageSquare, Paperclip, CheckCircle2, XCircle, MapPin, Hourglass, Pencil,
+  MessageSquare, Paperclip, CheckCircle2, XCircle, MapPin, Hourglass, Pencil, Send,
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -41,17 +41,25 @@ const TRIGGERS: Record<string, { label: string; icon: React.ElementType; kind: "
   approval_pending: { label: "Tem aprovação pendente", icon: Hourglass, kind: "condition", extra: "approver" },
 };
 
-const ACTIONS: Record<string, { label: string; icon: React.ElementType; extra?: "users" | "tag" | "stage" | "email" | "priority" | "type" | "template" }> = {
+const ACTIONS: Record<string, { label: string; icon: React.ElementType; extra?: "users" | "tag" | "stage" | "email" | "priority" | "type" | "template" | "slackTargets" }> = {
   assign_user: { label: "Alocar usuários", icon: UserCheck, extra: "users" },
   remove_assignee: { label: "Remover responsável", icon: UserMinus },
   add_tag: { label: "Adicionar tag", icon: Tag, extra: "tag" },
   create_subsequent: { label: "Criar tarefa subsequente", icon: GitBranch, extra: "template" },
+  send_slack: { label: "Enviar Slack (DM)", icon: Send, extra: "slackTargets" },
   send_email: { label: "Enviar email para", icon: Mail, extra: "email" },
   set_priority: { label: "Alterar prioridade", icon: Flag, extra: "priority" },
   set_type: { label: "Alterar tipo", icon: ClipboardCheck, extra: "type" },
   move_to_stage: { label: "Mover para etapa", icon: MoveRight, extra: "stage" },
   send_notification: { label: "Enviar notificação", icon: Bell },
 };
+
+// Alvos do Slack (valor salvo → rótulo exibido).
+const SLACK_TARGETS: { value: string; label: string }[] = [
+  { value: "creator", label: "Criador da tarefa" },
+  { value: "followers", label: "Seguidores" },
+  { value: "assignee", label: "Responsável(is)" },
+];
 
 const EMAIL_TARGETS = ["Responsável", "Seguidores", "Usuário específico"];
 const PRIORITIES = ["Baixa", "Média", "Alta", "Urgente"];
@@ -320,6 +328,8 @@ function AutomationBuilder({
       const extra = ACTIONS[a.type]?.extra;
       if (extra === "users") {
         if (!((a.config.users as string[])?.length)) { setError(`Selecione os usuários da ação "${ACTIONS[a.type].label}".`); return; }
+      } else if (extra === "slackTargets") {
+        if (!((a.config.targets as string[])?.length)) { setError(`Escolha ao menos um destinatário do Slack em "${ACTIONS[a.type].label}".`); return; }
       } else if (extra && ACTION_FIELD[extra] && !a.config[ACTION_FIELD[extra]]) {
         setError(`Complete a configuração da ação "${ACTIONS[a.type].label}".`); return;
       }
@@ -518,6 +528,33 @@ function ActionConfig({ action, members, stages, onChange }: {
           })}
         </div>
       );
+    case "slackTargets": {
+      const sel = (action.config.targets as string[]) ?? [];
+      return (
+        <div className="mt-2 space-y-1.5">
+          <p className="text-[10px] text-neutral-400">Enviar DM no Slack para:</p>
+          <div className="flex flex-wrap gap-1.5">
+            {SLACK_TARGETS.map((t) => {
+              const on = sel.includes(t.value);
+              return (
+                <button key={t.value} type="button" onClick={() => {
+                  onChange({ ...action.config, targets: on ? sel.filter((x) => x !== t.value) : [...sel, t.value] });
+                }} className={cn("text-[11px] px-2 py-0.5 rounded-full border", on ? "bg-brand-teal/10 border-brand-teal/40 text-brand-teal" : "border-neutral-200 text-neutral-500")}>
+                  {t.label}
+                </button>
+              );
+            })}
+          </div>
+          <input
+            placeholder="Mensagem (opcional; use {tarefa})"
+            value={String(action.config.message ?? "")}
+            className={base}
+            onChange={(e) => onChange({ ...action.config, message: e.target.value })}
+          />
+          <p className="text-[10px] text-neutral-400">Requer o app do Slack configurado (SLACK_BOT_TOKEN).</p>
+        </div>
+      );
+    }
     case "tag":
       return <input placeholder="Nome da tag..." value={String(action.config.tag ?? "")} className={base} onChange={(e) => onChange({ tag: e.target.value })} />;
     case "stage":

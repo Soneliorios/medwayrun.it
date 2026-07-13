@@ -237,6 +237,36 @@ async function runAction(a: AutomationAction, auto: AutomationRow, task: EngineT
       })));
       return;
     }
+    case "send_slack": {
+      // Alvos: Criador / Seguidores / Responsável (marcáveis). Resolve os user_ids
+      // e a rota server manda DM no Slack de cada um (via e-mail → Slack).
+      const targets: string[] = Array.isArray(cfg.targets)
+        ? cfg.targets
+        : cfg.target ? [String(cfg.target)] : [];
+      if (!targets.length) return;
+      const ids = new Set<string>();
+      if (targets.includes("creator") && (task as any).created_by) ids.add((task as any).created_by as string);
+      if (targets.includes("assignee")) (await responsibleIds(task)).forEach((id) => ids.add(id));
+      if (targets.includes("followers")) {
+        const { data } = await (sb as any).from("task_followers").select("user_id").eq("task_id", task.id);
+        (data ?? []).forEach((r: any) => { if (r.user_id) ids.add(r.user_id); });
+      }
+      if (!ids.size) return;
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
+      const link = appUrl ? `\n${appUrl}/tasks/${task.id}` : "";
+      const custom = cfg.message ? String(cfg.message).replace(/\{tarefa\}/g, task.title ?? "tarefa") : null;
+      const text = `${custom ?? `🔔 *${auto.name}* — Tarefa: *${task.title ?? "tarefa"}*`}${link}`;
+      try {
+        await fetch("/api/slack/notify", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userIds: [...ids], text }),
+        });
+      } catch (e) {
+        console.error("[automationEngine] send_slack", e);
+      }
+      return;
+    }
     default:
       console.warn("[automationEngine] ação desconhecida:", a.type);
   }
