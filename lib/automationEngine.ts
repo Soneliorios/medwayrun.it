@@ -364,7 +364,7 @@ async function runAction(a: AutomationAction, auto: AutomationRow, task: EngineT
         if (!json?.ok) {
           engineToast(json?.error === "not_configured" ? "⚠️ Slack não configurado (SLACK_BOT_TOKEN na Vercel)" : `⚠️ Slack falhou: ${json?.error ?? res.status}`);
         } else if ((json.sent ?? 0) === 0) {
-          engineToast("⚠️ Slack: ninguém encontrado (e-mail do MedwayRun ≠ Slack?)");
+          engineToast("⚠️ Slack: ninguém encontrado (e-mail do MedwayFlow ≠ Slack?)");
         }
       } catch (e) {
         console.error("[automationEngine] send_slack", e);

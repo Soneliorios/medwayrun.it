@@ -19,8 +19,8 @@ const montserrat = Montserrat({
 
 export const metadata: Metadata = {
   title: {
-    default: "MedwayRun — Gestão de Projetos",
-    template: "%s | MedwayRun",
+    default: "MedwayFlow — Gestão de Projetos",
+    template: "%s | MedwayFlow",
   },
   description: "Plataforma de gestão de projetos e tarefas da Medway",
 };

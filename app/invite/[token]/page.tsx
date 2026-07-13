@@ -25,13 +25,9 @@ export default async function InvitePage({ params }: Props) {
     <div className="min-h-screen flex items-center justify-center bg-neutral-50 px-4">
       <div className="w-full max-w-sm bg-white rounded-2xl shadow-sm border border-neutral-100 p-8 space-y-6">
         <div className="flex items-center gap-2 mb-2">
-          <div
-            className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-white text-sm"
-            style={{ background: "#01CFB5" }}
-          >
-            M
-          </div>
-          <span className="font-bold text-lg text-brand-navy">medwayrun</span>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/icon.png" alt="MedwayFlow" className="w-8 h-8 object-contain" />
+          <span className="font-bold text-lg text-brand-navy">MedwayFlow</span>
         </div>
 
         <div>

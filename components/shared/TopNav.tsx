@@ -197,11 +197,10 @@ export function TopNav() {
         href="/boards"
         className="flex items-center gap-1.5 mr-3 shrink-0"
       >
-        <div className="w-6 h-6 rounded-md flex items-center justify-center font-bold text-white text-xs" style={{ background: "#01CFB5" }}>
-          M
-        </div>
+        {/* eslint-disable-next-line @next/next/no-img-element */}
+        <img src="/icon.png" alt="MedwayFlow" className="w-6 h-6 rounded-md bg-white p-0.5 object-contain" />
         <span className="font-bold text-white text-sm hidden sm:block" style={{ fontFamily: "var(--font-montserrat)" }}>
-          medwayrun
+          MedwayFlow
         </span>
       </Link>
 

@@ -3,7 +3,7 @@ import type { Metadata } from "next";
 export const dynamic = "force-dynamic";
 
 export const metadata: Metadata = {
-  title: "Acesso | MedwayRun",
+  title: "Acesso | MedwayFlow",
 };
 
 export default function AuthLayout({
@@ -31,17 +31,13 @@ export default function AuthLayout({
         {/* Logo */}
         <div className="relative z-10">
           <div className="flex items-center gap-2">
-            <div
-              className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-white text-sm"
-              style={{ background: "#01CFB5" }}
-            >
-              M
-            </div>
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src="/icon.png" alt="MedwayFlow" className="w-9 h-9 rounded-lg bg-white p-1 object-contain" />
             <span
               className="text-white font-bold text-xl tracking-tight"
               style={{ fontFamily: "var(--font-montserrat)" }}
             >
-              medwayrun
+              MedwayFlow
             </span>
           </div>
         </div>
@@ -81,14 +77,10 @@ export default function AuthLayout({
       <div className="flex flex-col items-center justify-center px-6 py-12 bg-neutral-50">
         {/* Mobile logo */}
         <div className="lg:hidden mb-8 flex items-center gap-2">
-          <div
-            className="w-8 h-8 rounded-lg flex items-center justify-center font-bold text-white text-sm"
-            style={{ background: "#01CFB5" }}
-          >
-            M
-          </div>
+          {/* eslint-disable-next-line @next/next/no-img-element */}
+          <img src="/icon.png" alt="MedwayFlow" className="w-9 h-9 object-contain" />
           <span className="font-bold text-xl text-brand-navy tracking-tight">
-            medwayrun
+            MedwayFlow
           </span>
         </div>
 
