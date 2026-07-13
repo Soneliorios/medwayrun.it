@@ -66,9 +66,9 @@ export async function POST(request: Request) {
       const lookup = await slack("users.lookupByEmail", token, { email });
       const slackUserId = lookup?.user?.id;
       if (!lookup?.ok || !slackUserId) { failed.push(email); continue; }
-      const opened = await slack("conversations.open", token, { users: slackUserId });
-      const channel = opened?.channel?.id ?? slackUserId;
-      const posted = await slack("chat.postMessage", token, { channel, text });
+      // Posta direto no user id — o Slack abre o DM. (conversations.open exigiria
+      // o scope im:write; chat.postMessage no U… funciona só com chat:write.)
+      const posted = await slack("chat.postMessage", token, { channel: slackUserId, text });
       if (posted?.ok) sent++; else failed.push(email);
     } catch {
       failed.push(uid);
