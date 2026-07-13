@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Zap, Plus, ArrowRight, Clock, UserCheck, MoveRight, Bell, Tag, Trash2,
   X, Mail, Flag, UserMinus, GitBranch, ClipboardCheck,
@@ -59,6 +59,36 @@ const SLACK_TARGETS: { value: string; label: string }[] = [
   { value: "creator", label: "Criador da tarefa" },
   { value: "followers", label: "Seguidores" },
   { value: "assignee", label: "Responsável(is)" },
+];
+
+// Campos que podem ser inseridos na mensagem do Slack (token → rótulo). Os
+// tokens são resolvidos no motor (lib/automationEngine.ts › renderMessageTemplate).
+const MESSAGE_TOKENS: { group: string; items: { token: string; label: string }[] }[] = [
+  {
+    group: "Tarefa",
+    items: [
+      { token: "{tarefa}", label: "Título" },
+      { token: "{codigo}", label: "Código" },
+      { token: "{descricao}", label: "Descrição" },
+      { token: "{prazo}", label: "Prazo" },
+      { token: "{prioridade}", label: "Prioridade" },
+      { token: "{status}", label: "Status" },
+      { token: "{etapa}", label: "Etapa" },
+      { token: "{quadro}", label: "Quadro" },
+      { token: "{responsavel}", label: "Responsável" },
+      { token: "{criador}", label: "Criador" },
+      { token: "{link}", label: "Link da tarefa" },
+    ],
+  },
+  {
+    group: "Entrega",
+    items: [
+      { token: "{entregue_em}", label: "Data da entrega" },
+      { token: "{nota_entrega}", label: "O que foi entregue" },
+      { token: "{link_entrega}", label: "Link do material" },
+      { token: "{horas}", label: "Horas trabalhadas" },
+    ],
+  },
 ];
 
 const EMAIL_TARGETS = ["Responsável", "Seguidores", "Usuário específico"];
@@ -507,9 +537,28 @@ function ActionConfig({ action, members, stages, onChange }: {
   action: AutomationAction; members: { id: string; full_name: string }[]; stages: BoardStage[];
   onChange: (cfg: Record<string, unknown>) => void;
 }) {
+  const msgRef = useRef<HTMLTextAreaElement>(null);
   const extra = ACTIONS[action.type]?.extra;
   if (!extra) return null;
   const base = "mt-2 w-full text-xs border border-neutral-200 rounded-lg px-2.5 py-1.5 bg-white outline-none focus:border-brand-teal";
+
+  // Insere um token de campo ({tarefa}, {prazo}…) na posição do cursor da mensagem.
+  function insertToken(token: string) {
+    const el = msgRef.current;
+    const cur = String(action.config.message ?? "");
+    const start = el?.selectionStart ?? cur.length;
+    const end = el?.selectionEnd ?? cur.length;
+    const next = cur.slice(0, start) + token + cur.slice(end);
+    onChange({ ...action.config, message: next });
+    // Reposiciona o cursor logo após o token inserido (após o re-render).
+    requestAnimationFrame(() => {
+      if (!el) return;
+      el.focus();
+      const pos = start + token.length;
+      el.setSelectionRange(pos, pos);
+    });
+  }
+
   switch (extra) {
     case "users":
       return (
@@ -545,13 +594,35 @@ function ActionConfig({ action, members, stages, onChange }: {
               );
             })}
           </div>
-          <input
-            placeholder="Mensagem (opcional; use {tarefa})"
+          <textarea
+            ref={msgRef}
+            rows={3}
+            placeholder="Mensagem (opcional). Deixe em branco para o texto padrão, ou escreva e clique nos campos abaixo para inserir."
             value={String(action.config.message ?? "")}
-            className={base}
+            className={cn(base, "resize-y leading-relaxed")}
             onChange={(e) => onChange({ ...action.config, message: e.target.value })}
           />
-          <p className="text-[10px] text-neutral-400">Requer o app do Slack configurado (SLACK_BOT_TOKEN).</p>
+          <div className="space-y-1.5">
+            {MESSAGE_TOKENS.map((g) => (
+              <div key={g.group} className="flex flex-wrap items-center gap-1">
+                <span className="text-[10px] font-medium text-neutral-400 w-14 shrink-0">{g.group}:</span>
+                {g.items.map((it) => (
+                  <button
+                    key={it.token}
+                    type="button"
+                    title={it.token}
+                    onClick={() => insertToken(it.token)}
+                    className="text-[10px] px-1.5 py-0.5 rounded border border-neutral-200 text-neutral-500 hover:border-brand-teal hover:text-brand-teal transition-colors"
+                  >
+                    {it.label}
+                  </button>
+                ))}
+              </div>
+            ))}
+          </div>
+          <p className="text-[10px] text-neutral-400">
+            No Slack, <code>*texto*</code> fica em negrito e <code>_texto_</code> em itálico. Requer o app do Slack configurado (SLACK_BOT_TOKEN).
+          </p>
         </div>
       );
     }

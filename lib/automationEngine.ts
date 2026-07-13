@@ -8,6 +8,7 @@ import { sequenceService } from "@/features/tasks/services/sequenceService";
 import { notificationService } from "@/features/notifications/services/notificationService";
 import { approvalService } from "@/features/tasks/services/approvalService";
 import { useBoardStore } from "@/features/board/store/boardStore";
+import { useOrgMembersStore } from "@/lib/useOrgMembers";
 
 /**
  * Motor de execução das automações (client-side, disparado pelo cliente que fez
@@ -47,6 +48,14 @@ interface EngineTask {
   assignee_id: string | null;
   due_date: string | null;
   created_by: string | null;
+  // Campos extras usados nos templates de mensagem (ex.: Slack {campo}).
+  description?: string | null;
+  priority?: string | null;
+  status?: string | null;
+  delivery_date?: string | null;
+  delivery_link?: string | null;
+  delivery_note?: string | null;
+  tracked_hours?: number | null;
 }
 
 interface Ctx {
@@ -77,6 +86,77 @@ const EVENT_DOMAIN: Record<EngineEvent["type"], string> = {
 };
 
 const PRIORITY_MAP: Record<string, string> = { "Baixa": "low", "Média": "medium", "Alta": "high", "Urgente": "urgent" };
+
+// ── Templates de mensagem ({campo}) — usados no texto do Slack ────────────────
+const PRIORITY_PT: Record<string, string> = { low: "Baixa", medium: "Média", high: "Alta", urgent: "Urgente" };
+const STATUS_PT: Record<string, string> = {
+  open: "Aberta", todo: "A fazer", in_progress: "Em andamento", in_review: "Em revisão", review: "Em revisão",
+  blocked: "Bloqueada", delivered: "Entregue", done: "Concluída", completed: "Concluída",
+};
+
+function stripHtml(html: string | null | undefined): string {
+  if (!html) return "";
+  return String(html).replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
+}
+function fmtDate(d: string | null | undefined): string {
+  if (!d) return "";
+  const dt = new Date(d.length <= 10 ? `${d}T12:00:00` : d);
+  return isNaN(dt.getTime()) ? "" : dt.toLocaleDateString("pt-BR");
+}
+function fmtDateTime(d: string | null | undefined): string {
+  if (!d) return "";
+  const dt = new Date(d);
+  return isNaN(dt.getTime())
+    ? ""
+    : dt.toLocaleString("pt-BR", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" });
+}
+async function memberName(id: string | null | undefined): Promise<string> {
+  if (!id) return "";
+  const store = useOrgMembersStore.getState();
+  if (store.status !== "loaded") { try { await store.load(); } catch { /* ignore */ } }
+  const m = useOrgMembersStore.getState().members.find((x) => x.id === id);
+  return m?.full_name ?? "";
+}
+async function projectName(projectId: string): Promise<string> {
+  try {
+    const sb = createRawClient();
+    const { data } = await (sb as any).from("projects").select("name").eq("id", projectId).maybeSingle();
+    return data?.name ?? "";
+  } catch { return ""; }
+}
+
+/**
+ * Renderiza um template de mensagem substituindo os campos {campo} pelos valores
+ * da tarefa/entrega. Campos desconhecidos ficam intactos (para o autor perceber
+ * o erro de digitação). Nomes/quadro só são resolvidos se o template os usar.
+ */
+async function renderMessageTemplate(raw: string, task: EngineTask, ctx: Ctx): Promise<string> {
+  const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
+  const uses = (k: string) => raw.includes(`{${k}}`);
+  const [assignee, creator, board] = await Promise.all([
+    uses("responsavel") ? memberName(task.assignee_id) : Promise.resolve(""),
+    uses("criador") ? memberName(task.created_by) : Promise.resolve(""),
+    uses("quadro") ? projectName(task.project_id) : Promise.resolve(""),
+  ]);
+  const tokens: Record<string, string> = {
+    tarefa: task.title ?? "",
+    codigo: `#${String(task.id).slice(0, 8).toUpperCase()}`,
+    descricao: stripHtml(task.description),
+    prazo: fmtDate(task.due_date),
+    prioridade: task.priority ? (PRIORITY_PT[task.priority] ?? task.priority) : "",
+    status: task.status ? (STATUS_PT[task.status] ?? task.status) : "",
+    etapa: ctx.currentStageName ?? "",
+    quadro: board,
+    responsavel: assignee,
+    criador: creator,
+    link: appUrl ? `${appUrl}/tasks/${task.id}` : "",
+    entregue_em: fmtDateTime(task.delivery_date),
+    nota_entrega: task.delivery_note ?? "",
+    link_entrega: task.delivery_link ?? "",
+    horas: task.tracked_hours != null ? String(Math.round(task.tracked_hours * 100) / 100).replace(".", ",") : "",
+  };
+  return raw.replace(/\{(\w+)\}/g, (m, k) => (k in tokens ? tokens[k] : m));
+}
 
 // ── Dedup de disparo em rajada (mesma regra+tarefa+evento) ────────────────────
 const recentFires = new Map<string, number>();
@@ -264,9 +344,16 @@ async function runAction(a: AutomationAction, auto: AutomationRow, task: EngineT
       }
       if (!ids.size) { engineToast("⚠️ Slack: nenhum destinatário (a task tem criador/seguidores?)"); return; }
       const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
-      const link = appUrl ? `\n${appUrl}/tasks/${task.id}` : "";
-      const custom = cfg.message ? String(cfg.message).replace(/\{tarefa\}/g, task.title ?? "tarefa") : null;
-      const text = `${custom ?? `🔔 *${auto.name}* — Tarefa: *${task.title ?? "tarefa"}*`}${link}`;
+      const raw = cfg.message ? String(cfg.message).trim() : "";
+      let text: string;
+      if (raw) {
+        // Mensagem personalizada: substitui os campos {…}. Respeita o texto do
+        // autor — NÃO anexa link automático (se quiser link, usa o campo {link}).
+        text = await renderMessageTemplate(raw, task, ctx);
+      } else {
+        const link = appUrl ? `\n${appUrl}/tasks/${task.id}` : "";
+        text = `🔔 *${auto.name}* — Tarefa: *${task.title ?? "tarefa"}*${link}`;
+      }
       try {
         const res = await fetch("/api/slack/notify", {
           method: "POST",
@@ -296,7 +383,7 @@ export async function runAutomations(ev: EngineEvent, taskId: string): Promise<v
     const sb = createRawClient();
     const { data: task } = await (sb as any)
       .from("tasks")
-      .select("id, project_id, column_id, title, assignee_id, due_date, created_by")
+      .select("id, project_id, column_id, title, assignee_id, due_date, created_by, description, priority, status, delivery_date, delivery_link, delivery_note, tracked_hours")
       .eq("id", taskId)
       .maybeSingle();
     if (!task) return;
