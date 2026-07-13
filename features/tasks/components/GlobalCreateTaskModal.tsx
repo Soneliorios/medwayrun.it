@@ -22,6 +22,7 @@ import {
 import { cn } from "@/lib/utils";
 import { taskService } from "../services/taskService";
 import { tagsService } from "../services/tagsService";
+import { sequenceService } from "../services/sequenceService";
 import { attachmentService } from "@/lib/attachmentService";
 import { useProjectStore } from "@/features/projects/store/projectStore";
 import { useBoardStore } from "@/features/board/store/boardStore";
@@ -354,6 +355,13 @@ export function GlobalCreateTaskModal() {
     } as any);
     const taskId: string | undefined = created?.id;
     if (!taskId) return null;
+
+    // 2+ responsáveis = modo PARALELO (todos juntos, entrega única). Com 1, o
+    // assignee_id já foi definido acima (modo sequencial padrão).
+    if (assignees.length >= 2) {
+      try { await sequenceService.setSidebarResponsibles(taskId, assignees); }
+      catch (e) { console.error("[createTask] responsáveis paralelos:", e); }
+    }
 
     // is_urgent
     try { await taskService.update(taskId, { is_urgent: isUrgent } as any); } catch (e) { console.error("[createTask] is_urgent update error:", e); }

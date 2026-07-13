@@ -58,19 +58,23 @@ function TaskCardInner({ task, onOpen }: Props) {
     if (!isDragging) onOpen?.(task.id);
   }, [isDragging, onOpen, task.id]);
 
-  // Only the current responsible can register time
-  const canTrackTime = task.assignee_id === user?.id;
+  // O responsável pode registrar tempo. No modo PARALELO qualquer um dos
+  // responsáveis simultâneos também pode (não só o assignee_id/primeiro).
+  const cardSeq: any[] = (task as any).sequence ?? [];
+  const isParallelCard = (task as any).assignment_mode === "parallel" && cardSeq.length >= 2;
+  const canTrackTime =
+    task.assignee_id === user?.id || (isParallelCard && cardSeq.some((s) => s.user_id === user?.id));
   const handlePlay = useCallback(
     (e: React.MouseEvent) => {
       e.stopPropagation();
-      if (!user?.id || task.assignee_id !== user.id) return;
+      if (!user?.id || !canTrackTime) return;
       if (isActive) {
         timerStore.stopTimer(user.id);
       } else {
         timerStore.startTimer(user.id, task.id);
       }
     },
-    [isActive, task.id, task.assignee_id, timerStore, user?.id]
+    [isActive, task.id, canTrackTime, timerStore, user?.id]
   );
 
   const handleCheckbox = useCallback(

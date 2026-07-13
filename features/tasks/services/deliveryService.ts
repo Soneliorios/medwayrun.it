@@ -19,13 +19,15 @@ export const deliveryService = {
     const sb = createRawClient();
     const { data: task } = await (sb as any)
       .from("tasks")
-      .select("id, project_id, column_id, tracked_hours, status, position")
+      .select("id, project_id, column_id, tracked_hours, status, position, assignment_mode")
       .eq("id", taskId)
       .maybeSingle();
     if (!task || task.status === "delivered") return { finalized: false };
 
     const queue = await sequenceService.list(taskId);
-    if (queue.length > 0) {
+    const parallel = task.assignment_mode === "parallel" && queue.length >= 2;
+    if (queue.length > 0 && !parallel) {
+      // Fila SEQUENCIAL: registra a parte do responsável ativo e avança.
       const { finished } = await sequenceService.advance(taskId, {
         hours: payload?.hours,
         note: payload?.note ?? null,
@@ -33,16 +35,19 @@ export const deliveryService = {
       });
       // Passou a vez ao próximo responsável — a task continua aberta.
       if (!finished) return { finalized: false };
+    } else if (parallel) {
+      // Modo paralelo: entrega única — marca TODOS os responsáveis como entregues.
+      await sequenceService.markAllDone(taskId);
     }
 
-    // Único responsável ou último da fila → entrega total.
+    // Único responsável, último da fila OU paralelo → entrega total.
     const patch: Record<string, unknown> = {
       status: "delivered",
       delivery_date: new Date().toISOString(),
     };
-    // Sem fila, o resumo (horas/link/nota) fica no nível da task; com fila, cada
-    // parte já guarda o seu (via sequenceService.advance).
-    if (queue.length === 0) {
+    // Sem fila ou paralelo, o resumo (horas/link/nota) fica no nível da task; na
+    // fila sequencial cada parte guarda o seu (via sequenceService.advance).
+    if (queue.length === 0 || parallel) {
       if (typeof payload?.hours === "number") patch.tracked_hours = Math.round(payload.hours * 3600) / 3600;
       if (payload?.link != null) patch.delivery_link = payload.link || null;
       if (payload?.note != null) patch.delivery_note = payload.note || null;

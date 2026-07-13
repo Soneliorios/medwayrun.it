@@ -27,6 +27,9 @@ function taskAssigneeIds(task: TaskWithRelations): string[] {
     const id = a?.user_id ?? a?.profile?.id ?? a?.id;
     if (id) ids.add(id);
   });
+  // Inclui todos os responsáveis da fila/paralelo (não só a cabeça/assignee),
+  // para o filtro "Alocados" casar com qualquer responsável da task.
+  (task as any).sequence?.forEach((s: any) => { if (s?.user_id) ids.add(s.user_id); });
   return [...ids];
 }
 

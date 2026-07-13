@@ -270,7 +270,14 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
   const [queueLoaded, setQueueLoaded] = useState(false);
   async function loadQueue() {
     let rows = await sequenceService.list(taskId);
-    if (rows.length > 0) {
+    // Detecção por MODO (não por status das linhas): uma task paralela ENTREGUE
+    // fica com todas as linhas "done", então "todas active" não a reconheceria e
+    // o self-heal a colapsaria para sequencial (zerando responsável). Busca o
+    // assignment_mode direto do banco pois o `task` local pode não ter carregado.
+    const { data: modeRow } = await (createRawClient() as any)
+      .from("tasks").select("assignment_mode").eq("id", taskId).maybeSingle();
+    const parallelMode = (modeRow as any)?.assignment_mode === "parallel" && rows.length >= 2;
+    if (rows.length > 0 && !parallelMode) {
       const nonDone = rows.filter((r) => r.status !== "done");
       const headId = nonDone[0]?.user_id ?? null;
       // Self-heal desynced queues: ensure the head is the assignee (queue drives it).
@@ -292,12 +299,16 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
   }
   useEffect(() => { loadQueue(); /* eslint-disable-next-line */ }, [taskId]);
   const queueRemaining = queue.filter((r) => r.status !== "done").length;
+  // Modo paralelo: vários responsáveis simultâneos (definido pela lateral). No
+  // paralelo não há "fila"/partes — a entrega é única e qualquer um pode fazê-la.
+  const isParallel = (task as any)?.assignment_mode === "parallel" && queue.length >= 2;
   const activeQueueUserId = queue.find((r) => r.status === "active")?.user_id
     ?? queue.find((r) => r.status !== "done")?.user_id ?? null;
-  // Only the current responsible (head of the queue) may deliver their part.
-  const isActiveResponsible = !!activeQueueUserId && activeQueueUserId === user?.id;
+  // Só no modo SEQUENCIAL o "responsável atual" (cabeça da fila) entrega a parte.
+  const isActiveResponsible = !isParallel && !!activeQueueUserId && activeQueueUserId === user?.id;
   // A responsible who already delivered their part (can reopen it at any time).
-  const myDoneRow = queue.find((r) => r.status === "done" && r.user_id === user?.id) ?? null;
+  // Só no modo sequencial — no paralelo a entrega é única (usa "Entregue · Reabrir").
+  const myDoneRow = !isParallel ? (queue.find((r) => r.status === "done" && r.user_id === user?.id) ?? null) : null;
 
   // "part" = advance the queue via the same delivery popup; "full" = deliver task
   const [deliveryMode, setDeliveryMode] = useState<"full" | "part">("full");
@@ -590,8 +601,10 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
 
   async function handleToggleTimer() {
     if (!user?.id) return;
-    // Only the current responsible can register time (play/pause)
-    if (task && task.assignee_id !== user.id) return;
+    // O responsável atual pode registrar tempo. No modo paralelo, qualquer um
+    // dos responsáveis simultâneos também pode.
+    const canTime = task?.assignee_id === user.id || (isParallel && queue.some((r) => r.user_id === user.id));
+    if (task && !canTime) return;
     if (isTimerActive) {
       await timerStore.stopTimer(user.id);
     } else {
@@ -632,13 +645,22 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
     // accumulated and each part's time lives on task_sequences.
     // Split guaranteed columns from the newer link/note columns so a pending
     // migration (supabase_task_delivery_details.sql) can't block the whole save.
+    // No modo paralelo a entrega é ÚNICA (como o responsável único): o resumo
+    // (horas/link/nota) fica no nível da task, não por parte.
+    const taskLevelSummary = queue.length === 0 || isParallel;
     const basePatch: Record<string, unknown> = { delivery_date: new Date().toISOString() };
-    if (queue.length === 0 && typeof opts?.hours === "number") {
+    if (taskLevelSummary && typeof opts?.hours === "number") {
       basePatch.tracked_hours = Math.round(opts.hours * 3600) / 3600;
     }
     const notePatch: Record<string, unknown> = {};
     if (opts?.link != null) notePatch.delivery_link = opts.link || null;
     if (opts?.note != null) notePatch.delivery_note = opts.note || null;
+    // Paralelo: marca TODOS os responsáveis como entregues (um entrega → todos)
+    // e recarrega a fila para o estado local refletir a entrega.
+    if (isParallel) {
+      await sequenceService.markAllDone(taskId).catch((e) => console.error("[handleDeliver] markAllDone", e));
+      loadQueue();
+    }
     setTask((t) => (t ? ({ ...t, ...basePatch, ...notePatch } as any) : t));
     store.updateTask(taskId, { ...basePatch, ...notePatch } as any);
     taskService.update(taskId, basePatch as any).catch((e) => console.error("[handleDeliver] persist delivery", e));
@@ -667,6 +689,14 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
   async function handleReopen() {
     if (!task) return;
     await handleFieldUpdate("status", "open");
+
+    // Paralelo: a entrega marcou todos os responsáveis como "done" — reabrir volta
+    // todos para "active" (inverso do markAllDone), senão os avatares seguem como
+    // "entregue" e a caixa de entrega persiste numa task já aberta.
+    if (isParallel) {
+      await sequenceService.markAllActive(taskId).catch((e) => console.error("[handleReopen] markAllActive", e));
+      await loadQueue();
+    }
 
     const sorted = [...boardColumns].sort((a, b) => a.position - b.position);
     const targetCol =
@@ -788,6 +818,26 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
     await handleFieldUpdate("assignee_id", newUserId);
   }
 
+  // Define os responsáveis pela lateral. 2+ = modo PARALELO (todos juntos, entrega
+  // única); 0/1 = responsável único (modo sequencial). Reconcilia task_sequences.
+  async function handleResponsiblesChange(nextIds: string[]) {
+    if (!task) return;
+    const ids = [...new Set(nextIds.filter(Boolean))];
+    await sequenceService.setSidebarResponsibles(taskId, ids);
+    const mode = ids.length >= 2 ? "parallel" : "sequential";
+    const primary = ids[0] ?? null;
+    const p = orgProfiles.find((x) => x.id === primary);
+    const assignee = p ? { id: p.id, full_name: p.full_name, avatar_url: p.avatar_url } : null;
+    const rows = await sequenceService.list(taskId);
+    setTask((t) => (t ? ({ ...t, assignee_id: primary, assignee, assignment_mode: mode } as any) : t));
+    store.updateTask(taskId, { assignee_id: primary, assignee, sequence: rows, assignment_mode: mode } as any);
+    setQueue(rows);
+  }
+  // Ids dos responsáveis atuais (paralelo = todos da fila; senão o responsável único).
+  const selectedResponsibleIds: string[] = isParallel
+    ? queue.map((r) => r.user_id)
+    : (task?.assignee_id ? [task.assignee_id] : []);
+
   // ── Recorrência ──────────────────────────────────────────────────────────
   function computeNextRun(freq: string): string {
     const d = new Date();
@@ -832,10 +882,13 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
 
   // Role-based action gating
   const isAssignee = task?.assignee_id === user?.id;
-  const canActOnTask = !isUser || !!isAssignee;
+  const isInQueue = !!user?.id && queue.some((q) => q.user_id === user.id);
+  // No modo PARALELO todos os responsáveis têm ação total (entregar/cronometrar);
+  // no sequencial isso fica com a cabeça da fila (assignee).
+  const amResponsible = !!isAssignee || (isParallel && isInQueue);
+  const canActOnTask = !isUser || amResponsible;
   // Changing the stage is allowed for ANY responsible in the queue (not just
   // the current head) — deliver/reopen stay restricted to the active one.
-  const isInQueue = !!user?.id && queue.some((q) => q.user_id === user.id);
   const canChangeStage = !isUser || !!isAssignee || isInQueue;
   // Editing the card (title, responsible, dates, type…) — creator, any
   // responsible, admins, or anyone with board edit access.
@@ -858,12 +911,14 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
     if (!task || !queueLoaded) return;
     autoDeliveryDoneRef.current = true;
     if (isDelivered) return;
-    if (queueRemaining > 0) {
+    if (queueRemaining > 0 && !isParallel) {
+      // Fila sequencial: só o responsável atual entrega a parte.
       if (isActiveResponsible) openDeliveryDialog("part");
     } else if (canActOnTask) {
+      // Paralelo (ou sem fila): entrega única.
       openDeliveryDialog("full");
     }
-  }, [autoOpenDelivery, task, queueLoaded, isDelivered, queueRemaining, isActiveResponsible, canActOnTask]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [autoOpenDelivery, task, queueLoaded, isDelivered, queueRemaining, isParallel, isActiveResponsible, canActOnTask]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -898,7 +953,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
             <div className="flex items-center gap-2 px-5 py-3 border-b border-neutral-100 shrink-0">
               {/* Timer button — only the current responsible can register time */}
               {(() => {
-                const canTrack = task.assignee_id === user?.id;
+                const canTrack = amResponsible;
                 return (
                   <button
                     onClick={canTrack ? handleToggleTimer : undefined}
@@ -945,8 +1000,8 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                   <CheckCircle2 size={12} />
                   Entregue · Reabrir
                 </button>
-              ) : queueRemaining > 0 ? (
-                // Task has a responsible queue → only the current responsible delivers their part
+              ) : queueRemaining > 0 && !isParallel ? (
+                // Fila SEQUENCIAL → só o responsável atual entrega a sua parte.
                 isActiveResponsible ? (
                   <button
                     onClick={() => openDeliveryDialog("part")}
@@ -1625,7 +1680,8 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
 
                 {/* Responsáveis / Alocados */}
                 <MetaField label="Responsáveis" icon={<Users size={12} />}>
-                  {queue.length > 0 ? (
+                  {queue.length > 0 && !isParallel ? (
+                    // FILA SEQUENCIAL (montada na aba Regras) — somente leitura aqui.
                     <div className="space-y-1.5">
                       <div className="flex flex-wrap gap-1.5 items-center">
                         {queue.map((q) => {
@@ -1655,39 +1711,46 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                         })}
                       </div>
                       <p className="text-[10px] text-neutral-400 flex items-center gap-1">
-                        <Lock size={9} /> Definido pela fila — ajuste na aba Regras
+                        <Lock size={9} /> Fila sequencial — ajuste na aba Regras
                       </p>
                     </div>
                   ) : (
+                  // Editável: 1 responsável OU vários em PARALELO (2+ = paralelo, entrega única).
                   <div className="flex flex-wrap gap-1 items-center relative" ref={assigneePickerRef}>
-                    {task.assignee_id ? (() => {
-                      const name = task.assignee?.full_name ?? orgProfiles.find((p) => p.id === task.assignee_id)?.full_name ?? task.assignee_id;
-                      const initials = getInitials(name);
+                    {selectedResponsibleIds.length > 0 ? selectedResponsibleIds.map((id) => {
+                      const name = orgProfiles.find((p) => p.id === id)?.full_name ?? id;
                       return (
                         <div
+                          key={id}
                           className={cn(
                             "flex items-center gap-1 bg-white border border-neutral-200 rounded-full px-2 py-0.5",
                             canEditCard ? "cursor-pointer hover:border-destructive/40 group" : "cursor-default"
                           )}
                           title={canEditCard ? "Clique para remover" : undefined}
-                          onClick={() => canEditCard && handleAssigneeChange(null)}
+                          onClick={() => canEditCard && handleResponsiblesChange(selectedResponsibleIds.filter((x) => x !== id))}
                         >
                           <Avatar className="w-4 h-4">
-                            <AvatarFallback className="text-[8px] bg-brand-teal/20 text-brand-teal">{initials}</AvatarFallback>
+                            <AvatarFallback className="text-[8px] bg-brand-teal/20 text-brand-teal">{getInitials(name)}</AvatarFallback>
                           </Avatar>
                           <span className={cn("text-[10px] text-neutral-600", canEditCard && "group-hover:text-destructive")}>{name}</span>
                         </div>
                       );
-                    })() : (
+                    }) : (
                       <span className="text-[10px] text-neutral-400 italic">Sem responsável</span>
                     )}
                     {canEditCard && (
                       <button
                         onClick={() => setAssigneePickerOpen((v) => !v)}
+                        title="Adicionar responsável (2+ = paralelo)"
                         className="w-5 h-5 rounded-full border border-dashed border-neutral-300 flex items-center justify-center text-neutral-400 hover:border-brand-teal hover:text-brand-teal transition-colors"
                       >
                         <Plus size={10} />
                       </button>
+                    )}
+                    {selectedResponsibleIds.length >= 2 && (
+                      <p className="w-full text-[10px] text-brand-teal flex items-center gap-1">
+                        <Users size={9} /> Modo paralelo — todos responsáveis juntos, entrega única
+                      </p>
                     )}
                     {assigneePickerOpen && (
                       <div className="absolute top-7 left-0 z-50 bg-white rounded-xl border border-neutral-200 shadow-lg py-1 min-w-[190px]">
@@ -1695,15 +1758,18 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                           <input autoFocus value={assigneeSearch} onChange={(e) => setAssigneeSearch(e.target.value)}
                             placeholder="Buscar membro..." className="w-full text-xs border border-neutral-200 rounded-md px-2 py-1.5 outline-none focus:border-brand-teal" />
                         </div>
+                        <p className="px-3 pt-0.5 pb-1 text-[10px] text-neutral-400">Selecione um ou vários (vários = paralelo)</p>
                         <div className="max-h-52 overflow-y-auto">
                         {orgProfilesMeFirst.filter((m) => (m.full_name ?? "").toLowerCase().includes(assigneeSearch.toLowerCase())).map((m) => {
-                          const isSelected = task.assignee_id === m.id;
+                          const isSelected = selectedResponsibleIds.includes(m.id);
                           return (
                             <button
                               key={m.id}
                               onClick={() => {
-                                handleAssigneeChange(isSelected ? null : m.id);
-                                setAssigneePickerOpen(false);
+                                const next = isSelected
+                                  ? selectedResponsibleIds.filter((x) => x !== m.id)
+                                  : [...selectedResponsibleIds, m.id];
+                                handleResponsiblesChange(next);
                               }}
                               className={cn(
                                 "w-full flex items-center gap-2 px-3 py-1.5 text-xs hover:bg-neutral-50 transition-colors",

@@ -59,7 +59,8 @@ export const sequenceService = {
     );
 
     const assignee = head?.user_id ?? null;
-    await (sb as any).from("tasks").update({ assignee_id: assignee }).eq("id", taskId);
+    // Sincronizar a fila = modo SEQUENCIAL (limpa qualquer flag "parallel" antigo).
+    await (sb as any).from("tasks").update({ assignee_id: assignee, assignment_mode: "sequential" }).eq("id", taskId);
     return assignee;
   },
 
@@ -97,6 +98,64 @@ export const sequenceService = {
       return { finished: false, nextUserId: next.user_id };
     }
     return { finished: true, nextUserId: null };
+  },
+
+  /**
+   * Modo PARALELO — define os responsáveis simultâneos a partir da lateral.
+   * Reconcilia task_sequences com `userIds` (todos "active", sem ordem relevante),
+   * aponta tasks.assignee_id para o primeiro (leituras legadas/single) e grava
+   * tasks.assignment_mode.
+   *  - 0/1 usuário → sem fila; volta a 'sequential' (responsável único ou nenhum).
+   *  - 2+ usuários → 'parallel', uma linha "active" por usuário.
+   */
+  async setSidebarResponsibles(taskId: string, userIds: string[]): Promise<void> {
+    const sb = createRawClient();
+    const ids = [...new Set(userIds.filter(Boolean))];
+    const rows = await this.list(taskId);
+
+    if (ids.length <= 1) {
+      if (rows.length) await (sb as any).from("task_sequences").delete().eq("task_id", taskId);
+      await (sb as any).from("tasks")
+        .update({ assignee_id: ids[0] ?? null, assignment_mode: "sequential" })
+        .eq("id", taskId);
+      return;
+    }
+
+    const tracked = await taskTrackedHours(sb, taskId);
+    const have = new Map(rows.map((r) => [r.user_id, r]));
+    const toRemove = rows.filter((r) => !ids.includes(r.user_id));
+    if (toRemove.length) {
+      await (sb as any).from("task_sequences").delete().in("id", toRemove.map((r) => r.id));
+    }
+    for (let i = 0; i < ids.length; i++) {
+      const existing = have.get(ids[i]);
+      if (existing) {
+        await (sb as any).from("task_sequences").update({ status: "active", order_position: i }).eq("id", existing.id);
+      } else {
+        await (sb as any).from("task_sequences")
+          .insert({ task_id: taskId, user_id: ids[i], order_position: i, status: "active", part_start_hours: tracked });
+      }
+    }
+    await (sb as any).from("tasks")
+      .update({ assignee_id: ids[0], assignment_mode: "parallel" })
+      .eq("id", taskId);
+  },
+
+  /** Modo paralelo: entrega única — marca TODOS os responsáveis como entregues. */
+  async markAllDone(taskId: string): Promise<void> {
+    const sb = createRawClient();
+    await (sb as any).from("task_sequences")
+      .update({ status: "done", delivered_at: new Date().toISOString() })
+      .eq("task_id", taskId);
+  },
+
+  /** Modo paralelo: inverso do markAllDone — reativa todos ao reabrir a task. */
+  async markAllActive(taskId: string): Promise<void> {
+    const sb = createRawClient();
+    const tracked = await taskTrackedHours(sb, taskId);
+    await (sb as any).from("task_sequences")
+      .update({ status: "active", delivered_at: null, hours_spent: null, delivery_note: null, delivery_link: null, part_start_hours: tracked })
+      .eq("task_id", taskId);
   },
 
   /**

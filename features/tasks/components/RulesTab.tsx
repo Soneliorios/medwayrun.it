@@ -86,15 +86,18 @@ export function RulesTab({ taskId, onQueueChange }: Props) {
   const orgMembers = useOrgMembers();
   const [sequence, setSequence] = useState<MockTaskSequence[]>([]);
   const [deps, setDeps] = useState<MockTaskDependency[]>([]);
+  const [assignmentMode, setAssignmentMode] = useState<string>("sequential");
 
   const titleOf = (id: string) => columns.flatMap((c) => c.tasks).find((t) => t.id === id)?.title ?? "Tarefa";
 
   async function reload() {
     const sb = createRawClient();
-    const [{ data: depRows }, { data: seqRows }] = await Promise.all([
+    const [{ data: depRows }, { data: seqRows }, { data: taskRow }] = await Promise.all([
       (sb as any).from("task_dependencies").select("task_id, depends_on_task_id, dependency_type").eq("task_id", taskId),
       (sb as any).from("task_sequences").select("*").eq("task_id", taskId).order("order_position"),
+      (sb as any).from("tasks").select("assignment_mode").eq("id", taskId).maybeSingle(),
     ]);
+    setAssignmentMode((taskRow as any)?.assignment_mode ?? "sequential");
     setDeps(((depRows ?? []) as any[]).map((d) => ({
       id: `${d.depends_on_task_id}:${d.dependency_type}`,
       task_id: d.task_id,
@@ -120,6 +123,10 @@ export function RulesTab({ taskId, onQueueChange }: Props) {
 
   const prerequisites = deps.filter((d) => d.type === "prerequisite");
   const subsequents = deps.filter((d) => d.type === "subsequent");
+  // Modo paralelo (definido pela lateral): baseado no assignment_mode, não no
+  // status das linhas — uma task paralela ENTREGUE fica com linhas "done" mas
+  // continua paralela (não deve virar editor de fila sequencial).
+  const isParallelResp = assignmentMode === "parallel" && sequence.length >= 2;
 
   // ── Sequence handlers ──────────────────────────────────────────────────────
   const [memberPickerOpen, setMemberPickerOpen] = useState(false);
@@ -186,6 +193,16 @@ export function RulesTab({ taskId, onQueueChange }: Props) {
           </p>
         </div>
 
+        {isParallelResp ? (
+          <div className="rounded-lg border border-brand-teal/30 bg-brand-teal/5 p-3">
+            <p className="text-xs text-brand-teal font-medium">Modo paralelo ativo</p>
+            <p className="text-[11px] text-neutral-500 mt-0.5">
+              Esta tarefa tem vários responsáveis simultâneos (entrega única). Para usar
+              uma fila sequencial, deixe apenas 1 responsável na lateral e monte a fila aqui.
+            </p>
+          </div>
+        ) : (
+        <>
         <div className="space-y-1.5">
           {sequence.length === 0 && (
             <div className="rounded-lg border border-neutral-100 bg-neutral-50/60 p-3 text-center">
@@ -286,6 +303,8 @@ export function RulesTab({ taskId, onQueueChange }: Props) {
           >
             <Plus size={12} /> Adicionar responsável à sequência
           </button>
+        )}
+        </>
         )}
       </section>
 
