@@ -121,20 +121,41 @@ export function TopNav() {
       .map((p) => ({ id: p.id, label: p.name }));
     let cancelled = false;
     (async () => {
-      let taskHits: SearchHit[] = [];
+      const byId = new Map<string, SearchHit>();
       if (accessibleIds.length > 0) {
         const sb = createClient();
-        const { data } = await sb
+        const code = (t: any) => `#${String(t.id).slice(0, 8).toUpperCase()}`;
+        // 1) Por parte do NOME (título contém o termo).
+        const { data: byTitle } = await sb
           .from("tasks")
           .select("id, title")
           .eq("org_id", ORG_ID)
           .in("project_id", accessibleIds)
           .ilike("title", `%${q}%`)
           .is("deleted_at", null)
-          .limit(5);
-        taskHits = ((data ?? []) as any[]).map((t) => ({ id: t.id, label: t.title }));
+          .limit(8);
+        (byTitle ?? []).forEach((t: any) => byId.set(t.id, { id: t.id, label: t.title, sub: code(t) }));
+
+        // 2) Por CÓDIGO da task (#XXXXXXXX = prefixo hex do id). Como o id é uuid,
+        // busca por faixa do prefixo (PostgREST não faz ilike em uuid).
+        const codeRaw = ql.replace(/[#\s-]/g, "");
+        if (/^[0-9a-f]{2,8}$/.test(codeRaw)) {
+          const lo = codeRaw.padEnd(8, "0") + "-0000-0000-0000-000000000000";
+          const hi = codeRaw.padEnd(8, "f") + "-ffff-ffff-ffff-ffffffffffff";
+          const { data: byCode } = await sb
+            .from("tasks")
+            .select("id, title")
+            .eq("org_id", ORG_ID)
+            .in("project_id", accessibleIds)
+            .gte("id", lo)
+            .lte("id", hi)
+            .is("deleted_at", null)
+            .limit(8);
+          (byCode ?? []).forEach((t: any) => byId.set(t.id, { id: t.id, label: t.title, sub: code(t) }));
+        }
       }
       if (cancelled) return;
+      const taskHits = [...byId.values()].slice(0, 8);
       setSearchResults({ tasks: taskHits, projects: projHits, total: taskHits.length + projHits.length });
     })();
     return () => { cancelled = true; };
@@ -277,7 +298,15 @@ export function TopNav() {
                 className="bg-transparent text-white text-xs placeholder:text-white/40 outline-none w-52"
                 onKeyDown={(e) => {
                   if (e.key === "Escape") { setSearchOpen(false); setSearchQuery(""); }
-                  if (e.key === "Enter" && searchQuery.trim()) { router.push(`/search?q=${encodeURIComponent(searchQuery.trim())}`); setSearchOpen(false); }
+                  if (e.key === "Enter") {
+                    // Abre o 1º resultado (não existe página /search dedicada).
+                    const firstTask = searchResults.tasks[0];
+                    const firstProj = searchResults.projects[0];
+                    if (firstTask) router.push(`/tasks/${firstTask.id}`);
+                    else if (firstProj) router.push(`/boards/${firstProj.id}`);
+                    else return;
+                    setSearchOpen(false); setSearchQuery("");
+                  }
                 }}
               />
               <button onClick={() => { setSearchQuery(""); setSearchOpen(false); }}>
@@ -506,8 +535,9 @@ function SearchGroup({ title, items, onPick }: { title: string; items: SearchHit
     <div className="py-1">
       <p className="px-4 py-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">{title}</p>
       {items.map((it) => (
-        <button key={it.id} onClick={() => onPick(it.id)} className="w-full text-left px-4 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50 truncate">
-          {it.label}
+        <button key={it.id} onClick={() => onPick(it.id)} className="w-full flex items-center gap-2 text-left px-4 py-1.5 text-sm text-neutral-700 hover:bg-neutral-50">
+          <span className="flex-1 truncate">{it.label}</span>
+          {it.sub && <span className="shrink-0 text-[10px] font-mono text-neutral-400">{it.sub}</span>}
         </button>
       ))}
     </div>
