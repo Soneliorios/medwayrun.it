@@ -44,6 +44,28 @@ export async function fetchBoardSubprojects(boardId: string): Promise<BoardProje
 }
 
 /**
+ * Cria um sub-projeto escopado a UM quadro, SEM tocar no store global (evita o
+ * vazamento entre quadros). Use no modal de criar tarefa para o "criar projeto
+ * rápido" — o projeto fica salvo apenas no quadro (`project_id = boardId`).
+ */
+export async function createBoardSubproject(
+  boardId: string,
+  name: string,
+  color = "#01CFB5",
+  description?: string
+): Promise<BoardProject | null> {
+  if (!boardId || !name.trim()) return null;
+  const sb = createRawClient();
+  const { data, error } = await (sb as any)
+    .from("board_subprojects")
+    .insert({ project_id: boardId, org_id: ORG_ID, name: name.trim(), color, description: description || null })
+    .select("id, project_id, name, color, description")
+    .single();
+  if (error) { console.error("[createBoardSubproject]", error); return null; }
+  return mapRow(data);
+}
+
+/**
  * Board sub-projects, backed by the `board_subprojects` table. This is the
  * single source of truth shared by the board "Projetos" view, the board
  * settings, the task-create picker and the filters — so they always agree.

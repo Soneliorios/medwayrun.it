@@ -31,7 +31,7 @@ import { createRawClient } from "@/lib/supabase/client";
 import { PRIORITY_LABELS, PRIORITY_COLORS } from "@/types";
 type OverflowCheckResult = null;
 import { getInitials } from "@/lib/utils";
-import { fetchBoardSubprojects, type BoardProject } from "@/features/board/store/boardProjectStore";
+import { fetchBoardSubprojects, createBoardSubproject, type BoardProject } from "@/features/board/store/boardProjectStore";
 import { taskTypeService } from "@/features/board/services/taskTypeService";
 import { runAutomations } from "@/lib/automationEngine";
 import { useOrgMembers } from "@/lib/useOrgMembers";
@@ -119,7 +119,28 @@ export function GlobalCreateTaskModal() {
   // Sub-projetos do quadro selecionado NO MODAL — estado local, isolado do store
   // global do board (evita vazar projetos entre quadros).
   const [modalBoardProjects, setModalBoardProjects] = useState<BoardProject[]>([]);
+  // Criar projeto rápido dentro do dropdown (escopado ao quadro atual).
+  const [newProjectName, setNewProjectName] = useState("");
+  const [creatingProject, setCreatingProject] = useState(false);
   const { user } = useAuthStore();
+
+  const PROJECT_COLORS = ["#01CFB5", "#0EA5E9", "#8B5CF6", "#F59E0B", "#EF4444", "#10B981", "#EC4899"];
+  async function handleCreateBoardProject() {
+    const name = newProjectName.trim();
+    if (!name || !selectedProjectId || creatingProject) return;
+    // Evita duplicar um projeto de mesmo nome já existente no quadro.
+    const existing = modalBoardProjects.find((p) => p.name.toLowerCase() === name.toLowerCase());
+    if (existing) { setBoardProjectId(existing.id); setNewProjectName(""); setActivePicker(null); return; }
+    setCreatingProject(true);
+    const color = PROJECT_COLORS[modalBoardProjects.length % PROJECT_COLORS.length];
+    const proj = await createBoardSubproject(selectedProjectId, name, color);
+    setCreatingProject(false);
+    if (!proj) return;
+    setModalBoardProjects((prev) => [...prev, proj].sort((a, b) => a.name.localeCompare(b.name)));
+    setBoardProjectId(proj.id);
+    setNewProjectName("");
+    setActivePicker(null);
+  }
 
   // Listen for the global event from TopNav "Nova tarefa" button
   useEffect(() => {
@@ -275,6 +296,8 @@ export function GlobalCreateTaskModal() {
     setShowDescription(false);
     setTaskType("Padrão");
     setBoardProjectId(null);
+    setNewProjectName("");
+    setCreatingProject(false);
     setAttachmentFiles([]);
     setTags([]);
     setChecklistItems([]);
@@ -673,24 +696,49 @@ export function GlobalCreateTaskModal() {
                   </button>
 
                   {activePicker === "boardProject" && (
-                    <div className="absolute top-full left-0 mt-1 w-56 bg-white rounded-xl shadow-xl border border-neutral-100 py-1 z-20 max-h-52 overflow-y-auto">
-                      {boardProjects.map((bp) => (
-                        <button
-                          key={bp.id}
-                          type="button"
-                          onClick={() => {
-                            setBoardProjectId(bp.id === boardProjectId ? null : bp.id);
-                            setActivePicker(null);
-                          }}
-                          className={cn(
-                            "w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-neutral-50 transition-colors",
-                            boardProjectId === bp.id ? "text-brand-navy font-medium" : "text-neutral-700"
-                          )}
-                        >
-                          <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: bp.color }} />
-                          <span className="truncate">{bp.name}</span>
-                        </button>
-                      ))}
+                    <div className="absolute top-full left-0 mt-1 w-60 bg-white rounded-xl shadow-xl border border-neutral-100 py-1 z-20">
+                      <div className="max-h-44 overflow-y-auto">
+                        {boardProjects.map((bp) => (
+                          <button
+                            key={bp.id}
+                            type="button"
+                            onClick={() => {
+                              setBoardProjectId(bp.id === boardProjectId ? null : bp.id);
+                              setActivePicker(null);
+                            }}
+                            className={cn(
+                              "w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-neutral-50 transition-colors",
+                              boardProjectId === bp.id ? "text-brand-navy font-medium" : "text-neutral-700"
+                            )}
+                          >
+                            <span className="w-2.5 h-2.5 rounded-full shrink-0" style={{ background: bp.color }} />
+                            <span className="truncate">{bp.name}</span>
+                          </button>
+                        ))}
+                        {boardProjects.length === 0 && (
+                          <p className="px-3 py-2 text-xs text-neutral-400">Nenhum projeto ainda neste quadro.</p>
+                        )}
+                      </div>
+                      {/* Criar projeto rápido — salvo apenas neste quadro */}
+                      <div className="border-t border-neutral-100 mt-1 pt-1.5 px-2 pb-1">
+                        <div className="flex items-center gap-1.5">
+                          <input
+                            value={newProjectName}
+                            onChange={(e) => setNewProjectName(e.target.value)}
+                            onKeyDown={(e) => { if (e.key === "Enter") { e.preventDefault(); handleCreateBoardProject(); } }}
+                            placeholder="Novo projeto neste quadro..."
+                            className="flex-1 min-w-0 text-xs border border-neutral-200 rounded-md px-2 py-1.5 outline-none focus:border-brand-teal"
+                          />
+                          <button
+                            type="button"
+                            onClick={handleCreateBoardProject}
+                            disabled={!newProjectName.trim() || creatingProject}
+                            className="shrink-0 flex items-center gap-1 text-xs px-2 py-1.5 rounded-md bg-brand-navy text-white font-medium hover:bg-brand-navy-light disabled:opacity-50"
+                          >
+                            <Plus size={12} /> {creatingProject ? "..." : "Criar"}
+                          </button>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </div>
