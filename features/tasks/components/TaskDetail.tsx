@@ -2182,7 +2182,11 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                               onValueChange={(v) => saveRecurrence({ ...recur, active: true, target_column_id: v })}
                             >
                               <SelectTrigger className="h-7 text-xs border-neutral-200 bg-white">
-                                <SelectValue placeholder="Selecionar etapa" />
+                                {/* Lookup direto do nome (o SelectValue do Radix pode não resolver
+                                    quando as colunas carregam async → mostrava o UUID cru). */}
+                                <span className="truncate text-left flex-1">
+                                  {sortedCols.find((c) => c.id === recurColId)?.name ?? "Selecionar etapa"}
+                                </span>
                               </SelectTrigger>
                               <SelectContent>
                                 {sortedCols.map((c) => (
