@@ -3,7 +3,6 @@
 import { useEffect, useRef } from "react";
 import { createClient } from "@/lib/supabase/client";
 import { useBoardStore } from "../store/boardStore";
-import { taskService } from "@/features/tasks/services/taskService";
 import type { TaskWithRelations, ColumnWithTasks } from "@/types";
 
 export function useBoardRealtime(projectId: string) {
@@ -28,8 +27,10 @@ export function useBoardRealtime(projectId: string) {
 
           // Skip if this update was triggered locally (optimistic already applied)
           if (eventType === "INSERT") {
-            // Only add if not already present (avoids double from optimistic)
-            const exists = store.columns
+            // Only add if not already present (avoids double from optimistic).
+            // Lê o estado AO VIVO (o `store` do closure fica velho).
+            if ((newRow as any).deleted_at) return; // não mostra tasks já na Lixeira
+            const exists = useBoardStore.getState().columns
               .flatMap((c) => c.tasks)
               .some((t) => t.id === (newRow as any).id);
             if (!exists) {
@@ -45,19 +46,12 @@ export function useBoardRealtime(projectId: string) {
               store.removeTask((newRow as any).id);
               return;
             }
-            const localTask = store.columns
+            // Estado AO VIVO do store. O `store` capturado no closure do efeito
+            // ([projectId]) fica com um snapshot velho de `columns`, então
+            // `localTask` vinha undefined em edições e causava duplicação/no-op.
+            const localTask = useBoardStore.getState().columns
               .flatMap((c) => c.tasks)
               .find((t) => t.id === (newRow as any).id);
-
-            // Restaurado (ou update de task ausente do store): não está no board.
-            // updateTask seria no-op — busca a linha hidratada (joins) e re-insere.
-            if (!localTask) {
-              const rid = (newRow as any).id;
-              taskService.get(rid)
-                .then((t) => { if (t) store.addTask((t as any).column_id, t as unknown as TaskWithRelations); })
-                .catch(() => { /* task pode ter sumido — ignora */ });
-              return;
-            }
 
             // Only apply server update if it's "newer" (avoid overwriting optimistic)
             if (
@@ -99,7 +93,7 @@ export function useBoardRealtime(projectId: string) {
           const { eventType, new: newRow, old: oldRow } = payload;
           if (eventType === "INSERT") {
             // Only add if not already present (avoids double from optimistic)
-            const exists = store.columns.some(
+            const exists = useBoardStore.getState().columns.some(
               (c) => c.id === (newRow as any).id
             );
             if (!exists) {
