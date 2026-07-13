@@ -32,6 +32,23 @@ interface Props {
   className?: string;
 }
 
+/**
+ * Normaliza o conteúdo para HTML antes de carregar no editor. Descrições antigas
+ * foram salvas como TEXTO PURO (com \n) — carregadas como HTML, as quebras de
+ * linha somem e vira um parágrafo só. Aqui detectamos texto puro e preservamos
+ * as quebras: linha em branco separa parágrafos, quebra simples vira <br>.
+ * Conteúdo que já é HTML passa direto.
+ */
+function toEditorHtml(raw: string): string {
+  if (!raw) return "";
+  if (/<[a-z][\s\S]*>/i.test(raw)) return raw; // já é HTML
+  const esc = (s: string) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return raw
+    .split(/\n{2,}/)
+    .map((para) => `<p>${esc(para).replace(/\n/g, "<br>")}</p>`)
+    .join("");
+}
+
 export function RichTextEditor({
   content,
   onChange,
@@ -53,7 +70,7 @@ export function RichTextEditor({
       }),
       Placeholder.configure({ placeholder }),
     ],
-    content,
+    content: toEditorHtml(content),
     editable,
     onUpdate: ({ editor }) => {
       onChange?.(editor.getHTML());
@@ -65,8 +82,10 @@ export function RichTextEditor({
 
   // Sync content when prop changes externally
   useEffect(() => {
-    if (editor && editor.getHTML() !== content) {
-      editor.commands.setContent(content || "");
+    if (!editor) return;
+    const html = toEditorHtml(content);
+    if (editor.getHTML() !== html) {
+      editor.commands.setContent(html || "");
     }
   }, [content]); // eslint-disable-line react-hooks/exhaustive-deps
 

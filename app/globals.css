@@ -208,3 +208,23 @@
     transition: width 220ms cubic-bezier(0.4, 0, 0.2, 1);
   }
 }
+
+/* ── Conteúdo do editor rich-text (Tiptap) ─────────────────────────────────
+   O projeto não usa @tailwindcss/typography, então a classe `prose` é inócua e
+   o reset do Tailwind zera os marcadores de lista. Estilizamos o conteúdo do
+   editor à mão para listas/títulos/citações aparecerem — tanto na edição
+   quanto na leitura da descrição/briefing. */
+.ProseMirror { line-height: 1.6; }
+.ProseMirror > * + * { margin-top: 0.5rem; }
+.ProseMirror p { margin: 0; }
+.ProseMirror ul { list-style: disc; padding-left: 1.5rem; }
+.ProseMirror ol { list-style: decimal; padding-left: 1.5rem; }
+.ProseMirror li { margin: 0.15rem 0; }
+.ProseMirror li > p { margin: 0; }
+.ProseMirror h2 { font-size: 1.15rem; font-weight: 700; color: #00205b; margin-top: 0.75rem; }
+.ProseMirror h3 { font-size: 1.02rem; font-weight: 600; color: #00205b; margin-top: 0.5rem; }
+.ProseMirror blockquote { border-left: 3px solid #01cfb5; padding-left: 0.75rem; color: #52575c; font-style: italic; }
+.ProseMirror code { background: #f2f4f7; padding: 0.1rem 0.3rem; border-radius: 0.25rem; font-size: 0.85em; }
+.ProseMirror pre { background: #f2f4f7; padding: 0.6rem 0.8rem; border-radius: 0.5rem; overflow-x: auto; }
+.ProseMirror pre code { background: none; padding: 0; }
+.ProseMirror a { color: #01cfb5; text-decoration: underline; }

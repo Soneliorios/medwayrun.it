@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { taskService } from "../services/taskService";
 import { tagsService } from "../services/tagsService";
 import { sequenceService } from "../services/sequenceService";
+import { RichTextEditor } from "./RichTextEditor";
 import { stageReqService, type StageReq } from "@/lib/stageReqService";
 import { attachmentService } from "@/lib/attachmentService";
 import { useProjectStore } from "@/features/projects/store/projectStore";
@@ -52,6 +53,12 @@ const AVATAR_COLORS = ["#0EA5E9", "#8B5CF6", "#F59E0B", "#10B981", "#EF4444", "#
 function userColor(s: string) {
   let h = 0; for (let i = 0; i < s.length; i++) h = s.charCodeAt(i) + ((h << 5) - h);
   return AVATAR_COLORS[Math.abs(h) % AVATAR_COLORS.length];
+}
+
+// A descrição agora vem do editor rich-text como HTML; "<p></p>" (editor vazio)
+// não conta como preenchida.
+function htmlIsEmpty(html: string): boolean {
+  return !html.replace(/<[^>]*>/g, "").replace(/&nbsp;/g, " ").trim();
 }
 
 export function GlobalCreateTaskModal() {
@@ -359,7 +366,7 @@ export function GlobalCreateTaskModal() {
       project_id: selectedProjectId!,
       column_id: selectedColumnId!,
       title: title.trim(),
-      description: description.trim() || undefined,
+      description: htmlIsEmpty(description) ? undefined : description,
       priority,
       due_date: dueDate || undefined,
       desired_start_date: desiredStartDate || undefined,
@@ -458,7 +465,7 @@ export function GlobalCreateTaskModal() {
       .filter((r) => {
         switch (r.field) {
           case "title": return !title.trim();
-          case "description": return !description.trim();
+          case "description": return htmlIsEmpty(description);
           case "due_date": return !dueDate;
           case "assignee_id": return assignees.length === 0;
           case "estimated_hours": return !(estimatedHours && estimatedHours > 0);
@@ -688,14 +695,13 @@ export function GlobalCreateTaskModal() {
 
             {/* Description (collapsible) */}
             {showDescription ? (
-              <textarea
-                autoFocus
-                value={description}
-                onChange={(e) => setDescription(e.target.value)}
-                placeholder="Adicionar descrição..."
-                rows={3}
-                className="w-full mt-3 text-sm text-neutral-600 placeholder:text-neutral-300 outline-none resize-none border border-neutral-200 rounded-lg p-2.5 focus:border-brand-teal transition-colors"
-              />
+              <div className="mt-3">
+                <RichTextEditor
+                  content={description}
+                  onChange={(html) => setDescription(html)}
+                  placeholder="Adicionar descrição..."
+                />
+              </div>
             ) : (
               <button
                 type="button"
