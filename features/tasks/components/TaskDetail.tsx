@@ -45,6 +45,7 @@ import {
   AlertCircle,
   GitBranch,
   Link2,
+  Copy,
   ArrowRight,
   Layers,
   Download,
@@ -158,6 +159,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
   const { access: boardAccess } = useBoardAccess((task as any)?.project_id ?? "");
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false); // task inexistente ou na Lixeira
+  const [duplicating, setDuplicating] = useState(false);
   const [activeTab, setActiveTab] = useState<DetailTab>("description");
   const [newChecklistItem, setNewChecklistItem] = useState("");
   const [newTagInput, setNewTagInput] = useState(false);
@@ -758,6 +760,48 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
     }
   }
 
+  // Duplica a task manualmente — cópia com CÓDIGO novo (novo id), no mesmo quadro/
+  // etapa. Não copia recorrência, entrega, fila/paralelo nem status (começa aberta).
+  async function handleDuplicate() {
+    if (!task || duplicating) return;
+    setDuplicating(true);
+    try {
+      const colId = (task as any).column_id as string | null;
+      const colTasks = boardColumns.find((c) => c.id === colId)?.tasks ?? [];
+      const pos = colTasks.length ? Math.max(...colTasks.map((t: any) => t.position ?? 0)) + 1000 : 1000;
+      const created: any = await taskService.create({
+        project_id: (task as any).project_id,
+        column_id: colId,
+        title: `${task.title} (cópia)`,
+        description: task.description ?? undefined,
+        priority: task.priority,
+        assignee_id: (task as any).assignee_id ?? undefined,
+        due_date: (task as any).due_date ?? undefined,
+        desired_start_date: (task as any).desired_start_date ?? undefined,
+        estimated_hours: (task as any).estimated_hours ?? undefined,
+        task_type: (task as any).task_type ?? undefined,
+        board_subproject_id: (task as any).board_subproject_id ?? undefined,
+        is_urgent: (task as any).is_urgent ?? undefined,
+        position: pos,
+        created_by: user?.id || undefined,
+      } as any);
+      if (created?.id && colId) {
+        store.addTask(colId, { ...created } as TaskWithRelations);
+        runAutomations({ type: "task_created" }, created.id);
+        const toast = document.createElement("div");
+        toast.style.cssText = "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;background:#0B1B3A;color:white;font-size:12px;font-weight:500;padding:10px 16px;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,0.15);pointer-events:none;";
+        toast.textContent = `Tarefa duplicada · #${String(created.id).slice(0, 8).toUpperCase()}`;
+        document.body.appendChild(toast);
+        setTimeout(() => toast.remove(), 2200);
+      }
+    } catch (e) {
+      console.error("[handleDuplicate]", e);
+      alert("Não foi possível duplicar a tarefa.");
+    } finally {
+      setDuplicating(false);
+    }
+  }
+
   async function handleAddChecklistItem(e: React.FormEvent) {
     e.preventDefault();
     if (!task || !newChecklistItem.trim()) return;
@@ -1162,6 +1206,16 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                 )}
               >
                 <Flag size={14} fill={(task as any).is_urgent ? "currentColor" : "none"} />
+              </button>
+
+              {/* Duplicar (cria uma cópia com código novo) */}
+              <button
+                onClick={handleDuplicate}
+                disabled={duplicating}
+                title="Duplicar tarefa (cria uma cópia com novo código)"
+                className="w-7 h-7 flex items-center justify-center rounded-lg text-neutral-400 hover:text-brand-navy hover:bg-neutral-100 transition-colors disabled:opacity-50"
+              >
+                <Copy size={14} />
               </button>
 
               {/* Delete */}
@@ -2151,6 +2205,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                     const sortedCols = [...boardColumns].sort((a, b) => a.position - b.position);
                     const firstColId = sortedCols[0]?.id ?? null;
                     const recurColId = recur?.target_column_id ?? firstColId;
+                    const FREQ_LABELS: Record<string, string> = { none: "Sem repetição", daily: "Diária", weekly: "Semanal", biweekly: "Quinzenal", monthly: "Mensal" };
                     return (
                       <div className="space-y-2">
                         <Select
@@ -2162,7 +2217,8 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                           }
                         >
                           <SelectTrigger className="h-7 text-xs border-neutral-200">
-                            <SelectValue placeholder="Sem repetição" />
+                            {/* Lookup direto do rótulo PT (o SelectValue do Radix mostrava o valor cru "weekly"). */}
+                            <span className="truncate text-left flex-1">{FREQ_LABELS[recur?.frequency ?? "none"] ?? "Sem repetição"}</span>
                           </SelectTrigger>
                           <SelectContent>
                             <SelectItem value="none" className="text-xs">Sem repetição</SelectItem>
