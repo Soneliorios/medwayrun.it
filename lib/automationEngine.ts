@@ -17,6 +17,16 @@ import { useBoardStore } from "@/features/board/store/boardStore";
  * o store, não dispara o motor).
  */
 
+// Toast simples (feedback de automação, ex.: falha ao notificar no Slack).
+function engineToast(message: string) {
+  if (typeof document === "undefined") return;
+  const el = document.createElement("div");
+  el.style.cssText = "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;background:#0B1B3A;color:white;font-size:12px;font-weight:500;padding:10px 16px;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,0.15);pointer-events:none;max-width:90vw;text-align:center;";
+  el.textContent = message;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 4000);
+}
+
 export type EngineEvent =
   | { type: "task_created" }
   | { type: "stage_entered" }
@@ -252,19 +262,26 @@ async function runAction(a: AutomationAction, auto: AutomationRow, task: EngineT
         const { data } = await (sb as any).from("task_followers").select("user_id").eq("task_id", task.id);
         (data ?? []).forEach((r: any) => { if (r.user_id) ids.add(r.user_id); });
       }
-      if (!ids.size) return;
+      if (!ids.size) { engineToast("⚠️ Slack: nenhum destinatário (a task tem criador/seguidores?)"); return; }
       const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
       const link = appUrl ? `\n${appUrl}/tasks/${task.id}` : "";
       const custom = cfg.message ? String(cfg.message).replace(/\{tarefa\}/g, task.title ?? "tarefa") : null;
       const text = `${custom ?? `🔔 *${auto.name}* — Tarefa: *${task.title ?? "tarefa"}*`}${link}`;
       try {
-        await fetch("/api/slack/notify", {
+        const res = await fetch("/api/slack/notify", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify({ userIds: [...ids], text }),
         });
+        const json: any = await res.json().catch(() => null);
+        if (!json?.ok) {
+          engineToast(json?.error === "not_configured" ? "⚠️ Slack não configurado (SLACK_BOT_TOKEN na Vercel)" : `⚠️ Slack falhou: ${json?.error ?? res.status}`);
+        } else if ((json.sent ?? 0) === 0) {
+          engineToast("⚠️ Slack: ninguém encontrado (e-mail do MedwayRun ≠ Slack?)");
+        }
       } catch (e) {
         console.error("[automationEngine] send_slack", e);
+        engineToast("⚠️ Falha ao notificar no Slack");
       }
       return;
     }

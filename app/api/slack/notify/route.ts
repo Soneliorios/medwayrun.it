@@ -23,6 +23,12 @@ async function slack(method: string, token: string, body: Record<string, unknown
   return res.json() as Promise<any>;
 }
 
+// Diagnóstico leve: confirma se o SLACK_BOT_TOKEN está disponível em produção
+// (sem expor o token). Não requer auth — retorna só um booleano.
+export async function GET() {
+  return NextResponse.json({ ok: true, configured: !!process.env.SLACK_BOT_TOKEN });
+}
+
 export async function POST(request: Request) {
   const cookieStore = await cookies();
   const authed = createServerClient(
