@@ -2146,8 +2146,11 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                   {(() => {
                     const rc = (task as any).recurrence_config;
                     const recur = !rc ? null : (typeof rc === "string"
-                      ? { frequency: rc, until: null as string | null }
-                      : (rc as { frequency: string; until: string | null }));
+                      ? { frequency: rc, until: null as string | null, active: true, next_run: computeNextRun(rc), target_column_id: null as string | null }
+                      : (rc as { frequency: string; until: string | null; next_run?: string; target_column_id?: string | null }));
+                    const sortedCols = [...boardColumns].sort((a, b) => a.position - b.position);
+                    const firstColId = sortedCols[0]?.id ?? null;
+                    const recurColId = recur?.target_column_id ?? firstColId;
                     return (
                       <div className="space-y-2">
                         <Select
@@ -2155,7 +2158,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                           onValueChange={(v) =>
                             !v || v === "none"
                               ? saveRecurrence(null)
-                              : saveRecurrence({ frequency: v, until: recur?.until ?? null, active: true, next_run: computeNextRun(v) })
+                              : saveRecurrence({ ...(recur ?? {}), frequency: v, until: recur?.until ?? null, active: true, next_run: computeNextRun(v), target_column_id: recur?.target_column_id ?? firstColId })
                           }
                         >
                           <SelectTrigger className="h-7 text-xs border-neutral-200">
@@ -2172,13 +2175,29 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
 
                         {recur && (
                           <div className="space-y-1.5 rounded-lg bg-neutral-50 border border-neutral-100 p-2">
-                            <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Repetir até</p>
+                            {/* Etapa onde cada nova ocorrência é criada */}
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400">Criar na etapa</p>
+                            <Select
+                              value={recurColId ?? ""}
+                              onValueChange={(v) => saveRecurrence({ ...recur, active: true, target_column_id: v })}
+                            >
+                              <SelectTrigger className="h-7 text-xs border-neutral-200 bg-white">
+                                <SelectValue placeholder="Selecionar etapa" />
+                              </SelectTrigger>
+                              <SelectContent>
+                                {sortedCols.map((c) => (
+                                  <SelectItem key={c.id} value={c.id} className="text-xs">{c.name}</SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+
+                            <p className="text-[10px] font-semibold uppercase tracking-wide text-neutral-400 pt-1">Repetir até</p>
                             <label className="flex items-center gap-2 text-[11px] text-neutral-600 cursor-pointer">
                               <input
                                 type="checkbox"
                                 checked={!recur.until}
                                 onChange={(e) =>
-                                  saveRecurrence({ frequency: recur.frequency, active: true, next_run: computeNextRun(recur.frequency),
+                                  saveRecurrence({ ...recur, active: true,
                                     until: e.target.checked ? null : new Date().toISOString().slice(0, 10) })
                                 }
                                 className="w-3 h-3 accent-brand-teal"
@@ -2190,7 +2209,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                                 type="date"
                                 value={recur.until}
                                 onChange={(e) =>
-                                  saveRecurrence({ frequency: recur.frequency, active: true, next_run: computeNextRun(recur.frequency), until: e.target.value || null })
+                                  saveRecurrence({ ...recur, active: true, until: e.target.value || null })
                                 }
                                 className="w-full text-xs border border-neutral-200 rounded-md px-2 py-1 bg-white outline-none focus:border-brand-teal"
                               />

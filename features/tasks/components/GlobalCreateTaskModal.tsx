@@ -351,7 +351,7 @@ export function GlobalCreateTaskModal() {
       else if (recurrence === "weekly") d.setDate(d.getDate() + 7);
       else if (recurrence === "biweekly") d.setDate(d.getDate() + 14);
       else if (recurrence === "monthly") d.setMonth(d.getMonth() + 1);
-      recurrenceConfig = { frequency: recurrence, until: null, active: true, next_run: d.toISOString().slice(0, 10) };
+      recurrenceConfig = { frequency: recurrence, until: null, active: true, next_run: d.toISOString().slice(0, 10), target_column_id: selectedColumnId ?? null };
     }
 
     const created: any = await taskService.create({
