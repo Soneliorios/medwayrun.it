@@ -53,6 +53,21 @@ export const taskTypeService = {
     return data as unknown as BoardTaskType;
   },
 
+  async update(
+    id: string,
+    updates: { name?: string; color?: string; default_hours?: number }
+  ): Promise<void> {
+    const supabase = createRawClient();
+    const patch: Record<string, unknown> = {};
+    // Nunca persiste nome vazio nem horas <= 0 (proteção contra edição inválida).
+    if (updates.name !== undefined) { const n = updates.name.trim(); if (n) patch.name = n; }
+    if (updates.color !== undefined) patch.color = updates.color;
+    if (updates.default_hours !== undefined && updates.default_hours > 0) patch.default_hours = updates.default_hours;
+    if (Object.keys(patch).length === 0) return;
+    const { error } = await supabase.from("task_types").update(patch).eq("id", id);
+    if (error) console.error("[taskTypeService.update]", error);
+  },
+
   async remove(id: string): Promise<void> {
     const supabase = createRawClient();
     const { error } = await supabase.from("task_types").delete().eq("id", id);

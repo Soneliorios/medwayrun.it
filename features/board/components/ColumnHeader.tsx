@@ -1,7 +1,7 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, MoreHorizontal, Pencil, Trash2, Minimize2, Users, Clock, Gauge, ArrowLeft, ArrowRight, Flag } from "lucide-react";
+import { Plus, MoreHorizontal, Pencil, Trash2, Minimize2, Users, Clock, Gauge, ArrowLeft, ArrowRight, Flag, ArrowDownUp } from "lucide-react";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -36,11 +36,12 @@ interface Props {
   onSetWipLimit?: (limit: number | null) => void;
   onMoveLeft?: () => void;
   onMoveRight?: () => void;
+  onSortByDueDate?: () => void;
 }
 
 export function ColumnHeader({
   column, onAddTask, onRename, onDelete, onSetColor, onSetFinal,
-  onMinimize, onSetWipLimit, onMoveLeft, onMoveRight,
+  onMinimize, onSetWipLimit, onMoveLeft, onMoveRight, onSortByDueDate,
 }: Props) {
   const [editing, setEditing] = useState(false);
   const [name, setName] = useState(column.name);
@@ -167,6 +168,11 @@ export function ColumnHeader({
               <DropdownMenuItem onClick={handleSetWip}>
                 <Gauge size={13} className="mr-2" /> {wipLimit != null ? "Alterar WIP limit" : "Adicionar WIP limit"}
               </DropdownMenuItem>
+              {onSortByDueDate && (
+                <DropdownMenuItem onClick={onSortByDueDate}>
+                  <ArrowDownUp size={13} className="mr-2" /> Ordenar por prazo
+                </DropdownMenuItem>
+              )}
               {onMinimize && (
                 <DropdownMenuItem onClick={onMinimize}>
                   <Minimize2 size={13} className="mr-2" /> Colapsar etapa

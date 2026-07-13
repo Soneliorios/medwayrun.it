@@ -23,6 +23,7 @@ import { cn } from "@/lib/utils";
 import { taskService } from "../services/taskService";
 import { tagsService } from "../services/tagsService";
 import { sequenceService } from "../services/sequenceService";
+import { stageReqService, type StageReq } from "@/lib/stageReqService";
 import { attachmentService } from "@/lib/attachmentService";
 import { useProjectStore } from "@/features/projects/store/projectStore";
 import { useBoardStore } from "@/features/board/store/boardStore";
@@ -429,10 +430,52 @@ export function GlobalCreateTaskModal() {
   const boardProjects = modalBoardProjects;
   const boardProjectRequired = boardProjects.length > 0;
 
+  // Requisitos da etapa-alvo (configurados em Configurações > Requisitos por etapa).
+  const [columnReqs, setColumnReqs] = useState<StageReq[]>([]);
+  const [reqsLoadedCol, setReqsLoadedCol] = useState<string | null>(null);
+  useEffect(() => {
+    if (!selectedColumnId) { setColumnReqs([]); setReqsLoadedCol(null); return; }
+    let cancelled = false;
+    setReqsLoadedCol(null);
+    stageReqService.listForColumns([selectedColumnId]).then((map) => {
+      if (!cancelled) { setColumnReqs(map[selectedColumnId] ?? []); setReqsLoadedCol(selectedColumnId); }
+    });
+    return () => { cancelled = true; };
+  }, [selectedColumnId]);
+
+  // Garante os requisitos da coluna atual no submit (evita corrida: se ainda não
+  // carregaram — ou são de outra coluna — busca na hora).
+  async function resolveColumnReqs(): Promise<StageReq[]> {
+    if (!selectedColumnId) return [];
+    if (reqsLoadedCol === selectedColumnId) return columnReqs;
+    const map = await stageReqService.listForColumns([selectedColumnId]);
+    return map[selectedColumnId] ?? [];
+  }
+
+  // Requisitos ainda não satisfeitos pelos campos atuais.
+  function missingReqLabels(reqs: StageReq[]): string[] {
+    return reqs
+      .filter((r) => {
+        switch (r.field) {
+          case "title": return !title.trim();
+          case "description": return !description.trim();
+          case "due_date": return !dueDate;
+          case "assignee_id": return assignees.length === 0;
+          case "estimated_hours": return !(estimatedHours && estimatedHours > 0);
+          case "priority": return !priority;
+          case "type_id": return !taskType;
+          default: return false;
+        }
+      })
+      .map((r) => r.label);
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim() || !selectedProjectId || !selectedColumnId) return;
     if (boardProjectRequired && !boardProjectId) return;
+    const missing = missingReqLabels(await resolveColumnReqs());
+    if (missing.length) { setError(`Requisitos desta etapa: ${missing.join(", ")}.`); return; }
     setError(null);
     setLoading(true);
     try {
@@ -449,6 +492,8 @@ export function GlobalCreateTaskModal() {
   async function handleSubmitAndCreateAnother() {
     if (!title.trim() || !selectedProjectId || !selectedColumnId) return;
     if (boardProjectRequired && !boardProjectId) return;
+    const missing = missingReqLabels(await resolveColumnReqs());
+    if (missing.length) { setError(`Requisitos desta etapa: ${missing.join(", ")}.`); return; }
     setError(null);
     setLoading(true);
     // Preserve the subtask context across "salvar e criar outra" so the next

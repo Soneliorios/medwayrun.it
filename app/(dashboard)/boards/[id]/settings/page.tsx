@@ -482,16 +482,43 @@ export default function ProjectSettingsPage({ params }: Props) {
                       <div className="flex items-center gap-3 p-3">
                         <GripVertical size={14} className="text-neutral-300" />
                         <span className="w-3 h-3 rounded-full shrink-0" style={{ background: type.color }} />
-                        <span className="text-sm font-medium text-neutral-700 flex-1">{type.name}</span>
-                        <span className="text-xs text-neutral-400 bg-neutral-50 px-2 py-0.5 rounded-full">
-                          {type.default_hours}h estimadas
-                        </span>
+                        {/* Nome editável (salva ao sair do campo) */}
+                        <input
+                          value={type.name}
+                          onChange={(e) => setTaskTypes((prev) => prev.map((t) => (t.id === type.id ? { ...t, name: e.target.value } : t)))}
+                          onBlur={(e) => {
+                            const n = e.target.value.trim();
+                            if (!n) { taskTypeService.list(projectId).then(setTaskTypes); return; } // inválido → restaura do banco
+                            taskTypeService.update(type.id, { name: n });
+                          }}
+                          className="text-sm font-medium text-neutral-700 flex-1 bg-transparent outline-none focus:bg-neutral-50 rounded px-1 -ml-1 min-w-0"
+                        />
+                        {/* Horas estimadas editáveis (salva ao sair do campo) */}
+                        <div className="flex items-center gap-1 border border-neutral-200 rounded-lg px-2 bg-white shrink-0" title="Tempo estimado (horas)">
+                          <input
+                            type="number"
+                            min={0.5}
+                            step={0.5}
+                            value={type.default_hours}
+                            onChange={(e) => {
+                              const v = parseFloat(e.target.value);
+                              setTaskTypes((prev) => prev.map((t) => (t.id === type.id ? { ...t, default_hours: isNaN(v) ? t.default_hours : v } : t)));
+                            }}
+                            onBlur={(e) => {
+                              const v = parseFloat(e.target.value);
+                              if (isNaN(v) || v <= 0) { taskTypeService.list(projectId).then(setTaskTypes); return; } // inválido → restaura
+                              taskTypeService.update(type.id, { default_hours: v });
+                            }}
+                            className="w-12 text-sm outline-none text-center bg-transparent"
+                          />
+                          <span className="text-xs text-neutral-400">h</span>
+                        </div>
                         <button
                           onClick={() => {
                             setTaskTypes((prev) => prev.filter((t) => t.id !== type.id));
                             taskTypeService.remove(type.id);
                           }}
-                          className="w-6 h-6 flex items-center justify-center rounded-md text-neutral-300 hover:text-destructive hover:bg-destructive/5 transition-colors"
+                          className="w-6 h-6 flex items-center justify-center rounded-md text-neutral-300 hover:text-destructive hover:bg-destructive/5 transition-colors shrink-0"
                         >
                           <Trash2 size={12} />
                         </button>

@@ -129,6 +129,27 @@ export function KanbanColumn({ column, onTaskOpen, onAddTask, canCreate = true }
     ]);
   }
 
+  // Ordena os cards desta coluna por prazo de entrega (mais próximo primeiro;
+  // sem prazo por último) e persiste as novas posições.
+  function handleSortByDueDate() {
+    // Ordena a coluna COMPLETA do store (não o `column.tasks` já filtrado, senão
+    // tarefas ocultas por um filtro ativo ficariam com posições velhas/colididas).
+    const full = useBoardStore.getState().columns.find((c) => c.id === column.id)?.tasks ?? column.tasks;
+    const ordered = [...full].sort((a, b) => {
+      const ad = a.due_date ? new Date(a.due_date).getTime() : Infinity;
+      const bd = b.due_date ? new Date(b.due_date).getTime() : Infinity;
+      return ad - bd;
+    });
+    const supabase = createRawClient();
+    ordered.forEach((t, i) => {
+      const pos = (i + 1) * 1000;
+      store.moveTask(t.id, column.id, pos); // reordena no store (re-sort por position)
+      supabase.from("tasks").update({ position: pos }).eq("id", t.id).then(({ error }) => {
+        if (error) console.error("[sortByDueDate] persist", error);
+      });
+    });
+  }
+
   const sortedCols = [...store.columns].sort((a, b) => a.position - b.position);
   const colIdx = sortedCols.findIndex((c) => c.id === column.id);
 
@@ -154,6 +175,7 @@ export function KanbanColumn({ column, onTaskOpen, onAddTask, canCreate = true }
         onSetWipLimit={handleSetWipLimit}
         onMoveLeft={colIdx > 0 ? () => moveColumn(-1) : undefined}
         onMoveRight={colIdx < sortedCols.length - 1 ? () => moveColumn(1) : undefined}
+        onSortByDueDate={column.tasks.length > 1 ? handleSortByDueDate : undefined}
       />
 
       {/* Droppable task list */}

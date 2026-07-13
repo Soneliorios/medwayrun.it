@@ -1,6 +1,6 @@
 import { clsx, type ClassValue } from "clsx";
 import { twMerge } from "tailwind-merge";
-import { format, formatDistanceToNow, isToday, isTomorrow, isPast } from "date-fns";
+import { format, formatDistanceToNow, isToday, isTomorrow } from "date-fns";
 import { ptBR } from "date-fns/locale";
 
 export function cn(...inputs: ClassValue[]) {
@@ -34,7 +34,14 @@ export function timeAgo(date: string | Date): string {
 
 export function isOverdue(dueDate: string | null | undefined): boolean {
   if (!dueDate) return false;
-  return isPast(parseDateLocal(dueDate));
+  const due = parseDateLocal(dueDate);
+  if (isNaN(due.getTime())) return false;
+  // Atraso é por DIA: só conta como atrasada quando o prazo já passou (dia
+  // anterior a hoje). A tarefa com prazo HOJE ainda está no prazo.
+  const now = new Date();
+  const startToday = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const dueDay = new Date(due.getFullYear(), due.getMonth(), due.getDate());
+  return dueDay.getTime() < startToday.getTime();
 }
 
 export function getInitials(name: string | null | undefined): string {
