@@ -36,6 +36,7 @@ interface EngineTask {
   title: string | null;
   assignee_id: string | null;
   due_date: string | null;
+  created_by: string | null;
 }
 
 interface Ctx {
@@ -278,7 +279,7 @@ export async function runAutomations(ev: EngineEvent, taskId: string): Promise<v
     const sb = createRawClient();
     const { data: task } = await (sb as any)
       .from("tasks")
-      .select("id, project_id, column_id, title, assignee_id, due_date")
+      .select("id, project_id, column_id, title, assignee_id, due_date, created_by")
       .eq("id", taskId)
       .maybeSingle();
     if (!task) return;
