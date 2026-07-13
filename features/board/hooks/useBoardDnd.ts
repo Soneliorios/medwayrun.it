@@ -14,6 +14,26 @@ import { useBoardStore, getDropPosition } from "../store/boardStore";
 import { runAutomations } from "@/lib/automationEngine";
 import { useRole } from "@/features/auth/hooks/useRole";
 import { useAuthStore } from "@/features/auth/store/authStore";
+import { stageReqService } from "@/lib/stageReqService";
+
+// Um card só pode ENTRAR numa etapa se cumprir os requisitos dela (mesma checagem
+// usada na criação). Retorna os rótulos dos requisitos não cumpridos pela task.
+function missingStageReqs(task: any, reqs: { field: string; label: string }[]): string[] {
+  return reqs
+    .filter((r) => {
+      switch (r.field) {
+        case "title": return !task?.title || !String(task.title).trim();
+        case "description": return !task?.description || !String(task.description).replace(/<[^>]*>/g, "").trim();
+        case "due_date": return !task?.due_date;
+        case "assignee_id": return !task?.assignee_id;
+        case "estimated_hours": return !((task?.estimated_hours ?? 0) > 0);
+        case "priority": return !task?.priority;
+        case "type_id": return !(task?.type_id || task?.task_type);
+        default: return false;
+      }
+    })
+    .map((r) => r.label);
+}
 
 export function useBoardDnd() {
   const store = useBoardStore();
@@ -122,6 +142,20 @@ export function useBoardDnd() {
       // pre-drag snapshot so we only fire "stage_entered" on a real move.
       const originColId = snapshotRef.current?.find((c) => c.tasks.some((t) => t.id === activeId))?.id;
       const stageChanged = !!originColId && originColId !== column.id;
+
+      // Requisitos da etapa: ao ENTRAR numa etapa (mover), a task precisa cumprir
+      // os requisitos configurados dela. Se não, desfaz o move e avisa.
+      if (stageChanged) {
+        const task = column.tasks.find((t) => t.id === activeId);
+        const reqMap = await stageReqService.listForColumns([column.id]);
+        const reqs = reqMap[column.id] ?? [];
+        const missing = missingStageReqs(task, reqs);
+        if (missing.length) {
+          if (snapshotRef.current) store.setColumns(snapshotRef.current); // desfaz o move otimista
+          alert(`Não é possível mover para "${column.name}".\nRequisitos desta etapa: ${missing.join(", ")}.`);
+          return;
+        }
+      }
 
       const tasks = [...column.tasks].sort((a, b) => a.position - b.position);
       const taskIndex = tasks.findIndex((t) => t.id === activeId);
