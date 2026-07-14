@@ -85,7 +85,9 @@ function TaskCardInner({ task, onOpen }: Props) {
     [task.id, toggleTask]
   );
 
-  const overdue = isOverdue(task.due_date);
+  // Task entregue: some com "urgente"/"atrasada" e o card fica esmaecido.
+  const delivered = task.status === "delivered";
+  const overdue = !delivered && isOverdue(task.due_date);
 
   // SLA progress
   const slaMinutes = (task as any).sla_minutes as number | null;
@@ -135,6 +137,7 @@ function TaskCardInner({ task, onOpen }: Props) {
           : overdue
           ? "border-red-200 border-l-4 border-l-destructive bg-red-50/30"
           : "border-neutral-100",
+        delivered && "opacity-60",
         isDragging && "opacity-50 shadow-lg scale-[1.02] z-50 dragging-item"
       )}
       onClick={handleClick}
@@ -177,7 +180,7 @@ function TaskCardInner({ task, onOpen }: Props) {
 
           {/* Urgent flag + priority dot */}
           <div className="flex items-center gap-1 shrink-0 mt-0.5">
-            {(task as any).is_urgent && (
+            {!delivered && (task as any).is_urgent && (
               <Flag size={11} className="text-destructive" fill="currentColor" />
             )}
             <span
@@ -389,6 +392,7 @@ export const TaskCard = memo(TaskCardInner, (prev, next) => {
     prev.task.title === next.task.title &&
     prev.task.priority === next.task.priority &&
     prev.task.due_date === next.task.due_date &&
+    prev.task.status === next.task.status &&
     prev.task.column_id === next.task.column_id &&
     prev.task.assignee_id === next.task.assignee_id &&
     prev.task._commentCount === next.task._commentCount &&
