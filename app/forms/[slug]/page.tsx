@@ -4,6 +4,7 @@ import { use, useEffect, useState } from 'react';
 import { CheckCircle2, Loader2, X } from 'lucide-react';
 import { createRawClient } from '@/lib/supabase/client';
 import { submitFormToSupabase } from './actions';
+import { MAX_FILES_PER_FIELD, MAX_TOTAL_FILES, MAX_FILE_MB, MAX_FILE_BYTES } from './limits';
 
 const FIELD_TYPES_WITH_LABEL: Record<string, string> = {
   text: 'Texto curto',
@@ -46,34 +47,50 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [fileUploads, setFileUploads] = useState<Record<string, { name: string; url: string; mime: string | null; size: number | null }[]>>({});
+  const [fileUploads, setFileUploads] = useState<Record<string, { name: string; url: string; mime: string | null; size: number | null; path: string }[]>>({});
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
+  const [fileErrors, setFileErrors] = useState<Record<string, string>>({});
 
-  // Aceita VÁRIOS arquivos no mesmo campo: envia cada um pro bucket e acumula na
-  // lista daquele campo.
+  // Aceita VÁRIOS arquivos no mesmo campo. Valida quantidade (por campo e no total
+  // da submissão) e tamanho; envia cada válido pro bucket e acumula na lista do
+  // campo. Erros ficam por campo (não somem ao mexer em outro).
   async function handleFileUpload(fieldId: string, files: FileList) {
     const supabase = createRawClient();
+    setFileErrors((e) => ({ ...e, [fieldId]: "" }));
+    const totalNow = Object.values(fileUploads).reduce((n, arr) => n + arr.length, 0);
+    let fieldSlots = MAX_FILES_PER_FIELD - (fileUploads[fieldId]?.length ?? 0);
+    let totalSlots = MAX_TOTAL_FILES - totalNow;
+    const oversized: string[] = [];
+    const failed: string[] = [];
+    let dropped = 0;
+
     setUploading((u) => ({ ...u, [fieldId]: true }));
     for (const file of Array.from(files)) {
+      if (fieldSlots <= 0 || totalSlots <= 0) { dropped++; continue; }
+      if (file.size > MAX_FILE_BYTES) { oversized.push(file.name); continue; }
       const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
       const rand = Math.random().toString(36).slice(2, 7);
       const path = `${slug}/${Date.now()}-${rand}-${safeName}`;
       const { error } = await supabase.storage.from("task-files").upload(path, file, { upsert: false });
-      if (error) {
-        console.error("[form upload]", error);
-        setSubmitError("Não foi possível enviar um dos arquivos. Tente novamente.");
-        continue;
-      }
+      if (error) { console.error("[form upload]", error); failed.push(file.name); continue; }
       const { data } = supabase.storage.from("task-files").getPublicUrl(path);
       setFileUploads((prev) => ({
         ...prev,
-        [fieldId]: [...(prev[fieldId] ?? []), { name: file.name, url: data.publicUrl, mime: file.type || null, size: file.size }],
+        [fieldId]: [...(prev[fieldId] ?? []), { name: file.name, url: data.publicUrl, mime: file.type || null, size: file.size, path }],
       }));
+      fieldSlots--; totalSlots--;
     }
     setUploading((u) => ({ ...u, [fieldId]: false }));
+
+    const msgs: string[] = [];
+    if (oversized.length) msgs.push(`${oversized.length} acima de ${MAX_FILE_MB} MB não enviado(s): ${oversized.join(", ")}`);
+    if (failed.length) msgs.push(`${failed.length} falharam no envio: ${failed.join(", ")}`);
+    if (dropped > 0) msgs.push(`${dropped} excederam o limite (${MAX_FILES_PER_FIELD} por campo, ${MAX_TOTAL_FILES} no total)`);
+    if (msgs.length) setFileErrors((e) => ({ ...e, [fieldId]: msgs.join(" · ") }));
   }
 
-  function removeFile(fieldId: string, idx: number) {
+  async function removeFile(fieldId: string, idx: number) {
+    const removed = fileUploads[fieldId]?.[idx];
     setFileUploads((prev) => {
       const arr = [...(prev[fieldId] ?? [])];
       arr.splice(idx, 1);
@@ -82,6 +99,11 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
       else delete next[fieldId];
       return next;
     });
+    // O objeto já foi enviado ao bucket na seleção — remove o órfão de fato.
+    if (removed?.path) {
+      try { await createRawClient().storage.from("task-files").remove([removed.path]); }
+      catch (err) { console.error("[form removeFile]", err); }
+    }
   }
   const [notFound, setNotFound] = useState(false);
   const [boardProjects, setBoardProjects] = useState<{ id: string; name: string; color: string }[]>([]);
@@ -238,7 +260,7 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
         assignee_id: meta?.assignee_id ?? null,
         form_id: slug,
         nativeExtras,
-        attachments: Object.values(fileUploads).flat(),
+        attachments: Object.values(fileUploads).flat().map(({ name, url, mime, size }) => ({ name, url, mime, size })),
       });
     } catch (err) {
       console.error('Error creating task from form:', err);
@@ -366,12 +388,14 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
                     <input
                       type="file"
                       multiple
+                      disabled={uploading[f.id]}
                       required={f.required && !(fileUploads[f.id]?.length)}
                       onChange={e => { const files = e.target.files; if (files && files.length) handleFileUpload(f.id, files); e.target.value = ''; }}
-                      className="w-full text-sm border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:border-brand-teal file:mr-3 file:rounded-md file:border-0 file:bg-brand-navy file:text-white file:text-xs file:px-3 file:py-1.5 file:cursor-pointer"
+                      className="w-full text-sm border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:border-brand-teal file:mr-3 file:rounded-md file:border-0 file:bg-brand-navy file:text-white file:text-xs file:px-3 file:py-1.5 file:cursor-pointer disabled:opacity-60"
                     />
-                    <p className="text-[11px] text-neutral-400 mt-1">Você pode selecionar ou adicionar mais de um arquivo.</p>
+                    <p className="text-[11px] text-neutral-400 mt-1">Até {MAX_FILES_PER_FIELD} arquivos, no máximo {MAX_FILE_MB} MB cada.</p>
                     {uploading[f.id] && <p className="text-xs text-neutral-400 mt-1">Enviando arquivo(s)...</p>}
+                    {fileErrors[f.id] && <p className="text-xs text-destructive mt-1">{fileErrors[f.id]}</p>}
                     {(fileUploads[f.id]?.length ?? 0) > 0 && (
                       <ul className="mt-1.5 space-y-1">
                         {fileUploads[f.id].map((file, idx) => (
@@ -408,11 +432,11 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
 
         <button
           type="submit"
-          disabled={submitting}
+          disabled={submitting || Object.values(uploading).some(Boolean)}
           className="mt-6 bg-brand-navy text-white text-sm font-medium rounded-lg px-5 py-2.5 hover:opacity-90 transition disabled:opacity-60 flex items-center gap-2"
         >
-          {submitting && <Loader2 size={14} className="animate-spin" />}
-          {submitting ? 'Enviando...' : 'Enviar solicitação'}
+          {(submitting || Object.values(uploading).some(Boolean)) && <Loader2 size={14} className="animate-spin" />}
+          {Object.values(uploading).some(Boolean) ? 'Enviando arquivos...' : submitting ? 'Enviando...' : 'Enviar solicitação'}
         </button>
       </form>
     </div>

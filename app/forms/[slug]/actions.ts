@@ -3,6 +3,7 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { createClient } from '@/lib/supabase/server';
 import { ORG_ID } from '@/lib/utils';
+import { MAX_TOTAL_FILES, MAX_FILE_BYTES } from './limits';
 
 // Columns that actually exist on public.tasks and are safe to set from a form
 // submission. Anything else in nativeExtras (e.g. "type", "board_project_id")
@@ -77,15 +78,11 @@ export async function submitFormToSupabase(input: {
     if (ALLOWED_TASK_COLUMNS.has(k)) safeExtras[k] = v;
   }
 
-  // Se o formulário trouxe anexos, avisa na descrição (renderizada como HTML)
-  // que a tarefa tem arquivos na aba "Anexos".
-  const attachmentCount = input.attachments?.length ?? 0;
-  let description = input.description;
-  if (attachmentCount > 0) {
-    const label = attachmentCount === 1 ? '1 anexo' : `${attachmentCount} anexos`;
-    const notice = `<p>📎 <strong>Esta tarefa possui ${label}</strong> enviado(s) pelo formulário — veja a aba <em>Anexos</em>.</p>`;
-    description = description ? `${description}<hr>${notice}` : notice;
-  }
+  // Backstop de segurança: mesmo que o cliente burle a validação, só linkamos
+  // arquivos dentro do limite de tamanho e um teto total de arquivos.
+  const safeAttachments = (input.attachments ?? [])
+    .filter((a) => (a.size ?? 0) <= MAX_FILE_BYTES)
+    .slice(0, MAX_TOTAL_FILES);
 
   const now = new Date().toISOString();
   const { data: created, error } = await (admin as any).from('tasks').insert({
@@ -93,7 +90,7 @@ export async function submitFormToSupabase(input: {
     column_id: columnId,
     org_id: ORG_ID,
     title: input.title,
-    description,
+    description: input.description,
     priority: 'medium',
     position: Date.now() % 100000,
     assignee_id: assigneeId,
@@ -108,10 +105,12 @@ export async function submitFormToSupabase(input: {
 
   if (error) throw error;
 
-  // Link uploaded files to the new task so anyone with access can preview them
-  if (created?.id && input.attachments && input.attachments.length > 0) {
+  // Linka os arquivos à tarefa e — SÓ se o link der certo — acrescenta o aviso de
+  // anexos na descrição. Assim o aviso nunca mente sobre a aba "Anexos", e uma
+  // falha ao anexar vira erro visível em vez de "sucesso" silencioso.
+  if (created?.id && safeAttachments.length > 0) {
     const { error: attErr } = await (admin as any).from('task_attachments').insert(
-      input.attachments.map((a) => ({
+      safeAttachments.map((a) => ({
         task_id: created.id,
         org_id: ORG_ID,
         name: a.name,
@@ -120,6 +119,15 @@ export async function submitFormToSupabase(input: {
         size: a.size,
       }))
     );
-    if (attErr) console.error('[submitFormToSupabase] attachments insert error:', attErr);
+    if (attErr) {
+      console.error('[submitFormToSupabase] attachments insert error:', attErr);
+      throw new Error('A tarefa foi criada, mas houve um erro ao anexar os arquivos. Tente reenviar.');
+    }
+    const count = safeAttachments.length;
+    const label = count === 1 ? '1 anexo' : `${count} anexos`;
+    const notice = `<p>📎 <strong>Esta tarefa possui ${label}</strong> enviado(s) pelo formulário — veja a aba <em>Anexos</em>.</p>`;
+    const newDescription = input.description ? `${input.description}<hr>${notice}` : notice;
+    const { error: updErr } = await (admin as any).from('tasks').update({ description: newDescription }).eq('id', created.id);
+    if (updErr) console.error('[submitFormToSupabase] description notice update error:', updErr);
   }
 }
