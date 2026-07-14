@@ -21,8 +21,11 @@ export function ForgotPasswordForm() {
     setError(null);
     setLoading(true);
 
+    // Usa a origem REAL da página (ex.: https://www.medwayflow.app) em vez de
+    // depender de NEXT_PUBLIC_APP_URL, que pode estar vazio/desatualizado em prod.
+    const origin = typeof window !== "undefined" ? window.location.origin : (process.env.NEXT_PUBLIC_APP_URL ?? "");
     const { error } = await supabase.auth.resetPasswordForEmail(email, {
-      redirectTo: `${process.env.NEXT_PUBLIC_APP_URL}/auth/callback?next=/reset-password`,
+      redirectTo: `${origin}/auth/callback?next=/reset-password`,
     });
 
     if (error) {
