@@ -61,7 +61,7 @@ import { approvalService, type TaskApproval } from "../services/approvalService"
 import { sequenceService, type SeqRow } from "../services/sequenceService";
 import { notificationService } from "@/features/notifications/services/notificationService";
 import { runAutomations } from "@/lib/automationEngine";
-import { useBoardAccess } from "@/lib/boardAccess";
+import { useBoardAccess, useBoardAccessMap } from "@/lib/boardAccess";
 import { areasService } from "@/lib/areasService";
 import { attachmentService } from "@/lib/attachmentService";
 import { uiPrefsService } from "@/lib/uiPrefsService";
@@ -157,6 +157,8 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
   const [task, setTask] = useState<TaskWithRelations | null>(null);
   // Board-level edit permission (view-only members can't change fields)
   const { access: boardAccess } = useBoardAccess((task as any)?.project_id ?? "");
+  // Acesso a todos os quadros (para o seletor "mover de quadro" respeitar privacidade)
+  const { map: boardAccessMap } = useBoardAccessMap();
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false); // task inexistente ou na Lixeira
   const [duplicating, setDuplicating] = useState(false);
@@ -799,6 +801,71 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
       alert("Não foi possível duplicar a tarefa.");
     } finally {
       setDuplicating(false);
+    }
+  }
+
+  // Move a tarefa para OUTRO quadro. Coluna/tipo/sub-projeto/labels são específicos
+  // do quadro, então ao mover: valida acesso ao destino, acha (ou cria) a 1ª coluna
+  // do destino, zera tipo e sub-projeto, desanexa as labels do quadro antigo, leva
+  // junto as subtarefas, tira do quadro atual e fecha a modal.
+  // (Obs.: outros usuários com o quadro JÁ aberto só veem a mudança ao atualizar —
+  //  o realtime é filtrado por quadro; sync cross-board fica como melhoria futura.)
+  const [movingBoard, setMovingBoard] = useState(false);
+  async function handleMoveBoard(newBoardId: string) {
+    if (!task || movingBoard || !newBoardId || newBoardId === (task as any).project_id) return;
+    if (boardAccessMap[newBoardId]?.canCreate === false) {
+      alert("Você não tem acesso a esse quadro de destino.");
+      return;
+    }
+    setMovingBoard(true);
+    try {
+      const sb = createRawClient();
+      // 1ª coluna (por posição) do destino; se o quadro nunca foi aberto, cria as padrão.
+      let { data: cols } = await (sb as any)
+        .from("columns").select("id").eq("project_id", newBoardId).order("position");
+      if (!cols || cols.length === 0) {
+        const seed = ["A fazer", "Em andamento", "Revisão", "Concluído"].map((name, i) => ({
+          project_id: newBoardId, name, position: (i + 1) * 1000, is_done_column: i === 3,
+        }));
+        const { data: seeded } = await (sb as any).from("columns").insert(seed).select("id");
+        cols = seeded ?? [];
+      }
+      const targetCol = cols?.[0]?.id as string | undefined;
+      if (!targetCol) { alert("Não foi possível preparar o quadro de destino."); return; }
+      const { data: last } = await (sb as any)
+        .from("tasks").select("position").eq("column_id", targetCol).order("position", { ascending: false }).limit(1).maybeSingle();
+      const pos = (last?.position ?? 0) + 1000;
+      // Subtarefas acompanham o pai (senão ficam órfãs no quadro antigo).
+      const { data: children } = await (sb as any)
+        .from("tasks").select("id").eq("parent_task_id", taskId).is("deleted_at", null);
+      const childIds = ((children ?? []) as { id: string }[]).map((c) => c.id);
+      // tipo e sub-projeto pertencem ao quadro antigo — zera.
+      const { error } = await (sb as any).from("tasks")
+        .update({ project_id: newBoardId, column_id: targetCol, position: pos, board_subproject_id: null, task_type: null })
+        .eq("id", taskId);
+      if (error) { console.error("[handleMoveBoard]", error); alert("Não foi possível mover a tarefa de quadro."); return; }
+      if (childIds.length) {
+        await (sb as any).from("tasks")
+          .update({ project_id: newBoardId, column_id: targetCol, board_subproject_id: null, task_type: null })
+          .in("id", childIds);
+      }
+      // Labels são do quadro antigo — desanexa (pai + filhos).
+      await (sb as any).from("task_labels").delete().in("task_id", [taskId, ...childIds]);
+      // Some do quadro atual (store) — pai e filhos.
+      store.removeTask(taskId);
+      childIds.forEach((id) => store.removeTask(id));
+      const boardName = projectStore.projects.find((p) => p.id === newBoardId)?.name ?? "outro quadro";
+      const toast = document.createElement("div");
+      toast.style.cssText = "position:fixed;bottom:24px;left:50%;transform:translateX(-50%);z-index:9999;background:#0B1B3A;color:white;font-size:12px;font-weight:500;padding:10px 16px;border-radius:12px;box-shadow:0 4px 24px rgba(0,0,0,0.15);pointer-events:none;";
+      toast.textContent = `Tarefa movida para "${boardName}"`;
+      document.body.appendChild(toast);
+      setTimeout(() => toast.remove(), 2400);
+      onClose();
+    } catch (e) {
+      console.error("[handleMoveBoard]", e);
+      alert("Não foi possível mover a tarefa de quadro.");
+    } finally {
+      setMovingBoard(false);
     }
   }
 
@@ -1893,15 +1960,32 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                   </Select>
                 </MetaField>
 
-                {/* Quadro (clicável) */}
+                {/* Quadro (seletor p/ MOVER a tarefa para outro quadro) */}
                 <MetaField label="Quadro" icon={<FileText size={12} />}>
-                  <a
-                    href={`/boards/${task.project_id}`}
-                    className="text-xs font-medium text-brand-navy truncate hover:text-brand-teal hover:underline flex items-center gap-1"
-                  >
-                    {projectName}
-                    <ArrowRight size={10} className="opacity-50" />
-                  </a>
+                  <div className="flex items-center gap-1">
+                    <Select
+                      value={(task as any).project_id ?? ""}
+                      disabled={!(canChangeStage || boardAccess.canEdit) || movingBoard}
+                      onValueChange={handleMoveBoard}
+                    >
+                      <SelectTrigger
+                        className={cn("h-7 text-xs border-neutral-200 flex-1 min-w-0", (!(canChangeStage || boardAccess.canEdit) || movingBoard) && "opacity-60 cursor-not-allowed")}
+                        title={canChangeStage || boardAccess.canEdit ? "Mover a tarefa para outro quadro" : "Sem permissão para mover a tarefa de quadro"}
+                      >
+                        <SelectValue placeholder="Selecionar quadro...">{projectName}</SelectValue>
+                      </SelectTrigger>
+                      <SelectContent>
+                        {projectStore.projects
+                          .filter((p) => p.id === (task as any).project_id || boardAccessMap[p.id]?.canCreate !== false)
+                          .map((p) => (
+                            <SelectItem key={p.id} value={p.id} className="text-xs">{p.name}</SelectItem>
+                          ))}
+                      </SelectContent>
+                    </Select>
+                    <a href={`/boards/${task.project_id}`} title="Abrir quadro" className="shrink-0 text-neutral-400 hover:text-brand-teal p-1">
+                      <ArrowRight size={12} />
+                    </a>
+                  </div>
                 </MetaField>
 
                 {/* Etapa (badge clicável p/ trocar) */}
