@@ -98,6 +98,10 @@ function stripHtml(html: string | null | undefined): string {
   if (!html) return "";
   return String(html).replace(/<[^>]*>/g, " ").replace(/&nbsp;/g, " ").replace(/\s+/g, " ").trim();
 }
+// Escapa texto p/ interpolar com segurança em HTML (corpo de e-mail).
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
 function fmtDate(d: string | null | undefined): string {
   if (!d) return "";
   const dt = new Date(d.length <= 10 ? `${d}T12:00:00` : d);
@@ -312,20 +316,42 @@ async function runAction(a: AutomationAction, auto: AutomationRow, task: EngineT
       return;
     }
     case "send_email": {
-      // Não há infraestrutura de e-mail no projeto — fallback: notifica no app e
-      // avisa no console. (Quando houver um provider, trocar por envio real.)
-      console.warn("[automationEngine] send_email sem infra de e-mail — enviando notificação como fallback");
-      let targets: string[] = [];
+      // Envio real via Resend (rota server /api/email/send). Alvos: Seguidores ou
+      // Responsável(is) (default). Sem RESEND_API_KEY, a rota responde not_configured.
+      let targetUserIds: string[] = [];
       if (cfg.target === "Seguidores") {
         const { data } = await (sb as any).from("task_followers").select("user_id").eq("task_id", task.id);
-        targets = (data ?? []).map((r: any) => r.user_id);
+        targetUserIds = (data ?? []).map((r: any) => r.user_id);
       } else {
-        targets = await responsibleIds(task); // Responsável / Usuário específico → responsáveis
+        targetUserIds = await responsibleIds(task); // Responsável / Usuário específico → responsáveis
       }
-      await Promise.all(targets.map((uid) => notificationService.create({
-        userId: uid, type: "task_assigned",
-        content: `[E-mail pendente] Automação "${auto.name}": ${task.title ?? "tarefa"}`, taskId: task.id,
-      })));
+      const ids = [...new Set(targetUserIds.filter(Boolean))];
+      if (!ids.length) { engineToast("⚠️ E-mail: nenhum destinatário (responsável/seguidores?)"); return; }
+      const appUrl = process.env.NEXT_PUBLIC_APP_URL ?? "";
+      const link = appUrl ? `${appUrl}/tasks/${task.id}` : "";
+      const title = task.title ?? "tarefa";
+      const custom = cfg.message ? await renderMessageTemplate(String(cfg.message).trim(), task, ctx) : "";
+      const subject = `MedwayFlow — ${auto.name}: ${title}`;
+      // Corpo é HTML — escapa valores controlados pelo usuário (título/nome/custom).
+      const bodyHtml = custom
+        ? escapeHtml(custom).split("\n").map((l) => `<p>${l}</p>`).join("")
+        : `<p>🔔 <strong>${escapeHtml(auto.name)}</strong></p><p>Tarefa: <strong>${escapeHtml(title)}</strong></p>${link ? `<p><a href="${link}">Abrir tarefa</a></p>` : ""}`;
+      try {
+        const res = await fetch("/api/email/send", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ userIds: ids, subject, html: bodyHtml }),
+        });
+        const json: any = await res.json().catch(() => null);
+        if (!json?.ok) {
+          engineToast(json?.error === "not_configured" ? "⚠️ E-mail não configurado (RESEND_API_KEY na Vercel)" : `⚠️ E-mail falhou: ${json?.error ?? res.status}`);
+        } else if ((json.sent ?? 0) === 0) {
+          engineToast("⚠️ E-mail: ninguém com e-mail encontrado");
+        }
+      } catch (e) {
+        console.error("[automationEngine] send_email", e);
+        engineToast("⚠️ Falha ao enviar e-mail");
+      }
       return;
     }
     case "send_slack": {
