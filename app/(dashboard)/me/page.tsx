@@ -764,17 +764,24 @@ function MiniCalendar({ tasks, onOpen }: { tasks: TaskWithRelations[]; onOpen: (
               </span>
               {dayTasks.length > 0 && (
                 <div className="flex flex-col gap-0.5 mt-1 overflow-hidden">
-                  {dayTasks.slice(0, 2).map((t) => (
-                    <button
-                      key={t.id}
-                      onClick={() => onOpen(t.id)}
-                      title={t.title}
-                      className="flex items-center gap-1 text-left truncate hover:bg-neutral-100 rounded px-0.5 -mx-0.5 transition-colors"
-                    >
-                      <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: PRIORITY_COLORS[t.priority] ?? "#ccc" }} />
-                      <span className="text-[9px] text-neutral-500 truncate leading-tight">{t.title}</span>
-                    </button>
-                  ))}
+                  {dayTasks.slice(0, 2).map((t) => {
+                    const done = t.status === "delivered";
+                    return (
+                      <button
+                        key={t.id}
+                        onClick={() => onOpen(t.id)}
+                        title={done ? `✔ Entregue — ${t.title}` : t.title}
+                        className="flex items-center gap-1 text-left truncate hover:bg-neutral-100 rounded px-0.5 -mx-0.5 transition-colors"
+                      >
+                        {done ? (
+                          <span className="text-[9px] leading-none font-bold shrink-0" style={{ color: "#01a890" }}>✓</span>
+                        ) : (
+                          <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: PRIORITY_COLORS[t.priority] ?? "#ccc" }} />
+                        )}
+                        <span className={cn("text-[9px] truncate leading-tight", done ? "line-through" : "text-neutral-500")} style={done ? { color: "#01a890" } : undefined}>{t.title}</span>
+                      </button>
+                    );
+                  })}
                   {dayTasks.length > 2 && (
                     <span className="text-[8px] text-neutral-400 leading-none">+{dayTasks.length - 2}</span>
                   )}
@@ -787,7 +794,7 @@ function MiniCalendar({ tasks, onOpen }: { tasks: TaskWithRelations[]; onOpen: (
 
       <div className="mt-4 p-3 bg-neutral-50 rounded-xl border border-neutral-100">
         <p className="text-xs text-neutral-400 text-center">
-          Os pontos indicam tarefas com prazo nesse dia. Passe o cursor para ver o título.
+          Os pontos indicam tarefas com prazo nesse dia. Entregues aparecem com <span className="font-bold" style={{ color: "#01a890" }}>✓</span> e riscadas. Passe o cursor para ver o título.
         </p>
       </div>
     </div>

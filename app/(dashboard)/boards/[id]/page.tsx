@@ -19,6 +19,7 @@ import {
   Lock,
   ArrowRight as ArrowRightIcon,
   FolderKanban,
+  Check,
 } from "lucide-react";
 import { KanbanBoard } from "@/features/board/components/KanbanBoard";
 import { TaskDetail } from "@/features/tasks/components/TaskDetail";
@@ -567,6 +568,8 @@ function CalChip({ task, infoFields, onOpen, onDragStart, onDragEnd, block }: {
   const color = PRIORITY_COLORS[(task.priority ?? "medium") as keyof typeof PRIORITY_COLORS];
   const assigneeName = task.assignee?.full_name ?? (task.assignees?.[0] as any)?.profile?.full_name ?? task.assignee_id;
   const typeName = task.task_type?.name ?? task.task_type;
+  // Tarefas entregues aparecem visualmente distintas: verde-teal, ✓ e riscado.
+  const delivered = task.status === "delivered";
   return (
     <button
       draggable
@@ -574,12 +577,16 @@ function CalChip({ task, infoFields, onOpen, onDragStart, onDragEnd, block }: {
       onDragEnd={onDragEnd}
       onClick={() => onOpen(task.id)}
       className={cn("w-full text-left rounded font-medium transition-opacity hover:opacity-80 cursor-grab active:cursor-grabbing", block ? "px-2 py-1.5 text-[11px]" : "px-1.5 py-0.5 text-[10px] leading-tight truncate")}
-      style={{ background: `${color}22`, color }}
-      title={task.title}
+      style={delivered ? { background: "rgba(1,207,181,0.15)", color: "#01a890" } : { background: `${color}22`, color }}
+      title={delivered ? `✔ Entregue — ${task.title}` : task.title}
     >
       <span className="flex items-center gap-1">
-        {infoFields.includes("priority") && <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />}
-        <span className={cn("truncate", !infoFields.includes("title") && "sr-only")}>{task.title}</span>
+        {delivered ? (
+          <Check size={block ? 12 : 10} strokeWidth={3} className="shrink-0" />
+        ) : (
+          infoFields.includes("priority") && <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: color }} />
+        )}
+        <span className={cn("truncate", delivered && "line-through", !infoFields.includes("title") && "sr-only")}>{task.title}</span>
       </span>
       {block && (
         <span className="flex items-center gap-2 mt-0.5 text-[9px] text-neutral-500">
