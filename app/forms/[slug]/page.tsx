@@ -1,7 +1,7 @@
 'use client';
 
 import { use, useEffect, useState } from 'react';
-import { CheckCircle2, Loader2 } from 'lucide-react';
+import { CheckCircle2, Loader2, X } from 'lucide-react';
 import { createRawClient } from '@/lib/supabase/client';
 import { submitFormToSupabase } from './actions';
 
@@ -46,24 +46,42 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
   const [submitted, setSubmitted] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitError, setSubmitError] = useState<string | null>(null);
-  const [fileUploads, setFileUploads] = useState<Record<string, { name: string; url: string; mime: string | null; size: number | null }>>({});
+  const [fileUploads, setFileUploads] = useState<Record<string, { name: string; url: string; mime: string | null; size: number | null }[]>>({});
   const [uploading, setUploading] = useState<Record<string, boolean>>({});
 
-  async function handleFileUpload(fieldId: string, file: File) {
+  // Aceita VÁRIOS arquivos no mesmo campo: envia cada um pro bucket e acumula na
+  // lista daquele campo.
+  async function handleFileUpload(fieldId: string, files: FileList) {
     const supabase = createRawClient();
     setUploading((u) => ({ ...u, [fieldId]: true }));
-    const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
-    const path = `${slug}/${Date.now()}-${safeName}`;
-    const { error } = await supabase.storage.from("task-files").upload(path, file, { upsert: false });
-    if (error) {
-      console.error("[form upload]", error);
-      setSubmitError("Não foi possível enviar o arquivo. Tente novamente.");
-    } else {
+    for (const file of Array.from(files)) {
+      const safeName = file.name.replace(/[^a-zA-Z0-9._-]/g, "_");
+      const rand = Math.random().toString(36).slice(2, 7);
+      const path = `${slug}/${Date.now()}-${rand}-${safeName}`;
+      const { error } = await supabase.storage.from("task-files").upload(path, file, { upsert: false });
+      if (error) {
+        console.error("[form upload]", error);
+        setSubmitError("Não foi possível enviar um dos arquivos. Tente novamente.");
+        continue;
+      }
       const { data } = supabase.storage.from("task-files").getPublicUrl(path);
-      setFileUploads((prev) => ({ ...prev, [fieldId]: { name: file.name, url: data.publicUrl, mime: file.type || null, size: file.size } }));
-      setValues((s) => ({ ...s, [fieldId]: file.name }));
+      setFileUploads((prev) => ({
+        ...prev,
+        [fieldId]: [...(prev[fieldId] ?? []), { name: file.name, url: data.publicUrl, mime: file.type || null, size: file.size }],
+      }));
     }
     setUploading((u) => ({ ...u, [fieldId]: false }));
+  }
+
+  function removeFile(fieldId: string, idx: number) {
+    setFileUploads((prev) => {
+      const arr = [...(prev[fieldId] ?? [])];
+      arr.splice(idx, 1);
+      const next = { ...prev };
+      if (arr.length) next[fieldId] = arr;
+      else delete next[fieldId];
+      return next;
+    });
   }
   const [notFound, setNotFound] = useState(false);
   const [boardProjects, setBoardProjects] = useState<{ id: string; name: string; color: string }[]>([]);
@@ -220,7 +238,7 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
         assignee_id: meta?.assignee_id ?? null,
         form_id: slug,
         nativeExtras,
-        attachments: Object.values(fileUploads),
+        attachments: Object.values(fileUploads).flat(),
       });
     } catch (err) {
       console.error('Error creating task from form:', err);
@@ -347,15 +365,25 @@ export default function PublicFormPage({ params }: { params: Promise<{ slug: str
                   <div>
                     <input
                       type="file"
-                      required={f.required && !fileUploads[f.id]}
-                      onChange={e => { const file = e.target.files?.[0]; if (file) handleFileUpload(f.id, file); }}
+                      multiple
+                      required={f.required && !(fileUploads[f.id]?.length)}
+                      onChange={e => { const files = e.target.files; if (files && files.length) handleFileUpload(f.id, files); e.target.value = ''; }}
                       className="w-full text-sm border border-neutral-200 rounded-lg px-3 py-2 outline-none focus:border-brand-teal file:mr-3 file:rounded-md file:border-0 file:bg-brand-navy file:text-white file:text-xs file:px-3 file:py-1.5 file:cursor-pointer"
                     />
-                    {uploading[f.id] && <p className="text-xs text-neutral-400 mt-1">Enviando arquivo...</p>}
-                    {fileUploads[f.id] && (
-                      <p className="text-xs text-brand-teal mt-1 flex items-center gap-1">
-                        <CheckCircle2 size={11} /> {fileUploads[f.id].name}
-                      </p>
+                    <p className="text-[11px] text-neutral-400 mt-1">Você pode selecionar ou adicionar mais de um arquivo.</p>
+                    {uploading[f.id] && <p className="text-xs text-neutral-400 mt-1">Enviando arquivo(s)...</p>}
+                    {(fileUploads[f.id]?.length ?? 0) > 0 && (
+                      <ul className="mt-1.5 space-y-1">
+                        {fileUploads[f.id].map((file, idx) => (
+                          <li key={idx} className="text-xs text-brand-teal flex items-center gap-1.5">
+                            <CheckCircle2 size={11} className="shrink-0" />
+                            <span className="truncate flex-1">{file.name}</span>
+                            <button type="button" onClick={() => removeFile(f.id, idx)} title="Remover" className="text-neutral-400 hover:text-destructive shrink-0">
+                              <X size={12} />
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
                     )}
                   </div>
                 ) : (

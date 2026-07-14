@@ -77,13 +77,23 @@ export async function submitFormToSupabase(input: {
     if (ALLOWED_TASK_COLUMNS.has(k)) safeExtras[k] = v;
   }
 
+  // Se o formulário trouxe anexos, avisa na descrição (renderizada como HTML)
+  // que a tarefa tem arquivos na aba "Anexos".
+  const attachmentCount = input.attachments?.length ?? 0;
+  let description = input.description;
+  if (attachmentCount > 0) {
+    const label = attachmentCount === 1 ? '1 anexo' : `${attachmentCount} anexos`;
+    const notice = `<p>📎 <strong>Esta tarefa possui ${label}</strong> enviado(s) pelo formulário — veja a aba <em>Anexos</em>.</p>`;
+    description = description ? `${description}<hr>${notice}` : notice;
+  }
+
   const now = new Date().toISOString();
   const { data: created, error } = await (admin as any).from('tasks').insert({
     project_id: boardId,
     column_id: columnId,
     org_id: ORG_ID,
     title: input.title,
-    description: input.description,
+    description,
     priority: 'medium',
     position: Date.now() % 100000,
     assignee_id: assigneeId,
