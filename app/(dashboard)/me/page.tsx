@@ -193,7 +193,7 @@ export default function MePage() {
           <h1 className="text-base font-semibold text-brand-navy">
             {profile?.full_name ?? "Minha área"}
           </h1>
-          <p className="text-xs text-neutral-400">Medway · Demo</p>
+          <p className="text-xs text-neutral-400">Medway</p>
         </div>
         <div className="ml-auto flex items-center gap-3">
           <div className="text-right">
@@ -813,20 +813,40 @@ function Timesheet() {
   const reload = useCallback(async () => {
     const supabase = createClient();
     const raw = createRawClient();
-    const [{ data: entries }, { data: deliveries }] = await Promise.all([
-      supabase.from("time_entries").select("started_at, duration_minutes").eq("user_id", userId),
-      // Parts this user delivered — count their spent time on the delivery day.
+    const [{ data: entries }, { data: seqDeliveries }, { data: mySeq }, { data: deliveredTasks }] = await Promise.all([
+      supabase.from("time_entries").select("task_id, started_at, duration_minutes").eq("user_id", userId),
+      // Entregas em FILA deste usuário — horas da parte dele no dia da entrega.
       (raw as any).from("task_sequences").select("delivered_at, hours_spent").eq("user_id", userId).not("delivered_at", "is", null),
+      // Todas as filas em que ele está (p/ não recontar essas tarefas via tracked_hours).
+      (raw as any).from("task_sequences").select("task_id").eq("user_id", userId),
+      // Entregas single/paralelo: as horas ficam em tasks.tracked_hours no delivery_date.
+      (raw as any).from("tasks")
+        .select("id, tracked_hours, delivery_date")
+        .eq("assignee_id", userId).eq("status", "delivered")
+        .not("delivery_date", "is", null).gt("tracked_hours", 0),
     ]);
     const map: Record<string, number> = {};
+    const add = (dateISO: string | null | undefined, minutes: number) => {
+      if (!dateISO || minutes <= 0) return;
+      const date = dateISO.slice(0, 10);
+      map[date] = (map[date] ?? 0) + minutes;
+    };
+    // 1) Cronômetro/manual (time_entries) — e horas de timer por tarefa (p/ deduplicar).
+    const timerHoursByTask: Record<string, number> = {};
     ((entries ?? []) as any[]).forEach((e) => {
-      const date = (e.started_at as string).slice(0, 10);
-      map[date] = (map[date] ?? 0) + (e.duration_minutes ?? 0);
+      add(e.started_at, e.duration_minutes ?? 0);
+      if (e.task_id) timerHoursByTask[e.task_id] = (timerHoursByTask[e.task_id] ?? 0) + (e.duration_minutes ?? 0) / 60;
     });
-    ((deliveries ?? []) as any[]).forEach((d) => {
-      if (!d.delivered_at || !d.hours_spent) return;
-      const date = (d.delivered_at as string).slice(0, 10);
-      map[date] = (map[date] ?? 0) + Math.round((d.hours_spent as number) * 60);
+    // 2) Entregas em fila (hours_spent) no dia da entrega.
+    ((seqDeliveries ?? []) as any[]).forEach((d) => add(d.delivered_at, Math.round((d.hours_spent ?? 0) * 60)));
+    // 3) Entregas single/paralelo: tracked_hours no delivery_date, MENOS o que o
+    //    cronômetro já contou dessa tarefa (evita dupla contagem). Tarefas em fila
+    //    são puladas (já entram no passo 2).
+    const queuedTaskIds = new Set(((mySeq ?? []) as any[]).map((r) => r.task_id));
+    ((deliveredTasks ?? []) as any[]).forEach((t) => {
+      if (queuedTaskIds.has(t.id)) return;
+      const extraH = Math.max(0, (t.tracked_hours ?? 0) - (timerHoursByTask[t.id] ?? 0));
+      add(t.delivery_date, Math.round(extraH * 60));
     });
     setMinutesByDate(map);
   }, [userId]);
