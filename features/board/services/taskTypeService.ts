@@ -68,10 +68,16 @@ export const taskTypeService = {
     if (error) console.error("[taskTypeService.update]", error);
   },
 
-  async remove(id: string): Promise<void> {
+  /**
+   * Exclui um tipo. Retorna true SÓ se uma linha foi realmente apagada — assim o
+   * chamador sabe se persistiu (um delete que apaga 0 linhas, ex.: bloqueado por
+   * RLS, não some silenciosamente e o card não "volta" no próximo load).
+   */
+  async remove(id: string): Promise<boolean> {
     const supabase = createRawClient();
-    const { error } = await supabase.from("task_types").delete().eq("id", id);
-    if (error) console.error("[taskTypeService.remove]", error);
+    const { data, error } = await supabase.from("task_types").delete().eq("id", id).select("id");
+    if (error) { console.error("[taskTypeService.remove]", error); return false; }
+    return (data?.length ?? 0) > 0;
   },
 
   /**

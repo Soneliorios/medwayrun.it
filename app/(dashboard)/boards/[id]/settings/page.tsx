@@ -514,9 +514,15 @@ export default function ProjectSettingsPage({ params }: Props) {
                           <span className="text-xs text-neutral-400">h</span>
                         </div>
                         <button
-                          onClick={() => {
-                            setTaskTypes((prev) => prev.filter((t) => t.id !== type.id));
-                            taskTypeService.remove(type.id);
+                          onClick={async () => {
+                            const snapshot = taskTypes;
+                            setTaskTypes((prev) => prev.filter((t) => t.id !== type.id)); // otimista
+                            const ok = await taskTypeService.remove(type.id);
+                            if (!ok) {
+                              // Não persistiu (ex.: bloqueado) → restaura pra não "sumir e voltar".
+                              setTaskTypes(snapshot);
+                              alert("Não foi possível excluir este tipo. Tente novamente.");
+                            }
                           }}
                           className="w-6 h-6 flex items-center justify-center rounded-md text-neutral-300 hover:text-destructive hover:bg-destructive/5 transition-colors shrink-0"
                         >
