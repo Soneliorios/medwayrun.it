@@ -16,6 +16,7 @@ import type { TaskWithRelations } from "@/types";
 import { createClient, createRawClient } from "@/lib/supabase/client";
 import { taskService } from "@/features/tasks/services/taskService";
 import { userSettingsService } from "@/lib/userSettingsService";
+import { teamService } from "@/lib/teamService";
 import { useProjectStore } from "@/features/projects/store/projectStore";
 import { TaskDetail } from "@/features/tasks/components/TaskDetail";
 import { MyApprovals } from "@/features/tasks/components/ApprovalControls";
@@ -818,7 +819,8 @@ function Timesheet() {
   const userId = user?.id ?? "mock-user";
   const [weekOffset, setWeekOffset] = useState(0);
   const [goal, setGoal] = useState(8);
-  const [weeklyGoal, setWeeklyGoal] = useState<number | null>(null); // meta semanal (h); null = diária×5
+  const [weeklyGoal, setWeeklyGoal] = useState<number | null>(null); // meta semanal pessoal (h); null = diária×5
+  const [teamHours, setTeamHours] = useState<number | null>(null); // h/sem definida pelo líder no time
   const [minutesByDate, setMinutesByDate] = useState<Record<string, number>>({});
   const [adjustDate, setAdjustDate] = useState<string | null>(null);
 
@@ -872,6 +874,13 @@ function Timesheet() {
     userSettingsService.getTimesheetWeeklyGoal(user.id).then((g) => {
       if (g != null && !isNaN(g)) setWeeklyGoal(g);
     });
+    // Meta semanal definida pelo líder no time (teams.member_hours) — tem prioridade.
+    teamService.list().then((teams) => {
+      const uid = user.id;
+      const t = teams.find((tm) => (tm.member_ids ?? []).includes(uid) && tm.member_hours?.[uid] != null);
+      const h = t ? Number(t.member_hours[uid]) : null;
+      setTeamHours(h != null && !isNaN(h) ? h : null);
+    });
   }, [reload, user?.id]);
 
   function updateWeeklyGoal(v: number | null) {
@@ -902,7 +911,8 @@ function Timesheet() {
   function hoursFor(d: Date) { return (minutesByDate[dateKey(d)] ?? 0) / 60; }
 
   const weekTotal = days.reduce((s, d) => s + hoursFor(d), 0);
-  const weekGoal = weeklyGoal ?? goal * 5; // meta semanal configurada, senão diária×5
+  // Prioridade da meta semanal: time (líder) → pessoal → diária×5.
+  const weekGoal = teamHours ?? weeklyGoal ?? goal * 5;
   const weekLabel = `${days[0].toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })} – ${days[6].toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" })}`;
   const maxBarHours = Math.max(goal, ...days.map(hoursFor), 1);
 
@@ -953,13 +963,19 @@ function Timesheet() {
               className="w-12 text-xs border border-neutral-200 rounded px-1.5 py-1 outline-none focus:border-brand-teal" />
             h
           </label>
-          <label className="text-[11px] text-neutral-400 flex items-center gap-1" title="Meta semanal. Vazio = meta/dia × 5. Pode ser definida por você ou pelo líder.">
-            Meta/sem:
-            <input type="number" min={1} max={168} value={weeklyGoal ?? ""} placeholder={String(goal * 5)}
-              onChange={(e) => updateWeeklyGoal(e.target.value === "" ? null : (parseFloat(e.target.value) || null))}
-              className="w-14 text-xs border border-neutral-200 rounded px-1.5 py-1 outline-none focus:border-brand-teal" />
-            h
-          </label>
+          {teamHours != null ? (
+            <span className="text-[11px] text-neutral-400 flex items-center gap-1" title="Meta semanal definida pelo líder no seu time.">
+              Meta/sem (time): <strong className="text-neutral-600">{teamHours}h</strong>
+            </span>
+          ) : (
+            <label className="text-[11px] text-neutral-400 flex items-center gap-1" title="Meta semanal. Vazio = meta/dia × 5.">
+              Meta/sem:
+              <input type="number" min={1} max={168} value={weeklyGoal ?? ""} placeholder={String(goal * 5)}
+                onChange={(e) => updateWeeklyGoal(e.target.value === "" ? null : (parseFloat(e.target.value) || null))}
+                className="w-14 text-xs border border-neutral-200 rounded px-1.5 py-1 outline-none focus:border-brand-teal" />
+              h
+            </label>
+          )}
           <button onClick={exportCSV} className="flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-neutral-200 text-neutral-500 hover:text-brand-navy">
             <Download size={12} /> CSV
           </button>
