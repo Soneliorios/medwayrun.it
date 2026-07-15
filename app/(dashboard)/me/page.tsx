@@ -802,6 +802,17 @@ function MiniCalendar({ tasks, onOpen }: { tasks: TaskWithRelations[]; onOpen: (
 }
 
 
+// Formata duração de forma legível: < 1h mostra minutos (ex.: "1min", "45min"),
+// senão horas ("1h", "1h30"). Evita que tempos curtos virem "0.0h".
+function fmtDur(hours: number): string {
+  const totalMin = Math.round(hours * 60);
+  if (totalMin <= 0) return "0h";
+  if (totalMin < 60) return `${totalMin}min`;
+  const h = Math.floor(totalMin / 60);
+  const m = totalMin % 60;
+  return m ? `${h}h${String(m).padStart(2, "0")}` : `${h}h`;
+}
+
 function Timesheet() {
   const { user } = useAuthStore();
   const userId = user?.id ?? "mock-user";
@@ -986,7 +997,7 @@ function Timesheet() {
               <div className="flex items-end justify-center h-16 my-1.5">
                 <div className="w-5 rounded-t transition-all" style={{ height: `${Math.max(barH, hours > 0 ? 4 : 0)}px`, background: occColor }} />
               </div>
-              <p className="text-[10px] font-semibold text-neutral-700">{hours > 0 ? `${hours.toFixed(1)}h` : "—"}</p>
+              <p className="text-[10px] font-semibold text-neutral-700">{hours > 0 ? fmtDur(hours) : "—"}</p>
               <p className="text-[9px]" style={{ color: hours > 0 ? occColor : "#A0A4A8" }}>{hours > 0 ? `${occupancy}%` : ""}</p>
               <button
                 onClick={() => setAdjustDate(dateKey(day))}
@@ -1003,7 +1014,7 @@ function Timesheet() {
       <div className="mt-4 p-4 bg-white rounded-xl border border-neutral-100 flex items-center justify-between">
         <div>
           <p className="text-xs text-neutral-400">Total da semana</p>
-          <p className="text-2xl font-bold text-brand-navy">{weekTotal.toFixed(1)}h <span className="text-sm font-normal text-neutral-400">/ {weekGoal}h</span></p>
+          <p className="text-2xl font-bold text-brand-navy">{fmtDur(weekTotal)} <span className="text-sm font-normal text-neutral-400">/ {weekGoal}h</span></p>
         </div>
         <div className="w-40">
           <div className="h-2 rounded-full bg-neutral-100 overflow-hidden">
