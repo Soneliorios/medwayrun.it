@@ -60,6 +60,22 @@ export const timerService = {
     return durationMinutes;
   },
 
+  /**
+   * Soma o tempo (minutos) que ESTE usuário já registrou nesta task, a partir dos
+   * time_entries dele. É a fonte por-pessoa (o cronômetro grava um time_entry por
+   * usuário) — usada no modo paralelo, onde tracked_hours é compartilhado.
+   */
+  async userTaskMinutes(userId: string, taskId: string): Promise<number> {
+    const supabase = createRawClient();
+    const { data, error } = await supabase
+      .from("time_entries")
+      .select("duration_minutes")
+      .eq("user_id", userId)
+      .eq("task_id", taskId);
+    if (error) { console.error("[timerService.userTaskMinutes]", error); return 0; }
+    return ((data ?? []) as { duration_minutes: number | null }[]).reduce((s, e) => s + (e.duration_minutes ?? 0), 0);
+  },
+
   async getActive(userId: string) {
     const supabase = createRawClient();
     const { data } = await supabase

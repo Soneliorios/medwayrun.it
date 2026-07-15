@@ -141,12 +141,51 @@ export const sequenceService = {
       .eq("id", taskId);
   },
 
-  /** Modo paralelo: entrega única — marca TODOS os responsáveis como entregues. */
+  /**
+   * Modo PARALELO: um responsável entrega SÓ a parte dele. Grava horas/nota/link
+   * na linha dele e marca como "done". Retorna se TODOS já entregaram (aí a task
+   * pode ser finalizada). Não mexe nas partes dos outros.
+   */
+  async deliverParallelPart(
+    taskId: string,
+    userId: string,
+    part?: { hours?: number; note?: string | null; link?: string | null }
+  ): Promise<{ allDone: boolean }> {
+    const sb = createRawClient();
+    const rows = await this.list(taskId);
+    const mine = rows.find((r) => r.user_id === userId && r.status !== "done");
+    if (mine) {
+      await (sb as any).from("task_sequences").update({
+        status: "done",
+        delivered_at: new Date().toISOString(),
+        hours_spent: part?.hours ?? mine.hours_spent ?? 0,
+        delivery_note: part?.note ?? null,
+        delivery_link: part?.link ?? null,
+      }).eq("id", mine.id);
+    }
+    const after = await this.list(taskId);
+    return { allDone: after.length > 0 && after.every((r) => r.status === "done") };
+  },
+
+  /** Modo PARALELO: reabre SÓ a parte de um responsável (volta a "active", limpa a entrega dele). */
+  async reopenParallelPart(taskId: string, userId: string): Promise<void> {
+    const sb = createRawClient();
+    const rows = await this.list(taskId);
+    const mine = rows.find((r) => r.user_id === userId);
+    if (!mine) return;
+    await (sb as any).from("task_sequences").update({
+      status: "active", delivered_at: null, hours_spent: null, delivery_note: null, delivery_link: null,
+    }).eq("id", mine.id);
+  },
+
+  /** Modo paralelo: marca como entregue quem ainda NÃO entregou (não re-carimba o
+   *  delivered_at de quem já entregou — preserva a data/horas reais de cada parte). */
   async markAllDone(taskId: string): Promise<void> {
     const sb = createRawClient();
     await (sb as any).from("task_sequences")
       .update({ status: "done", delivered_at: new Date().toISOString() })
-      .eq("task_id", taskId);
+      .eq("task_id", taskId)
+      .neq("status", "done");
   },
 
   /** Modo paralelo: inverso do markAllDone — reativa todos ao reabrir a task. */

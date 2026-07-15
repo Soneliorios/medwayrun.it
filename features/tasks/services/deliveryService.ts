@@ -36,8 +36,17 @@ export const deliveryService = {
       // Passou a vez ao próximo responsável — a task continua aberta.
       if (!finished) return { finalized: false };
     } else if (parallel) {
-      // Modo paralelo: entrega única — marca TODOS os responsáveis como entregues.
-      await sequenceService.markAllDone(taskId);
+      // Modo paralelo (per-person): concretiza SÓ a parte de quem estacionou a
+      // entrega; a task só finaliza quando TODOS já entregaram.
+      if (payload?.userId) {
+        const { allDone } = await sequenceService.deliverParallelPart(taskId, payload.userId, {
+          hours: payload.hours, note: payload.note ?? null, link: payload.link ?? null,
+        });
+        if (!allDone) return { finalized: false }; // segue aberta até o último entregar
+      } else {
+        // Legado (payload sem userId): entrega única marca todos.
+        await sequenceService.markAllDone(taskId);
+      }
     }
 
     // Único responsável, último da fila OU paralelo → entrega total.
@@ -45,9 +54,10 @@ export const deliveryService = {
       status: "delivered",
       delivery_date: new Date().toISOString(),
     };
-    // Sem fila ou paralelo, o resumo (horas/link/nota) fica no nível da task; na
-    // fila sequencial cada parte guarda o seu (via sequenceService.advance).
-    if (queue.length === 0 || parallel) {
+    // Só o responsável ÚNICO guarda o resumo (horas/link/nota) no nível da task.
+    // Fila e paralelo guardam por parte (task_sequences) — não sobrescreve o
+    // tracked_hours compartilhado (que é a soma acumulada).
+    if (queue.length === 0) {
       if (typeof payload?.hours === "number") patch.tracked_hours = Math.round(payload.hours * 3600) / 3600;
       if (payload?.link != null) patch.delivery_link = payload.link || null;
       if (payload?.note != null) patch.delivery_note = payload.note || null;

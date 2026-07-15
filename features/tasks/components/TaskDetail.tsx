@@ -69,6 +69,7 @@ import { tagsService, type Label } from "../services/tagsService";
 import { useBoardStore } from "@/features/board/store/boardStore";
 import { useAuthStore } from "@/features/auth/store/authStore";
 import { useTimerStore } from "@/features/timer/store/timerStore";
+import { timerService } from "@/features/timer/services/timerService";
 import { useProjectStore } from "@/features/projects/store/projectStore";
 import { CommentList } from "./CommentList";
 import { RichTextEditor } from "./RichTextEditor";
@@ -314,9 +315,19 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
   // A responsible who already delivered their part (can reopen it at any time).
   // Só no modo sequencial — no paralelo a entrega é única (usa "Entregue · Reabrir").
   const myDoneRow = !isParallel ? (queue.find((r) => r.status === "done" && r.user_id === user?.id) ?? null) : null;
+  // Paralelo: a linha do próprio usuário e se ele já entregou a parte dele.
+  const myParallelRow = isParallel ? (queue.find((r) => r.user_id === user?.id) ?? null) : null;
+  const myParallelDelivered = myParallelRow?.status === "done";
 
   // "part" = advance the queue via the same delivery popup; "full" = deliver task
   const [deliveryMode, setDeliveryMode] = useState<"full" | "part">("full");
+
+  // Tempo próprio do usuário nesta task (soma dos time_entries dele). Fonte por
+  // pessoa usada no modo PARALELO, onde tracked_hours é compartilhado.
+  const [myTaskMinutes, setMyTaskMinutes] = useState(0);
+  useEffect(() => {
+    if (user?.id) timerService.userTaskMinutes(user.id, taskId).then(setMyTaskMinutes);
+  }, [user?.id, taskId]);
 
   // If the timer is running for this task, stop it first so its elapsed time is
   // flushed into tracked_hours (and it doesn't keep running / double-count after
@@ -331,6 +342,8 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
       setTask((t) => (t ? ({ ...t, tracked_hours: data.tracked_hours } as TaskWithRelations) : t));
       store.updateTask(taskId, { tracked_hours: data.tracked_hours } as any);
     }
+    // A sessão foi gravada num time_entry → atualiza o tempo próprio (paralelo).
+    setMyTaskMinutes(await timerService.userTaskMinutes(user.id, taskId));
   }
 
   // Ponto único de entrega (parte OU total). Decide entre: entregar normalmente,
@@ -371,6 +384,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
     const myName = orgProfiles.find((p) => p.id === user?.id)?.full_name ?? null;
     const ok = await approvalService.setDeliverOnApprove(approval.id, {
       mode, hours: opts.hours, note: opts.note || null, link: opts.link || null,
+      userId: user?.id ?? null, // paralelo: concretiza só a parte de quem estacionou
     });
     if (!ok) { setParkConfirm(null); return; } // ex.: migração ainda não aplicada
     if (!alreadyParked) {
@@ -392,6 +406,16 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
   async function handleDeliverMyPart(opts?: { hours?: number; link?: string; note?: string }) {
     if (!task) return;
     await flushActiveTimer();
+    // PARALELO: cada responsável entrega SÓ a parte dele (grava as horas próprias).
+    // A task só é finalizada quando TODOS entregarem.
+    if (isParallel && user?.id) {
+      const { allDone } = await sequenceService.deliverParallelPart(taskId, user.id, {
+        hours: opts?.hours, note: opts?.note || null, link: opts?.link || null,
+      });
+      await loadQueue();
+      if (allDone) await handleDeliver(opts); // finaliza (status/coluna/automações)
+      return;
+    }
     // Record this member's part (time delta + what they delivered)
     const { finished, nextUserId } = await sequenceService.advance(taskId, {
       hours: opts?.hours,
@@ -417,10 +441,15 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
     // for the full delivery, prefill with the task's total tracked time.
     let totalSec: number;
     if (mode === "part") {
-      const active = queue.find((r) => r.status === "active") ?? queue.find((r) => r.status !== "done");
-      const baseline = active?.part_start_hours ?? 0;
-      const partHours = Math.max(0, (task.tracked_hours ?? 0) - baseline);
-      totalSec = Math.round(partHours * 3600) + elapsed;
+      if (isParallel) {
+        // Paralelo: tempo próprio (time_entries do usuário) + sessão ao vivo.
+        totalSec = Math.round(myTaskMinutes * 60) + elapsed;
+      } else {
+        const active = queue.find((r) => r.status === "active") ?? queue.find((r) => r.status !== "done");
+        const baseline = active?.part_start_hours ?? 0;
+        const partHours = Math.max(0, (task.tracked_hours ?? 0) - baseline);
+        totalSec = Math.round(partHours * 3600) + elapsed;
+      }
     } else {
       totalSec = Math.round((task.tracked_hours ?? 0) * 3600) + elapsed;
     }
@@ -613,7 +642,10 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
     const canTime = task?.assignee_id === user.id || (isParallel && queue.some((r) => r.user_id === user.id));
     if (task && !canTime) return;
     if (isTimerActive) {
-      await timerStore.stopTimer(user.id);
+      // Usa flushActiveTimer (não o store direto) para também atualizar
+      // tracked_hours E myTaskMinutes — senão o tempo próprio (paralelo) fica
+      // defasado e o popup de entrega prefixa horas a menos.
+      await flushActiveTimer();
     } else {
       if (!(task as any)?.start_date) {
         await handleFieldUpdate("start_date", new Date().toISOString().split("T")[0]);
@@ -652,9 +684,10 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
     // accumulated and each part's time lives on task_sequences.
     // Split guaranteed columns from the newer link/note columns so a pending
     // migration (supabase_task_delivery_details.sql) can't block the whole save.
-    // No modo paralelo a entrega é ÚNICA (como o responsável único): o resumo
-    // (horas/link/nota) fica no nível da task, não por parte.
-    const taskLevelSummary = queue.length === 0 || isParallel;
+    // Só o responsável ÚNICO guarda o resumo (horas) no nível da task. No paralelo
+    // e na fila, as horas ficam POR PARTE (task_sequences.hours_spent) — não
+    // sobrescreve tracked_hours (que é a soma acumulada).
+    const taskLevelSummary = queue.length === 0;
     const basePatch: Record<string, unknown> = { delivery_date: new Date().toISOString() };
     if (taskLevelSummary && typeof opts?.hours === "number") {
       basePatch.tracked_hours = Math.round(opts.hours * 3600) / 3600;
@@ -723,6 +756,26 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
   // and those pushed back are notified they must wait longer.
   async function handleReopenMyPart() {
     if (!task || !user?.id) return;
+    // PARALELO: reabre só a parte do próprio usuário. Se a task estava toda
+    // entregue, também reabre a task (handleReopen reativa os demais).
+    if (isParallel) {
+      await sequenceService.reopenParallelPart(taskId, user.id);
+      // Se a task estava toda entregue, volta a aberta e sai da coluna final —
+      // SEM reativar/limpar as partes dos OUTROS (só a minha foi reaberta acima).
+      if (isDelivered) {
+        await handleFieldUpdate("status", "open");
+        const sorted = [...boardColumns].sort((a, b) => a.position - b.position);
+        const targetCol = sorted.find((c) => c.name.toLowerCase().includes("revis")) ?? sorted[Math.max(sorted.length - 2, 0)];
+        if (targetCol && targetCol.id !== task.column_id) {
+          const pos = (task as any).position ?? 1000;
+          setTask((t) => (t ? { ...t, column_id: targetCol.id } : t));
+          store.moveTask(taskId, targetCol.id, pos);
+          taskService.update(taskId, { column_id: targetCol.id } as any).catch(() => {});
+        }
+      }
+      await loadQueue();
+      return;
+    }
     const myRow = queue.find((q) => q.user_id === user.id && q.status === "done");
     if (!myRow) return;
     const { affectedUserIds } = await sequenceService.reopenFrom(taskId, myRow.id);
@@ -1037,11 +1090,14 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
     if (queueRemaining > 0 && !isParallel) {
       // Fila sequencial: só o responsável atual entrega a parte.
       if (isActiveResponsible) openDeliveryDialog("part");
+    } else if (isParallel) {
+      // Paralelo: cada responsável entrega a PRÓPRIA parte.
+      if (amResponsible && !myParallelDelivered) openDeliveryDialog("part");
     } else if (canActOnTask) {
-      // Paralelo (ou sem fila): entrega única.
+      // Sem fila (responsável único): entrega total.
       openDeliveryDialog("full");
     }
-  }, [autoOpenDelivery, task, queueLoaded, isDelivered, queueRemaining, isParallel, isActiveResponsible, canActOnTask]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [autoOpenDelivery, task, queueLoaded, isDelivered, queueRemaining, isParallel, isActiveResponsible, amResponsible, myParallelDelivered, canActOnTask]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // ── Render ─────────────────────────────────────────────────────────────────
 
@@ -1103,12 +1159,19 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                   >
                     {isTimerActive ? <Square size={12} /> : <Play size={12} />}
                     {(() => {
-                      // Mostra SÓ o tempo do responsável ATUAL: desconta o que já
-                      // estava registrado quando a vez dele começou (part_start_hours),
-                      // então o tempo de quem veio antes na fila não aparece pra ele.
-                      const activePart = queue.find((r) => r.status === "active") ?? queue.find((r) => r.status !== "done");
-                      const baseline = activePart?.part_start_hours ?? 0;
-                      const myLoggedSec = Math.max(0, Math.round(((task.tracked_hours ?? 0) - baseline) * 3600));
+                      // Mostra SÓ o tempo do responsável ATUAL.
+                      let myLoggedSec: number;
+                      if (isParallel) {
+                        // Paralelo: tempo próprio vem dos time_entries do usuário
+                        // (tracked_hours é compartilhado entre os simultâneos).
+                        myLoggedSec = Math.round(myTaskMinutes * 60);
+                      } else {
+                        // Fila/único: desconta o baseline (part_start_hours) de quando
+                        // a vez dele começou — o tempo de quem veio antes não aparece.
+                        const activePart = queue.find((r) => r.status === "active") ?? queue.find((r) => r.status !== "done");
+                        const baseline = activePart?.part_start_hours ?? 0;
+                        myLoggedSec = Math.max(0, Math.round(((task.tracked_hours ?? 0) - baseline) * 3600));
+                      }
                       return formatElapsed(isTimerActive ? myLoggedSec + elapsed : myLoggedSec);
                     })()}
                   </button>
@@ -1126,7 +1189,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                   <RotateCcw size={12} />
                   Reabrir minha parte
                 </button>
-              ) : isDelivered ? (
+              ) : isDelivered && !isParallel ? (
                 <button
                   onClick={canActOnTask ? handleReopen : undefined}
                   title={canActOnTask ? "Clique para reabrir a tarefa" : "Somente o responsável pode reabrir"}
@@ -1140,6 +1203,33 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                   <CheckCircle2 size={12} />
                   Entregue · Reabrir
                 </button>
+              ) : isParallel ? (
+                // PARALELO → cada responsável entrega/reabre a PRÓPRIA parte.
+                amResponsible ? (
+                  myParallelDelivered ? (
+                    <button
+                      onClick={handleReopenMyPart}
+                      title="Reabrir sua parte (sua entrega volta a pendente)"
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold transition-all border bg-green-100 text-green-700 border-green-200 hover:bg-amber-100 hover:text-amber-700 hover:border-amber-300"
+                    >
+                      <RotateCcw size={12} />
+                      Reabrir minha parte
+                    </button>
+                  ) : (
+                    <button
+                      onClick={() => openDeliveryDialog("part")}
+                      title="Entregar a sua parte — a tarefa conclui quando todos entregarem"
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-semibold border border-brand-teal/50 text-brand-teal hover:bg-brand-teal/5 transition-all"
+                    >
+                      <CheckCircle2 size={12} />
+                      Entregar minha parte
+                    </button>
+                  )
+                ) : (
+                  <span className="text-[11px] text-neutral-400 px-1" title="Neste modo cada responsável entrega a própria parte">
+                    Entrega individual por responsável
+                  </span>
+                )
               ) : queueRemaining > 0 && !isParallel ? (
                 // Fila SEQUENCIAL → só o responsável atual entrega a sua parte.
                 isActiveResponsible ? (

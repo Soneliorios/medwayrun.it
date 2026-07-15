@@ -7,6 +7,8 @@ export interface DeliverPayload {
   hours?: number;
   note?: string | null;
   link?: string | null;
+  // Quem estacionou a entrega (necessário no paralelo: entrega só a parte dele).
+  userId?: string | null;
 }
 
 export interface TaskApproval {
