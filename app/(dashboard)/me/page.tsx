@@ -807,6 +807,7 @@ function Timesheet() {
   const userId = user?.id ?? "mock-user";
   const [weekOffset, setWeekOffset] = useState(0);
   const [goal, setGoal] = useState(8);
+  const [weeklyGoal, setWeeklyGoal] = useState<number | null>(null); // meta semanal (h); null = diária×5
   const [minutesByDate, setMinutesByDate] = useState<Record<string, number>>({});
   const [adjustDate, setAdjustDate] = useState<string | null>(null);
 
@@ -857,7 +858,15 @@ function Timesheet() {
     userSettingsService.getTimesheetGoal(user.id).then((g) => {
       if (g != null && !isNaN(g)) setGoal(g);
     });
+    userSettingsService.getTimesheetWeeklyGoal(user.id).then((g) => {
+      if (g != null && !isNaN(g)) setWeeklyGoal(g);
+    });
   }, [reload, user?.id]);
+
+  function updateWeeklyGoal(v: number | null) {
+    setWeeklyGoal(v);
+    if (user?.id) userSettingsService.setTimesheetWeeklyGoal(user.id, v);
+  }
 
   function updateGoal(v: number) {
     setGoal(v);
@@ -882,7 +891,7 @@ function Timesheet() {
   function hoursFor(d: Date) { return (minutesByDate[dateKey(d)] ?? 0) / 60; }
 
   const weekTotal = days.reduce((s, d) => s + hoursFor(d), 0);
-  const weekGoal = goal * 5; // weekdays
+  const weekGoal = weeklyGoal ?? goal * 5; // meta semanal configurada, senão diária×5
   const weekLabel = `${days[0].toLocaleDateString("pt-BR", { day: "2-digit", month: "short" })} – ${days[6].toLocaleDateString("pt-BR", { day: "2-digit", month: "short", year: "numeric" })}`;
   const maxBarHours = Math.max(goal, ...days.map(hoursFor), 1);
 
@@ -931,6 +940,13 @@ function Timesheet() {
             <input type="number" min={1} max={24} value={goal}
               onChange={(e) => updateGoal(parseFloat(e.target.value) || 8)}
               className="w-12 text-xs border border-neutral-200 rounded px-1.5 py-1 outline-none focus:border-brand-teal" />
+            h
+          </label>
+          <label className="text-[11px] text-neutral-400 flex items-center gap-1" title="Meta semanal. Vazio = meta/dia × 5. Pode ser definida por você ou pelo líder.">
+            Meta/sem:
+            <input type="number" min={1} max={168} value={weeklyGoal ?? ""} placeholder={String(goal * 5)}
+              onChange={(e) => updateWeeklyGoal(e.target.value === "" ? null : (parseFloat(e.target.value) || null))}
+              className="w-14 text-xs border border-neutral-200 rounded px-1.5 py-1 outline-none focus:border-brand-teal" />
             h
           </label>
           <button onClick={exportCSV} className="flex items-center gap-1 text-xs px-2 py-1 rounded-md border border-neutral-200 text-neutral-500 hover:text-brand-navy">

@@ -24,6 +24,18 @@ export interface TaskApproval {
   deliver_payload?: DeliverPayload | null;
 }
 
+/**
+ * Remove aprovações cujo TASK foi apagado (soft-delete deleted_at, ou hard-delete):
+ * uma tarefa apagada não pode continuar aparecendo na caixa de aprovações.
+ */
+async function keepLiveTasks(sb: any, rows: TaskApproval[]): Promise<TaskApproval[]> {
+  if (!rows.length) return rows;
+  const ids = [...new Set(rows.map((r) => r.task_id).filter(Boolean))];
+  const { data: live } = await sb.from("tasks").select("id").in("id", ids).is("deleted_at", null);
+  const liveSet = new Set(((live ?? []) as { id: string }[]).map((t) => t.id));
+  return rows.filter((r) => liveSet.has(r.task_id));
+}
+
 export const approvalService = {
   /** Latest approval + full history for a task. */
   async getForTask(taskId: string): Promise<TaskApproval[]> {
@@ -46,7 +58,7 @@ export const approvalService = {
       .eq("approver_id", approverId)
       .order("requested_at", { ascending: false });
     if (error) { console.error("[approvalService.listForApprover]", error); return []; }
-    return (data ?? []) as TaskApproval[];
+    return keepLiveTasks(sb, (data ?? []) as TaskApproval[]);
   },
 
   /** Everything a user is involved in — as approver OR as requester. */
@@ -58,7 +70,7 @@ export const approvalService = {
       .or(`approver_id.eq.${userId},requested_by.eq.${userId}`)
       .order("requested_at", { ascending: false });
     if (error) { console.error("[approvalService.listForUser]", error); return []; }
-    return (data ?? []) as TaskApproval[];
+    return keepLiveTasks(sb, (data ?? []) as TaskApproval[]);
   },
 
   async request(input: { taskId: string; taskTitle: string; approverId: string; requestedBy: string | null }): Promise<TaskApproval | null> {
