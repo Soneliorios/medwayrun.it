@@ -44,8 +44,14 @@ export const useTimerStore = create<TimerState>()(
     clearActive: () =>
       set({ activeTaskId: null, startedAt: null, elapsed: 0, isRunning: false }),
 
+    // Recalcula a partir do started_at (não soma +1) — assim não acumula erro
+    // quando o setInterval é estrangulado/pausado (aba em segundo plano); ao
+    // voltar pra aba o tempo "salta" para o valor correto em vez de ficar parado.
     tick: () =>
-      set((s) => s.isRunning ? { elapsed: s.elapsed + 1 } : s),
+      set((s) => {
+        if (!s.isRunning || !s.startedAt) return s;
+        return { elapsed: Math.max(0, Math.floor((Date.now() - s.startedAt.getTime()) / 1000)) };
+      }),
 
     startTimer: async (userId, taskId) => {
       const { started_at } = await timerService.start(userId, taskId);

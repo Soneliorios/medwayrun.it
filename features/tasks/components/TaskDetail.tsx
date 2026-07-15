@@ -1102,9 +1102,15 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                     )}
                   >
                     {isTimerActive ? <Square size={12} /> : <Play size={12} />}
-                    {isTimerActive
-                      ? formatElapsed(elapsed)
-                      : formatHours(task.tracked_hours ?? 0)}
+                    {(() => {
+                      // Mostra SÓ o tempo do responsável ATUAL: desconta o que já
+                      // estava registrado quando a vez dele começou (part_start_hours),
+                      // então o tempo de quem veio antes na fila não aparece pra ele.
+                      const activePart = queue.find((r) => r.status === "active") ?? queue.find((r) => r.status !== "done");
+                      const baseline = activePart?.part_start_hours ?? 0;
+                      const myLoggedSec = Math.max(0, Math.round(((task.tracked_hours ?? 0) - baseline) * 3600));
+                      return formatElapsed(isTimerActive ? myLoggedSec + elapsed : myLoggedSec);
+                    })()}
                   </button>
                 );
               })()}
