@@ -87,6 +87,14 @@ export default function AdminPage() {
   const [activeTab, setActiveTab] = useState<AdminTab>("overview");
   const [openPicker, setOpenPicker] = useState<string | null>(null);
 
+  // Notificação de "novo usuário pendente" leva para /admin#users → já abre a aba
+  // de aprovação (só faz sentido para superadmin, dono da aba Usuários).
+  useEffect(() => {
+    if (typeof window !== "undefined" && window.location.hash === "#users" && isSuperAdmin) {
+      setActiveTab("users");
+    }
+  }, [isSuperAdmin]);
+
   // ── Supabase mode: users loaded from API ──────────────────────────────────────
   const [sbUsers, setSbUsers] = useState<SupabaseOrgUser[]>([]);
   const [sbUsersLoading, setSbUsersLoading] = useState(true);

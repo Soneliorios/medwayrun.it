@@ -420,6 +420,11 @@ export function TopNav() {
                       if (n.task_id) {
                         setNotifOpen(false);
                         router.push(`/tasks/${n.task_id}`);
+                      } else if (n.type === "user_pending") {
+                        // Aprovação de novo usuário → painel admin, aba Usuários
+                        // (o #users faz a página abrir direto na aba de aprovação).
+                        setNotifOpen(false);
+                        router.push("/admin#users");
                       }
                     }}
                   />
@@ -553,6 +558,7 @@ const NOTIF_ICONS: Record<AppNotification["type"], string> = {
   approval_requested: "🛡️",
   approval_resolved: "⚖️",
   capacity_overflow: "⚡",
+  user_pending: "🆕",
 };
 
 function NotifItem({

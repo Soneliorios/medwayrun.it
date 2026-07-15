@@ -5,7 +5,7 @@ import { subscribeWithSelector } from "zustand/middleware";
 
 export interface AppNotification {
   id: string;
-  type: "mention" | "task_assigned" | "task_delivered" | "comment" | "approval_requested" | "approval_resolved" | "capacity_overflow";
+  type: "mention" | "task_assigned" | "task_delivered" | "comment" | "approval_requested" | "approval_resolved" | "capacity_overflow" | "user_pending";
   content: string;
   task_id: string | null;
   from_user_id: string | null;
@@ -41,12 +41,17 @@ export const useNotificationStore = create<NotificationState>()(
       })),
 
     markRead: (id) =>
-      set((s) => ({
-        notifications: s.notifications.map((n) =>
-          n.id === id ? { ...n, read_at: new Date().toISOString() } : n
-        ),
-        unreadCount: Math.max(0, s.unreadCount - 1),
-      })),
+      set((s) => {
+        // Só decrementa se a notificação estava mesmo não lida (evita subcontar
+        // ao reclicar uma já lida, ex.: reabrir um "novo usuário pendente").
+        const wasUnread = s.notifications.some((n) => n.id === id && !n.read_at);
+        return {
+          notifications: s.notifications.map((n) =>
+            n.id === id ? { ...n, read_at: n.read_at ?? new Date().toISOString() } : n
+          ),
+          unreadCount: wasUnread ? Math.max(0, s.unreadCount - 1) : s.unreadCount,
+        };
+      }),
 
     markAllRead: () =>
       set((s) => ({
