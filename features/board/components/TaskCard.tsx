@@ -393,6 +393,8 @@ export const TaskCard = memo(TaskCardInner, (prev, next) => {
     prev.task.priority === next.task.priority &&
     prev.task.due_date === next.task.due_date &&
     prev.task.status === next.task.status &&
+    (prev.task as any).task_type === (next.task as any).task_type &&
+    (prev.task as any).type_id === (next.task as any).type_id &&
     prev.task.column_id === next.task.column_id &&
     prev.task.assignee_id === next.task.assignee_id &&
     prev.task._commentCount === next.task._commentCount &&
