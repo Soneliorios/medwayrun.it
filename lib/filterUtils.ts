@@ -145,8 +145,16 @@ export function taskMatchesFilters(
   if (filters.isOverdue && !isOverdue(task, now)) return false;
   if (filters.isRunning && ctx.activeTimerTaskId !== task.id) return false;
   if (filters.hasOpenParts) {
-    const mine = task.assignees?.find((a: any) => (a?.user_id ?? a?.profile?.id) === ctx.currentUserId);
-    if (!mine || (mine as any).delivered_at) return false;
+    // Os responsáveis (fila/paralelo) ficam em task.sequence — não em task.assignees
+    // (que não vem populado no card). "Parte aberta" = minha linha ainda não done.
+    const seq = (task as any).sequence as any[] | undefined;
+    if (seq && seq.length) {
+      const myRow = seq.find((s: any) => s?.user_id === ctx.currentUserId);
+      if (!myRow || myRow.status === "done" || myRow.delivered_at) return false;
+    } else {
+      // Responsável único (sem fila): sou o responsável e a task não foi entregue.
+      if (task.assignee_id !== ctx.currentUserId || task.status === "delivered") return false;
+    }
   }
 
   // Board projects (internal)

@@ -166,6 +166,16 @@ export function useBoardDnd() {
       const sortedCols = [...store.columns].sort((a, b) => a.position - b.position);
       const doneCol = store.columns.find((c) => (c as any).is_done_column) ?? sortedCols[sortedCols.length - 1];
       const movedTask = column.tasks.find((t) => t.id === activeId);
+      // Arrastar uma task ENTREGUE para FORA do Concluído = reabrir: volta o status
+      // para "open" (senão o card continua com a opacidade/estilo de entregue).
+      const reopening = (movedTask as any)?.status === "delivered" && !!doneCol && column.id !== doneCol.id;
+      const reopenIfNeeded = async () => {
+        if (!reopening) return;
+        store.updateTask(activeId, { status: "open" } as any); // otimista
+        await supabase.from("tasks").update({ status: "open" }).eq("id", activeId).then(({ error }: { error: unknown }) => {
+          if (error) console.error("[useBoardDnd] reopen status", error);
+        });
+      };
       if (stageChanged && doneCol && column.id === doneCol.id && (movedTask as any)?.status !== "delivered") {
         if (snapshotRef.current) store.setColumns(snapshotRef.current); // desfaz o move otimista
         window.dispatchEvent(new CustomEvent("open-task-delivery", { detail: { taskId: activeId } }));
@@ -200,6 +210,7 @@ export function useBoardDnd() {
             }
           }
         );
+        if (ok1) await reopenIfNeeded();
         if (ok1 && stageChanged) runAutomations({ type: "stage_entered" }, activeId);
         return;
       }
@@ -217,6 +228,7 @@ export function useBoardDnd() {
           }
         }
       );
+      if (ok2) await reopenIfNeeded();
       if (ok2 && stageChanged) runAutomations({ type: "stage_entered" }, activeId);
     },
     [store, supabase]
