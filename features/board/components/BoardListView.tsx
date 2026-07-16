@@ -567,7 +567,7 @@ function CellContent({ colKey, task }: { colKey: ColKey; task: ListTask }) {
         <div className="flex items-center gap-2">
           <span className="w-1 h-7 rounded-full shrink-0" style={{ background: priorityColor, opacity: 0.7 }} />
           {task.is_urgent && <span className="shrink-0">🚩</span>}
-          <span className={cn("text-sm text-neutral-800 font-medium line-clamp-1", task.status === "delivered" && "line-through text-neutral-400")}>
+          <span className={cn("text-sm text-neutral-800 font-medium break-words min-w-0", task.status === "delivered" && "line-through text-neutral-400")}>
             {task.title}
           </span>
         </div>

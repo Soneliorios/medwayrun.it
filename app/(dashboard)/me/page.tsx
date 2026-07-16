@@ -502,8 +502,8 @@ function TaskRow({ task: taskProp, onOpen, onChanged, stage }: { task: TaskWithR
         </button>
 
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 min-w-0">
-            <p className={cn("text-sm font-medium text-brand-navy truncate", isDelivered && "line-through text-neutral-400")}>
+          <div className="flex items-start gap-2 flex-wrap min-w-0">
+            <p className={cn("text-sm font-medium text-brand-navy break-words min-w-0", isDelivered && "line-through text-neutral-400")}>
               {task.title}
             </p>
             {proj && (
