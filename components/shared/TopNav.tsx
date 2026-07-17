@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/features/auth/store/authStore";
+import { userSettingsService } from "@/lib/userSettingsService";
 import { useSignOut } from "@/features/auth/hooks/useAuth";
 import { useRole } from "@/features/auth/hooks/useRole";
 import { ROLE_LABELS, ROLE_COLORS } from "@/lib/roles";
@@ -87,6 +88,7 @@ export function TopNav() {
   const [empresaOpen, setEmpresaOpen] = useState(false);
   const [avatarOpen, setAvatarOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
+  const [notifySlack, setNotifySlack] = useState(false); // espelhar notificações no Slack
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQuery, setSearchQuery] = useState("");
   const [debounced, setDebounced] = useState("");
@@ -97,6 +99,17 @@ export function TopNav() {
   const notifRef = useRef<HTMLDivElement>(null);
   const historyRef = useRef<HTMLDivElement>(null);
   const newTaskRef = useRef<HTMLDivElement>(null);
+
+  // Preferência "receber no Slack" do usuário atual.
+  useEffect(() => {
+    if (profile?.id) userSettingsService.getNotifySlack(profile.id).then(setNotifySlack);
+  }, [profile?.id]);
+
+  function toggleNotifySlack() {
+    const next = !notifySlack;
+    setNotifySlack(next);
+    if (profile?.id) userSettingsService.setNotifySlack(profile.id, next);
+  }
 
   // Debounce search (300ms)
   useEffect(() => {
@@ -400,6 +413,17 @@ export function TopNav() {
                 </button>
               )}
             </div>
+            {/* Preferência: espelhar as notificações no Slack do usuário */}
+            <button
+              onClick={toggleNotifySlack}
+              title="Se ativado, você também recebe estas notificações no seu Slack (DM)"
+              className="w-full flex items-center justify-between gap-2 px-4 py-2.5 border-b border-neutral-100 hover:bg-neutral-50 transition-colors text-left"
+            >
+              <span className="text-xs text-neutral-600">🔔 Receber também no Slack</span>
+              <span className={cn("relative w-8 h-4 rounded-full transition-colors shrink-0", notifySlack ? "bg-brand-teal" : "bg-neutral-200")}>
+                <span className={cn("absolute top-0.5 w-3 h-3 rounded-full bg-white transition-all", notifySlack ? "left-4" : "left-0.5")} />
+              </span>
+            </button>
             {/* List */}
             <div className="max-h-80 overflow-y-auto">
               {notifications.length === 0 ? (

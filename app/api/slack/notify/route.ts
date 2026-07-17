@@ -61,10 +61,12 @@ export async function POST(request: Request) {
   const token = process.env.SLACK_BOT_TOKEN;
   if (!token) return NextResponse.json({ ok: false, error: "not_configured" });
 
-  let payload: { userIds?: string[]; text?: string };
+  let payload: { userIds?: string[]; text?: string; respectPref?: boolean };
   try { payload = await request.json(); } catch { return NextResponse.json({ ok: false, error: "bad_request" }, { status: 400 }); }
   const userIds = [...new Set((payload.userIds ?? []).filter(Boolean))];
   const text = (payload.text ?? "").toString().slice(0, 3000);
+  // respectPref = espelho de notificação: só manda pra quem ATIVOU "receber no Slack".
+  const respectPref = payload.respectPref === true;
   if (!userIds.length || !text) return NextResponse.json({ ok: false, error: "missing_params" }, { status: 400 });
 
   const admin = createClient(process.env.NEXT_PUBLIC_SUPABASE_URL!, process.env.SUPABASE_SERVICE_ROLE_KEY!);
@@ -80,6 +82,10 @@ export async function POST(request: Request) {
   const failed: string[] = [];
   for (const uid of userIds) {
     try {
+      if (respectPref) {
+        const { data: pref } = await admin.from("user_settings").select("notify_slack").eq("user_id", uid).maybeSingle();
+        if (!pref || (pref as { notify_slack?: boolean }).notify_slack !== true) continue; // não optou pelo Slack
+      }
       const { data: got } = await admin.auth.admin.getUserById(uid);
       const email = got?.user?.email;
       if (!email) { failed.push(uid); continue; }

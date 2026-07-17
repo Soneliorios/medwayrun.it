@@ -47,4 +47,24 @@ export const userSettingsService = {
       .upsert({ user_id: userId, weekly_goal_hours: hours, updated_at: new Date().toISOString() });
     if (error) console.error("[userSettingsService.setTimesheetWeeklyGoal]", error);
   },
+
+  /** Preferência: também espelhar as notificações do app no Slack do usuário. */
+  async getNotifySlack(userId: string): Promise<boolean> {
+    const sb = createRawClient();
+    const { data, error } = await (sb as any)
+      .from("user_settings")
+      .select("notify_slack")
+      .eq("user_id", userId)
+      .maybeSingle();
+    if (error) { console.error("[userSettingsService.getNotifySlack]", error); return false; }
+    return (data?.notify_slack as boolean) ?? false;
+  },
+
+  async setNotifySlack(userId: string, on: boolean): Promise<void> {
+    const sb = createRawClient();
+    const { error } = await (sb as any)
+      .from("user_settings")
+      .upsert({ user_id: userId, notify_slack: on, updated_at: new Date().toISOString() });
+    if (error) console.error("[userSettingsService.setNotifySlack]", error);
+  },
 };

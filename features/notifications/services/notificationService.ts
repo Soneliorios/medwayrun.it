@@ -41,7 +41,18 @@ export const notificationService = {
       task_id: input.taskId ?? null,
       from_user_id: input.fromUserId ?? null,
     });
-    if (error) console.error("[notificationService.create]", error);
+    if (error) { console.error("[notificationService.create]", error); return; }
+    // Espelho opcional no Slack: a rota só envia se o DESTINATÁRIO ativou a
+    // preferência (respectPref). Fire-and-forget — nunca bloqueia a notificação.
+    try {
+      const origin = typeof window !== "undefined" ? window.location.origin : "";
+      const link = input.taskId && origin ? `\n${origin}/tasks/${input.taskId}` : "";
+      void fetch("/api/slack/notify", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ userIds: [input.userId], text: `🔔 ${input.content}${link}`, respectPref: true }),
+      }).catch(() => {});
+    } catch { /* ignore */ }
   },
 
   async markRead(id: string): Promise<void> {
