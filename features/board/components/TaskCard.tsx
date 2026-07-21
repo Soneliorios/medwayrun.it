@@ -99,7 +99,9 @@ function TaskCardInner({ task, onOpen }: Props) {
     if (flagged) return flagged.id;
     return [...cols].sort((a, b) => a.position - b.position)[cols.length - 1]?.id ?? null;
   });
-  const showDelivered = delivered && !!doneColumnId && (task as any).column_id === doneColumnId;
+  // Regra da opacidade = APENAS estar na coluna de conclusão. Entregas parciais
+  // (fila/paralelo ainda em aberto) não chegam nessa coluna, então nunca esmaecem.
+  const inDoneColumn = !!doneColumnId && (task as any).column_id === doneColumnId;
 
   // SLA progress
   const slaMinutes = (task as any).sla_minutes as number | null;
@@ -149,7 +151,7 @@ function TaskCardInner({ task, onOpen }: Props) {
           : overdue
           ? "border-red-200 border-l-4 border-l-destructive bg-red-50/30"
           : "border-neutral-100",
-        showDelivered && "opacity-60",
+        inDoneColumn && "opacity-60",
         isDragging && "opacity-50 shadow-lg scale-[1.02] z-50 dragging-item"
       )}
       onClick={handleClick}
