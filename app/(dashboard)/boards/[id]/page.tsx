@@ -26,6 +26,7 @@ import { TaskDetail } from "@/features/tasks/components/TaskDetail";
 import { FilterSidebar } from "@/features/board/components/FilterSidebar";
 import { BatchActionBar } from "@/features/board/components/BatchActionBar";
 import { BoardListView } from "@/features/board/components/BoardListView";
+import { ExportBoardButton } from "@/features/board/components/ExportBoardButton";
 import { BoardDashboardView } from "@/features/board/components/BoardDashboardView";
 import { BoardProjectsView } from "../../../../features/board/components/BoardProjectsView";
 import { useProjectStore } from "@/features/projects/store/projectStore";
@@ -227,6 +228,7 @@ export default function BoardPage({ params }: Props) {
               </span>
             )}
           </button>
+          <ExportBoardButton boardId={boardId} />
           <button
             onClick={() => setTrashOpen(true)}
             title="Lixeira do quadro (tarefas apagadas, 7 dias)"

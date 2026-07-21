@@ -1,7 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
-import { Check, Link2 } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
+import { Check, Link2, ChevronDown } from "lucide-react";
 import { cn } from "@/lib/utils";
 import type { BoardCustomField } from "@/features/board/services/boardFieldService";
 
@@ -107,42 +108,119 @@ export function CustomFieldInput({
     );
   }
 
-  // ── multiselect (chips) ─────────────────────────────────────────────────────────
+  // ── multiselect (dropdown com checkboxes) ──────────────────────────────────────
   if (field.type === "multiselect") {
-    // Só considera valores que ainda existem nas opções do campo — assim uma opção
-    // removida pela config não fica "presa" (invisível mas re-salva a cada toggle).
-    const raw = Array.isArray(value) ? (value as string[]) : [];
-    const selected = raw.filter((o) => field.options.includes(o));
-    const toggle = (o: string) => {
-      if (disabled) return;
-      const next = selected.includes(o) ? selected.filter((x) => x !== o) : [...selected, o];
-      onChange(next);
-    };
-    return (
-      <div className="flex flex-wrap gap-1.5">
-        {field.options.map((o) => {
-          const on = selected.includes(o);
-          return (
-            <button
-              key={o}
-              type="button"
-              disabled={disabled}
-              onClick={() => toggle(o)}
-              className={cn(
-                "px-2.5 py-1 rounded-full text-xs font-medium transition-colors disabled:opacity-60",
-                on ? "bg-brand-navy text-white" : "bg-neutral-100 text-neutral-500 hover:bg-neutral-200"
-              )}
-            >
-              {o}
-            </button>
-          );
-        })}
-        {field.options.length === 0 && <span className="text-xs text-neutral-400">Sem opções</span>}
-      </div>
-    );
+    return <MultiSelectField field={field} value={value} onChange={onChange} disabled={disabled} />;
   }
 
   return null;
+}
+
+// Seleção múltipla em dropdown (não solta todas as opções na tela).
+// O painel é renderizado em portal com position:fixed — assim não é cortado
+// pelos containers roláveis (sidebar do detalhe / corpo do modal de criação).
+function MultiSelectField({
+  field,
+  value,
+  onChange,
+  disabled,
+}: {
+  field: BoardCustomField;
+  value: unknown;
+  onChange: (value: unknown) => void;
+  disabled: boolean;
+}) {
+  const [open, setOpen] = useState(false);
+  const [rect, setRect] = useState<{ top: number; bottom: number; left: number; width: number; openUp: boolean } | null>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
+  const panelRef = useRef<HTMLDivElement>(null);
+
+  // Preserva valores fora das opções atuais (não apaga dado ao editar o campo);
+  // mas só mostra/marca as opções que ainda existem na config.
+  const raw = Array.isArray(value) ? (value as string[]) : [];
+  const selectedValid = raw.filter((o) => field.options.includes(o));
+  const toggle = (o: string) => {
+    if (disabled) return;
+    const next = raw.includes(o) ? raw.filter((x) => x !== o) : [...raw, o];
+    onChange(next);
+  };
+  const summary =
+    selectedValid.length === 0 ? "Selecionar…" : selectedValid.length <= 2 ? selectedValid.join(", ") : `${selectedValid.length} selecionados`;
+
+  function openMenu() {
+    if (disabled) return;
+    const b = btnRef.current?.getBoundingClientRect();
+    if (b) {
+      const PANEL_MAX = 260;
+      const spaceBelow = window.innerHeight - b.bottom;
+      const openUp = spaceBelow < PANEL_MAX && b.top > spaceBelow;
+      setRect({ top: b.top, bottom: b.bottom, left: b.left, width: b.width, openUp });
+    }
+    setOpen(true);
+  }
+
+  useEffect(() => {
+    if (!open) return;
+    const onDown = (e: MouseEvent) => {
+      const t = e.target as Node;
+      if (btnRef.current?.contains(t) || panelRef.current?.contains(t)) return;
+      setOpen(false);
+    };
+    // Fecha ao rolar/redimensionar (posição fixed ficaria dessincronizada).
+    const onMove = () => setOpen(false);
+    document.addEventListener("mousedown", onDown);
+    window.addEventListener("scroll", onMove, true);
+    window.addEventListener("resize", onMove);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      window.removeEventListener("scroll", onMove, true);
+      window.removeEventListener("resize", onMove);
+    };
+  }, [open]);
+
+  return (
+    <>
+      <button
+        ref={btnRef}
+        type="button"
+        disabled={disabled}
+        onClick={() => (open ? setOpen(false) : openMenu())}
+        className="w-full flex items-center justify-between gap-2 text-sm border border-neutral-200 rounded-lg px-2.5 py-1.5 outline-none focus:border-brand-teal bg-white disabled:opacity-60 disabled:cursor-not-allowed"
+      >
+        <span className={cn("truncate", selectedValid.length === 0 && "text-neutral-400")}>{summary}</span>
+        <ChevronDown size={14} className="shrink-0 text-neutral-400" />
+      </button>
+      {open && rect && typeof document !== "undefined" &&
+        createPortal(
+          <div
+            ref={panelRef}
+            style={{
+              position: "fixed",
+              top: rect.openUp ? undefined : rect.bottom + 4,
+              bottom: rect.openUp ? window.innerHeight - rect.top + 4 : undefined,
+              left: rect.left,
+              width: rect.width,
+              zIndex: 200,
+            }}
+            className="bg-white rounded-lg border border-neutral-200 shadow-lg max-h-60 overflow-y-auto p-1"
+          >
+            {field.options.length === 0 && <p className="text-xs text-neutral-400 px-2 py-1.5">Sem opções</p>}
+            {field.options.map((o) => (
+              <label key={o} className="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-neutral-50 cursor-pointer">
+                <input
+                  type="checkbox"
+                  checked={raw.includes(o)}
+                  onChange={() => toggle(o)}
+                  className="w-3.5 h-3.5 accent-brand-teal"
+                />
+                <span className="text-sm text-neutral-700">{o}</span>
+              </label>
+            ))}
+          </div>,
+          document.body
+        )}
+    </>
+  );
 }
 
 // Buffer local para inputs de texto/número/url — persiste no blur ou Enter.
