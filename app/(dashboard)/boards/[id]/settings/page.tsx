@@ -19,8 +19,9 @@ import { ORG_ID } from "@/lib/utils";
 import {
   ArrowLeft, Archive, Loader2, Settings, Tag, Users, Layers,
   Plus, Trash2, ChevronDown, Check, GripVertical, FolderKanban,
-  Globe, Lock, X, Pencil, Eye, Search,
+  Globe, Lock, X, Pencil, Eye, Search, LayoutList,
 } from "lucide-react";
+import TaskLayoutTab from "@/features/board/components/TaskLayoutTab";
 import { getInitials } from "@/lib/utils";
 import Link from "next/link";
 import { cn } from "@/lib/utils";
@@ -34,11 +35,12 @@ const TYPE_COLORS = [
   "#407EC9", "#01CFB5", "#AC145A", "#FFB81C", "#3B3FB6", "#00205B", "#52575C",
 ];
 
-type SettingsTab = "general" | "types" | "members" | "stages" | "projects";
+type SettingsTab = "general" | "types" | "layout" | "members" | "stages" | "projects";
 
 const SETTINGS_TABS: { id: SettingsTab; label: string; icon: React.ElementType }[] = [
   { id: "general", label: "Geral", icon: Settings },
   { id: "types", label: "Tipos de tarefa", icon: Tag },
+  { id: "layout", label: "Layout da task", icon: LayoutList },
   { id: "members", label: "Membros", icon: Users },
   { id: "stages", label: "Req. por etapa", icon: Layers },
   { id: "projects", label: "Projetos", icon: FolderKanban },
@@ -591,6 +593,9 @@ export default function ProjectSettingsPage({ params }: Props) {
                 </div>
               </div>
             )}
+
+            {/* LAYOUT DA TASK */}
+            {activeTab === "layout" && <TaskLayoutTab projectId={projectId} />}
 
             {/* MEMBERS */}
             {activeTab === "members" && (

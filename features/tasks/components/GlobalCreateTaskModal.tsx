@@ -35,6 +35,9 @@ type OverflowCheckResult = null;
 import { getInitials } from "@/lib/utils";
 import { fetchBoardSubprojects, createBoardSubproject, type BoardProject } from "@/features/board/store/boardProjectStore";
 import { taskTypeService } from "@/features/board/services/taskTypeService";
+import { boardFieldService, type BoardCustomField } from "@/features/board/services/boardFieldService";
+import { builtinFieldLabel } from "@/lib/boardFields";
+import { CustomFieldInput } from "./CustomFieldInput";
 import { runAutomations } from "@/lib/automationEngine";
 import { useOrgMembers } from "@/lib/useOrgMembers";
 import type { Column } from "@/types";
@@ -104,6 +107,13 @@ export function GlobalCreateTaskModal() {
   const [newTypeName, setNewTypeName] = useState("");
   const [estimatedHours, setEstimatedHours] = useState<number | null>(null);
   const [overflowWarning, setOverflowWarning] = useState<OverflowCheckResult | null>(null);
+  // Layout da task do quadro: campos nativos obrigatórios + campos customizados.
+  const [requiredBuiltins, setRequiredBuiltins] = useState<string[]>([]);
+  const [customFieldDefs, setCustomFieldDefs] = useState<BoardCustomField[]>([]);
+  const [customValues, setCustomValues] = useState<Record<string, unknown>>({});
+  // Quadro para o qual o layout (obrigatórios + custom) já foi carregado. Evita
+  // que um submit rápido (antes do fetch) pule a validação dos obrigatórios.
+  const [layoutLoadedFor, setLayoutLoadedFor] = useState<string | null>(null);
   // Roster via cache global compartilhado (fetch único por sessão).
   const orgMembersRaw = useOrgMembers();
   const orgMembers = useMemo<OrgMember[]>(
@@ -268,6 +278,31 @@ export function GlobalCreateTaskModal() {
     return () => { cancelled = true; };
   }, [selectedProjectId, open]);
 
+  // Layout da task do quadro (campos obrigatórios + campos customizados). Reseta
+  // os valores custom ao trocar de quadro (campos diferentes por quadro).
+  useEffect(() => {
+    setLayoutLoadedFor(null);
+    if (!open || !selectedProjectId) {
+      setRequiredBuiltins([]);
+      setCustomFieldDefs([]);
+      setCustomValues({});
+      return;
+    }
+    let cancelled = false;
+    const pid = selectedProjectId;
+    Promise.all([
+      boardFieldService.getBuiltinLayout(pid),
+      boardFieldService.listCustom(pid),
+    ]).then(([layout, fields]) => {
+      if (cancelled || pid !== selectedProjectId) return;
+      setRequiredBuiltins(layout.required);
+      setCustomFieldDefs(fields);
+      setCustomValues({});
+      setLayoutLoadedFor(pid);
+    });
+    return () => { cancelled = true; };
+  }, [selectedProjectId, open]);
+
   // Auto-populate estimated hours: user avg (≥15 deliveries) > type default_hours
   useEffect(() => {
     if (!boardTaskTypes.length || !selectedProjectId) {
@@ -319,6 +354,7 @@ export function GlobalCreateTaskModal() {
     setNewSubtask("");
     setParentTaskId(null);
     setParentTitle(null);
+    setCustomValues({});
   }
 
   function reset() {
@@ -350,6 +386,13 @@ export function GlobalCreateTaskModal() {
   async function persistTask(): Promise<string | null> {
     const colTasks = boardColumns.find((c) => c.id === selectedColumnId)?.tasks ?? [];
     const lastPos = colTasks.length ? colTasks[colTasks.length - 1].position + 1000 : 1000;
+
+    // Campos customizados do quadro (só os preenchidos) → tasks.custom_fields.
+    const cleanedCustom: Record<string, unknown> = {};
+    for (const f of customFieldDefs) {
+      const v = customValues[f.id];
+      if (!customValueEmpty(v)) cleanedCustom[f.id] = v;
+    }
 
     // Recurrence config (same shape used by TaskDetail + the pg_cron job)
     let recurrenceConfig: Record<string, unknown> | undefined;
@@ -383,6 +426,8 @@ export function GlobalCreateTaskModal() {
       created_by: user?.id || undefined,
       // Link to the parent when created via "Nova subtarefa".
       parent_task_id: parentTaskId || undefined,
+      // Valores dos campos customizados do quadro.
+      custom_fields: Object.keys(cleanedCustom).length ? cleanedCustom : undefined,
     } as any);
     const taskId: string | undefined = created?.id;
     if (!taskId) return null;
@@ -477,12 +522,81 @@ export function GlobalCreateTaskModal() {
       .map((r) => r.label);
   }
 
+  // Vazio? (usado também pra limpar valores custom antes de salvar)
+  function customValueEmpty(v: unknown): boolean {
+    if (v == null) return true;
+    if (typeof v === "string") return v.trim() === "";
+    if (Array.isArray(v)) return v.length === 0;
+    return false;
+  }
+
+  // Campo custom obrigatório NÃO satisfeito? Checkbox sempre tem resposta (Sim/Não).
+  function customFieldUnmet(f: BoardCustomField, v: unknown): boolean {
+    if (f.type === "checkbox") return false;
+    return customValueEmpty(v);
+  }
+
+  // Rótulos como aparecem NOS CONTROLES deste modal (diferem do catálogo em alguns).
+  const CREATE_FIELD_LABELS: Record<string, string> = {
+    description: "Descrição",
+    due_date: "Data limite",
+    desired_start_date: "Início desejado",
+    estimated_hours: "Horas estimadas",
+    assignee: "Alocados",
+    board_subproject_id: "Projeto",
+    priority: "Prioridade",
+    labels: "Tags",
+  };
+
+  // Campos obrigatórios do LAYOUT do quadro ainda não preenchidos (nativos + custom).
+  function missingLayoutRequired(requiredKeys: string[], customs: BoardCustomField[]): string[] {
+    const missing: string[] = [];
+    for (const key of requiredKeys) {
+      let ok = true;
+      switch (key) {
+        case "description": ok = !htmlIsEmpty(description); break;
+        case "due_date": ok = !!dueDate; break;
+        case "desired_start_date": ok = !!desiredStartDate; break;
+        case "estimated_hours": ok = !!(estimatedHours && estimatedHours > 0); break;
+        case "assignee": ok = assignees.length > 0; break;
+        case "labels": ok = tags.length > 0; break;
+        case "priority": ok = !!priority; break;
+        // Só cobra o projeto quando o quadro tem projetos para escolher.
+        case "board_subproject_id": ok = !boardProjectRequired || !!boardProjectId; break;
+        default: ok = true; // campos não coletáveis na criação são ignorados
+      }
+      if (!ok) missing.push(CREATE_FIELD_LABELS[key] ?? builtinFieldLabel(key));
+    }
+    for (const f of customs) {
+      if (f.required && customFieldUnmet(f, customValues[f.id])) missing.push(f.label);
+    }
+    return missing;
+  }
+
+  // Resolve o layout no submit (evita corrida: se ainda não carregou — ou é de outro
+  // quadro — busca na hora e já popula o estado pra renderizar os campos custom).
+  async function resolveLayout(): Promise<{ required: string[]; customs: BoardCustomField[] }> {
+    if (!selectedProjectId) return { required: [], customs: [] };
+    if (layoutLoadedFor === selectedProjectId) return { required: requiredBuiltins, customs: customFieldDefs };
+    const [layout, fields] = await Promise.all([
+      boardFieldService.getBuiltinLayout(selectedProjectId),
+      boardFieldService.listCustom(selectedProjectId),
+    ]);
+    setRequiredBuiltins(layout.required);
+    setCustomFieldDefs(fields);
+    setLayoutLoadedFor(selectedProjectId);
+    return { required: layout.required, customs: fields };
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!title.trim() || !selectedProjectId || !selectedColumnId) return;
     if (boardProjectRequired && !boardProjectId) return;
     const missing = missingReqLabels(await resolveColumnReqs());
     if (missing.length) { setError(`Requisitos desta etapa: ${missing.join(", ")}.`); return; }
+    const layout = await resolveLayout();
+    const missingLayout = missingLayoutRequired(layout.required, layout.customs);
+    if (missingLayout.length) { setError(`Campos obrigatórios: ${missingLayout.join(", ")}.`); return; }
     setError(null);
     setLoading(true);
     try {
@@ -501,6 +615,9 @@ export function GlobalCreateTaskModal() {
     if (boardProjectRequired && !boardProjectId) return;
     const missing = missingReqLabels(await resolveColumnReqs());
     if (missing.length) { setError(`Requisitos desta etapa: ${missing.join(", ")}.`); return; }
+    const layout = await resolveLayout();
+    const missingLayout = missingLayoutRequired(layout.required, layout.customs);
+    if (missingLayout.length) { setError(`Campos obrigatórios: ${missingLayout.join(", ")}.`); return; }
     setError(null);
     setLoading(true);
     // Preserve the subtask context across "salvar e criar outra" so the next
@@ -1015,6 +1132,25 @@ export function GlobalCreateTaskModal() {
                 <span>h est.</span>
               </div>
             </div>
+
+            {/* Campos personalizados do quadro (layout da task) */}
+            {customFieldDefs.length > 0 && (
+              <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-3">
+                {customFieldDefs.map((f) => (
+                  <div key={f.id} className="space-y-1">
+                    <label className="block text-xs font-semibold text-neutral-500 uppercase tracking-wide">
+                      {f.label}{f.required && <span className="text-destructive"> *</span>}
+                    </label>
+                    <CustomFieldInput
+                      field={f}
+                      value={customValues[f.id]}
+                      onChange={(v) => setCustomValues((prev) => ({ ...prev, [f.id]: v }))}
+                      members={orgMembersRaw}
+                    />
+                  </div>
+                ))}
+              </div>
+            )}
 
             {/* Selected chips: assignees / tags / followers / attachments */}
             {(assignees.length > 0 || tags.length > 0 || followers.length > 0 || recurrence) && (

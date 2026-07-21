@@ -81,6 +81,9 @@ import { useRole } from "@/features/auth/hooks/useRole";
 import { createClient, createRawClient } from "@/lib/supabase/client";
 import { useOrgMembers } from "@/lib/useOrgMembers";
 import { taskTypeService } from "@/features/board/services/taskTypeService";
+import { boardFieldService, type BoardCustomField } from "@/features/board/services/boardFieldService";
+import type { CustomFieldType } from "@/lib/boardFields";
+import { CustomFieldInput } from "./CustomFieldInput";
 import type { TaskWithRelations } from "@/types";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
@@ -129,6 +132,19 @@ function getFileCategory(mimeType?: string): "image" | "pdf" | "video" | "other"
   return "other";
 }
 
+// Ícone do campo customizado no detalhe da task, por tipo.
+function customFieldIcon(type: CustomFieldType): React.ReactNode {
+  switch (type) {
+    case "date": return <Calendar size={12} />;
+    case "select":
+    case "multiselect": return <ListChecks size={12} />;
+    case "checkbox": return <Check size={12} />;
+    case "user": return <Users size={12} />;
+    case "url": return <Link2 size={12} />;
+    default: return <FileText size={12} />;
+  }
+}
+
 function getFileExtColor(name: string): string {
   const ext = name.split(".").pop()?.toLowerCase() ?? "";
   const map: Record<string, string> = {
@@ -163,6 +179,12 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
   const [loading, setLoading] = useState(true);
   const [notFound, setNotFound] = useState(false); // task inexistente ou na Lixeira
   const [duplicating, setDuplicating] = useState(false);
+  // Layout da task por quadro: campos nativos escondidos + campos customizados.
+  const [layoutHidden, setLayoutHidden] = useState<Set<string>>(new Set());
+  const [boardCustomFields, setBoardCustomFields] = useState<BoardCustomField[]>([]);
+  // Quadro para o qual o layout já foi carregado — evita aplicar o layout do quadro
+  // ANTERIOR por 1 frame ao trocar de task entre quadros (usa defaults enquanto carrega).
+  const [layoutForProject, setLayoutForProject] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<DetailTab>("description");
   const [newChecklistItem, setNewChecklistItem] = useState("");
   const [newTagInput, setNewTagInput] = useState(false);
@@ -557,6 +579,34 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [taskId]);
 
+  // Layout da task do quadro: campos nativos escondidos + campos customizados.
+  useEffect(() => {
+    const projectId = task?.project_id;
+    setLayoutForProject(null); // enquanto carrega, usa defaults (não o layout do quadro anterior)
+    if (!projectId) { setLayoutHidden(new Set()); setBoardCustomFields([]); return; }
+    let alive = true;
+    Promise.all([
+      boardFieldService.getBuiltinLayout(projectId),
+      boardFieldService.listCustom(projectId),
+    ]).then(([layout, fields]) => {
+      if (!alive) return;
+      setLayoutHidden(new Set(layout.hidden));
+      setBoardCustomFields(fields);
+      setLayoutForProject(projectId);
+    });
+    return () => { alive = false; };
+  }, [task?.project_id]);
+
+  // Se a aba ativa (Descrição/Checklist) for escondida pelo layout, volta pra Comentários.
+  useEffect(() => {
+    const ready = layoutForProject != null && layoutForProject === task?.project_id;
+    if (!ready) return;
+    if ((activeTab === "description" && layoutHidden.has("description")) ||
+        (activeTab === "checklist" && layoutHidden.has("checklist"))) {
+      setActiveTab("comments");
+    }
+  }, [layoutForProject, layoutHidden, activeTab, task?.project_id]);
+
   // Mantém o estado de aprovação/entrega vivo: quando o aprovador resolve (em
   // outra aba/máquina) a entrega estacionada é finalizada headless — aqui
   // reavaliamos o banner "parcialmente entregue", a fila e a própria task.
@@ -617,7 +667,38 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
     ? (projectStore.projects.find((p) => p.id === task.project_id)?.name ?? "—")
     : "—";
 
+  // Só aplica o layout depois de carregado PARA O QUADRO da task atual.
+  const layoutReady = layoutForProject != null && layoutForProject === task?.project_id;
+  // Campo nativo visível neste quadro? (título/quadro/etapa são sempre visíveis;
+  // enquanto o layout não carrega, tudo aparece — defaults.)
+  const isFieldVisible = (key: string) => !layoutReady || !layoutHidden.has(key);
+  // Descrição e Checklist são ABAS — some da barra de abas quando escondidas no layout.
+  const visibleTabs = TABS.filter(
+    (t) => !((t.id === "description" || t.id === "checklist") && !isFieldVisible(t.id))
+  );
+
   // ── Handlers ────────────────────────────────────────────────────────────────
+
+  // Persiste o valor de um campo customizado em tasks.custom_fields (jsonb).
+  async function handleCustomFieldUpdate(fieldId: string, value: unknown) {
+    if (!task) return;
+    const isCreator = (task as any).created_by === user?.id;
+    const isResp = task.assignee_id === user?.id || queue.some((qq) => qq.user_id === user?.id);
+    if (!(boardAccess.canEdit || !isUser || isCreator || isResp)) return;
+    const prevCf = ((task as any).custom_fields ?? {}) as Record<string, unknown>;
+    const nextCf = { ...prevCf };
+    if (value === null || value === undefined || value === "" || (Array.isArray(value) && value.length === 0)) {
+      delete nextCf[fieldId];
+    } else {
+      nextCf[fieldId] = value;
+    }
+    setTask((prev) => (prev ? ({ ...prev, custom_fields: nextCf } as TaskWithRelations) : null));
+    store.updateTask(taskId, { custom_fields: nextCf } as any);
+    await taskService.update(taskId, { custom_fields: nextCf } as any).catch(() => {
+      setTask((prev) => (prev ? ({ ...prev, custom_fields: prevCf } as TaskWithRelations) : null));
+      store.updateTask(taskId, { custom_fields: prevCf } as any);
+    });
+  }
 
   async function handleFieldUpdate(field: string, value: string | null) {
     if (!task) return;
@@ -1485,7 +1566,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
 
             {/* ── Tabs ────────────────────────────────────────────── */}
             <div className="flex items-center gap-0.5 px-5 border-b border-neutral-100 shrink-0 overflow-x-auto">
-              {TABS.map(({ id, label, icon: Icon }) => (
+              {visibleTabs.map(({ id, label, icon: Icon }) => (
                 <button
                   key={id}
                   onClick={() => setActiveTab(id)}
@@ -1919,7 +2000,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                 )}
 
                 {/* Responsáveis / Alocados */}
-                <MetaField label="Responsáveis" icon={<Users size={12} />}>
+                <MetaField label="Responsáveis" icon={<Users size={12} />} hidden={!isFieldVisible("assignee")}>
                   {queue.length > 0 && !isParallel ? (
                     // FILA SEQUENCIAL (montada na aba Regras) — somente leitura aqui.
                     <div className="space-y-1.5">
@@ -2035,7 +2116,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                 </MetaField>
 
                 {/* Tipo de tarefa (por quadro) */}
-                <MetaField label="Tipo de tarefa" icon={<ClipboardCheck size={12} />}>
+                <MetaField label="Tipo de tarefa" icon={<ClipboardCheck size={12} />} hidden={!isFieldVisible("type_id")}>
                   <Select
                     value={(task as any).task_type ?? ""}
                     onValueChange={(v) => handleFieldUpdate("task_type", v || null)}
@@ -2122,7 +2203,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                 </MetaField>
 
                 {/* Projeto interno do board */}
-                <MetaField label="Projeto" icon={<Layers size={12} />}>
+                <MetaField label="Projeto" icon={<Layers size={12} />} hidden={!isFieldVisible("board_subproject_id")}>
                   {boardProjects.length > 0 ? (
                     <select
                       disabled={!canEditCard}
@@ -2152,7 +2233,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                 </MetaField>
 
                 {/* Entrega desejada */}
-                <MetaField label="Entrega desejada" icon={<Calendar size={12} />}>
+                <MetaField label="Entrega desejada" icon={<Calendar size={12} />} hidden={!isFieldVisible("due_date")}>
                   <BRDateInput
                     value={task.due_date ?? ""}
                     onChange={(v) => handleFieldUpdate("due_date", v)}
@@ -2164,7 +2245,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                 </MetaField>
 
                 {/* Início desejado */}
-                <MetaField label="Início desejado" icon={<Calendar size={12} />}>
+                <MetaField label="Início desejado" icon={<Calendar size={12} />} hidden={!isFieldVisible("desired_start_date")}>
                   <BRDateInput
                     value={(task as any).desired_start_date ?? ""}
                     onChange={(v) => handleFieldUpdate("desired_start_date", v)}
@@ -2182,7 +2263,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                 </MetaField>
 
                 {/* Tempo estimado — H : M : S */}
-                <MetaField label="Tempo estimado" icon={<Clock size={12} />}>
+                <MetaField label="Tempo estimado" icon={<Clock size={12} />} hidden={!isFieldVisible("estimated_hours")}>
                   <div className="space-y-1.5">
                     {editingEstimatedHours ? (() => {
                       const commit = () => {
@@ -2332,7 +2413,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                 </MetaField>
 
                 {/* Prioridade */}
-                <MetaField label="Prioridade" icon={<Flag size={12} />}>
+                <MetaField label="Prioridade" icon={<Flag size={12} />} hidden={!isFieldVisible("priority")}>
                   <Select
                     value={task.priority}
                     onValueChange={(v) => {
@@ -2356,7 +2437,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                 </MetaField>
 
                 {/* Área Solicitante */}
-                <MetaField label="Área Solicitante" icon={<Users size={12} />}>
+                <MetaField label="Área Solicitante" icon={<Users size={12} />} hidden={!isFieldVisible("area_id")}>
                   <Select
                     value={(task as any).requesting_area_id ?? ""}
                     onValueChange={(v) => handleFieldUpdate("requesting_area_id", v || null)}
@@ -2376,7 +2457,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                 </MetaField>
 
                 {/* Repetição */}
-                <MetaField label="Repetição" icon={<Repeat size={12} />}>
+                <MetaField label="Repetição" icon={<Repeat size={12} />} hidden={!isFieldVisible("recurrence")}>
                   {(() => {
                     const rc = (task as any).recurrence_config;
                     const recur = !rc ? null : (typeof rc === "string"
@@ -2468,7 +2549,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                 </MetaField>
 
                 {/* Seguidores */}
-                <MetaField label="Seguidores" icon={<UserPlus size={12} />}>
+                <MetaField label="Seguidores" icon={<UserPlus size={12} />} hidden={!isFieldVisible("followers")}>
                   <div className="flex flex-wrap gap-1 items-center relative" ref={followersRef}>
                     <div className="flex -space-x-1.5">
                       {followers.map((id) => {
@@ -2525,7 +2606,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                 </MetaField>
 
                 {/* Checklist resumo (inline) */}
-                <MetaField label="Checklist" icon={<ListChecks size={12} />}>
+                <MetaField label="Checklist" icon={<ListChecks size={12} />} hidden={!isFieldVisible("checklist")}>
                   {checklist.length > 0 ? (
                     <button
                       onClick={() => setActiveTab("checklist")}
@@ -2542,7 +2623,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                 </MetaField>
 
                 {/* Tags (por quadro) */}
-                <MetaField label="Tags" icon={<TagIcon size={12} />}>
+                <MetaField label="Tags" icon={<TagIcon size={12} />} hidden={!isFieldVisible("labels")}>
                   <div className="space-y-1.5">
                     <div className="flex flex-wrap gap-1 items-center">
                       {task.labels?.map((l) => (
@@ -2603,6 +2684,24 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                     )}
                   </div>
                 </MetaField>
+
+                {/* Campos personalizados do quadro (layout da task) */}
+                {layoutReady && boardCustomFields.length > 0 && (
+                  <>
+                    <div className="pt-1 border-t border-neutral-100" />
+                    {boardCustomFields.map((f) => (
+                      <MetaField key={f.id} label={f.label} icon={customFieldIcon(f.type)}>
+                        <CustomFieldInput
+                          field={f}
+                          value={(task as any).custom_fields?.[f.id]}
+                          onChange={(v) => handleCustomFieldUpdate(f.id, v)}
+                          members={orgProfiles}
+                          disabled={!canEditCard}
+                        />
+                      </MetaField>
+                    ))}
+                  </>
+                )}
 
               </div>
             </div>
@@ -2979,11 +3078,15 @@ function MetaField({
   label,
   icon,
   children,
+  hidden = false,
 }: {
   label: string;
   icon: React.ReactNode;
   children: React.ReactNode;
+  /** Escondido pelo layout do quadro (campo desligado). */
+  hidden?: boolean;
 }) {
+  if (hidden) return null;
   return (
     <div className="space-y-1.5">
       <div className="flex items-center gap-1 text-[10px] font-semibold uppercase tracking-wide text-neutral-400">
