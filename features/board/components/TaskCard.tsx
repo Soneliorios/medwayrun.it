@@ -22,6 +22,7 @@ import { useOrgMembers } from "@/lib/useOrgMembers";
 import { useTimerStore } from "@/features/timer/store/timerStore";
 import { useAuthStore } from "@/features/auth/store/authStore";
 import { useSelectionStore } from "../store/selectionStore";
+import { useBoardStore } from "../store/boardStore";
 import type { TaskWithRelations } from "@/types";
 
 interface Props {
@@ -85,9 +86,20 @@ function TaskCardInner({ task, onOpen }: Props) {
     [task.id, toggleTask]
   );
 
-  // Task entregue: some com "urgente"/"atrasada" e o card fica esmaecido.
+  // Task entregue: some com "urgente"/"atrasada".
   const delivered = task.status === "delivered";
   const overdue = !delivered && isOverdue(task.due_date);
+  // O card só fica ESMAECIDO quando a task entregue está NA coluna de conclusão.
+  // Uma task marcada como entregue mas puxada de volta pro planejamento aparece
+  // normal (a opacidade não deve vazar para colunas que não são a de entrega).
+  const doneColumnId = useBoardStore((s) => {
+    const cols = s.columns;
+    if (!cols.length) return null;
+    const flagged = cols.find((c) => (c as any).is_done_column);
+    if (flagged) return flagged.id;
+    return [...cols].sort((a, b) => a.position - b.position)[cols.length - 1]?.id ?? null;
+  });
+  const showDelivered = delivered && !!doneColumnId && (task as any).column_id === doneColumnId;
 
   // SLA progress
   const slaMinutes = (task as any).sla_minutes as number | null;
@@ -137,7 +149,7 @@ function TaskCardInner({ task, onOpen }: Props) {
           : overdue
           ? "border-red-200 border-l-4 border-l-destructive bg-red-50/30"
           : "border-neutral-100",
-        delivered && "opacity-60",
+        showDelivered && "opacity-60",
         isDragging && "opacity-50 shadow-lg scale-[1.02] z-50 dragging-item"
       )}
       onClick={handleClick}
