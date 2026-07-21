@@ -166,15 +166,21 @@ function MultiSelectField({
       if (btnRef.current?.contains(t) || panelRef.current?.contains(t)) return;
       setOpen(false);
     };
-    // Fecha ao rolar/redimensionar (posição fixed ficaria dessincronizada).
-    const onMove = () => setOpen(false);
+    // Rolar DENTRO do painel (para ver mais opções) é ok; só fecha se a rolagem
+    // vier de fora (aí a posição fixed ficaria dessincronizada).
+    const onScroll = (e: Event) => {
+      const t = e.target as Node | null;
+      if (t && panelRef.current && (panelRef.current === t || panelRef.current.contains(t))) return;
+      setOpen(false);
+    };
+    const onResize = () => setOpen(false);
     document.addEventListener("mousedown", onDown);
-    window.addEventListener("scroll", onMove, true);
-    window.addEventListener("resize", onMove);
+    window.addEventListener("scroll", onScroll, true);
+    window.addEventListener("resize", onResize);
     return () => {
       document.removeEventListener("mousedown", onDown);
-      window.removeEventListener("scroll", onMove, true);
-      window.removeEventListener("resize", onMove);
+      window.removeEventListener("scroll", onScroll, true);
+      window.removeEventListener("resize", onResize);
     };
   }, [open]);
 
