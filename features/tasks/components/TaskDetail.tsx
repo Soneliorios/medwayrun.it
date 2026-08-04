@@ -247,6 +247,15 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
   const timerStore = useTimerStore();
   const projectStore = useProjectStore();
   const boardColumns = useBoardStore((s) => s.columns);
+  // Colunas do QUADRO DA TASK. A task pode ser aberta FORA do seu quadro (/Empresa,
+  // /Eu, link direto) — aí o store global tem colunas de outro quadro (ou nenhuma).
+  // Busca as colunas do task.project_id e usa no campo "Etapa" (com fallback ao store).
+  const [taskColumns, setTaskColumns] = useState<any[]>([]);
+  const stageColumns = useMemo(() => {
+    const pid = (task as any)?.project_id;
+    if (pid && boardColumns.length > 0 && boardColumns.some((c: any) => c.project_id === pid)) return boardColumns;
+    return taskColumns;
+  }, [boardColumns, taskColumns, task?.project_id]);
   const subtasks = useMemo(
     () => boardColumns.flatMap((c) => c.tasks).filter((t: any) => t.parent_task_id === taskId),
     [boardColumns, taskId]
@@ -595,6 +604,23 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
       setLayoutForProject(projectId);
     });
     return () => { alive = false; };
+  }, [task?.project_id]);
+
+  // Colunas do quadro DA TASK (para o campo "Etapa" funcionar mesmo com a task
+  // aberta fora do seu quadro). Só busca quando o store não tem esse quadro.
+  useEffect(() => {
+    const pid = task?.project_id;
+    if (!pid || boardColumns.some((c: any) => c.project_id === pid)) { setTaskColumns([]); return; }
+    let alive = true;
+    const sb = createClient();
+    (sb as any)
+      .from("columns")
+      .select("id, name, color, position, is_done_column, project_id")
+      .eq("project_id", pid)
+      .order("position", { ascending: true })
+      .then(({ data }: { data: unknown }) => { if (alive) setTaskColumns((data ?? []) as any[]); });
+    return () => { alive = false; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [task?.project_id]);
 
   // Se a aba ativa (Descrição/Checklist) for escondida pelo layout, volta pra Comentários.
@@ -2167,7 +2193,7 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
 
                 {/* Etapa (badge clicável p/ trocar) */}
                 <MetaField label="Etapa" icon={<Layers size={12} />}>
-                  {boardColumns.length > 0 ? (
+                  {stageColumns.length > 0 ? (
                     <Select
                       value={task.column_id}
                       disabled={!canChangeStage}
@@ -2184,15 +2210,15 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                         <div className="flex items-center gap-1.5">
                           <span
                             className="w-1.5 h-1.5 rounded-full"
-                            style={{ background: boardColumns.find((c) => c.id === task.column_id)?.color ?? "#A0A4A8" }}
+                            style={{ background: stageColumns.find((c: any) => c.id === task.column_id)?.color ?? "#A0A4A8" }}
                           />
                           <span className="truncate">
-                            {boardColumns.find((c) => c.id === task.column_id)?.name ?? "Selecionar etapa..."}
+                            {stageColumns.find((c: any) => c.id === task.column_id)?.name ?? "Selecionar etapa..."}
                           </span>
                         </div>
                       </SelectTrigger>
                       <SelectContent>
-                        {boardColumns.map((c) => (
+                        {stageColumns.map((c: any) => (
                           <SelectItem key={c.id} value={c.id} className="text-xs">{c.name}</SelectItem>
                         ))}
                       </SelectContent>
