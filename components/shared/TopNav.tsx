@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { useAuthStore } from "@/features/auth/store/authStore";
+import { teamService } from "@/lib/teamService";
 import { userSettingsService } from "@/lib/userSettingsService";
 import { useSignOut } from "@/features/auth/hooks/useAuth";
 import { useRole } from "@/features/auth/hooks/useRole";
@@ -97,6 +98,20 @@ export function TopNav() {
   const empresaRef = useRef<HTMLDivElement>(null);
   const avatarRef = useRef<HTMLDivElement>(null);
   const notifRef = useRef<HTMLDivElement>(null);
+  // Líder de time? Habilita a aba "Gestão de tempo" (admins também veem).
+  const [isLeader, setIsLeader] = useState(false);
+  useEffect(() => {
+    const uid = profile?.id;
+    if (!uid) { setIsLeader(false); return; }
+    let alive = true;
+    teamService.list()
+      .then((teams) => { if (alive) setIsLeader(teams.some((t) => (t.leader_ids ?? []).includes(uid))); })
+      .catch(() => {});
+    return () => { alive = false; };
+  }, [profile?.id]);
+  const empresaItems = (isLeader || isAdmin)
+    ? [EMPRESA_ITEMS[0], { href: "/company/time-management", label: "Gestão de tempo", icon: Clock, badge: "LÍDER" }, ...EMPRESA_ITEMS.slice(1)]
+    : EMPRESA_ITEMS;
   const historyRef = useRef<HTMLDivElement>(null);
   const newTaskRef = useRef<HTMLDivElement>(null);
 
@@ -255,7 +270,7 @@ export function TopNav() {
 
             {empresaOpen && (
               <div className="absolute top-full left-0 mt-1 w-48 bg-white rounded-xl shadow-xl border border-neutral-100 py-1 z-50">
-                {EMPRESA_ITEMS.map(({ href, label, icon: Icon, badge }) => (
+                {empresaItems.map(({ href, label, icon: Icon, badge }) => (
                   <Link
                     key={href}
                     href={href}

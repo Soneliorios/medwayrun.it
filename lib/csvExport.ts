@@ -9,7 +9,10 @@ type Cell = string | number | null | undefined;
 
 export function buildCsv(rows: Cell[][], delimiter = ";"): string {
   const esc = (v: Cell): string => {
-    const s = v == null ? "" : String(v);
+    let s = v == null ? "" : String(v);
+    // Neutraliza injeção de fórmula (=,+,-,@,tab,CR) quando aberto no Excel/Sheets.
+    // Só para TEXTO — números são passados como number e não são prefixados.
+    if (typeof v === "string" && /^[=+\-@\t\r]/.test(s)) s = "'" + s;
     if (s.includes(delimiter) || s.includes('"') || s.includes("\n") || s.includes("\r")) {
       return `"${s.replace(/"/g, '""')}"`;
     }
