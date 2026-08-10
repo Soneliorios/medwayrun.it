@@ -179,6 +179,35 @@ export async function POST(request: Request) {
     ((sp ?? []) as any[]).forEach((s) => subprojectName.set(s.id, s.name ?? "Projeto"));
   }
 
+  // Dados preenchidos na ENTREGA (nota + link) por tarefa. single/paralelo ficam em
+  // tasks.delivery_note/link; fila fica por parte em task_sequences. Redigido se
+  // o quadro for restrito ao solicitante.
+  const restrictedTask = (projId: string | null) => !!projId && !accessibleProjects.has(projId);
+  const deliveries: Record<string, { userId: string | null; note: string; link: string | null }[]> = {};
+  if (taskIds.length) {
+    const [{ data: tDel }, { data: sDel }] = await Promise.all([
+      admin.from("tasks").select("id, delivery_note, delivery_link, project_id").in("id", taskIds),
+      admin.from("task_sequences").select("task_id, user_id, delivery_note, delivery_link").in("task_id", taskIds).in("user_id", memberIds),
+    ]);
+    const pushDel = (taskId: string, item: { userId: string | null; note: string; link: string | null }) => {
+      if (!item.note && !item.link) return;
+      (deliveries[taskId] ??= []).push(item);
+    };
+    // Tarefas com partes (fila/paralelo) entram pela entrega POR PARTE — pula o
+    // nível da task para não duplicar a nota/link do último a entregar (que a
+    // TaskDetail grava em tasks.delivery_* além da parte).
+    const seqTaskIds = new Set(((sDel ?? []) as any[]).map((s) => s.task_id));
+    ((tDel ?? []) as any[]).forEach((t) => {
+      if (seqTaskIds.has(t.id)) return;
+      if (restrictedTask(t.project_id ?? null)) return;
+      pushDel(t.id, { userId: null, note: t.delivery_note ?? "", link: t.delivery_link ?? null });
+    });
+    ((sDel ?? []) as any[]).forEach((s) => {
+      if (restrictedTask(taskMeta.get(s.task_id)?.projectId ?? null)) return;
+      pushDel(s.task_id, { userId: s.user_id, note: s.delivery_note ?? "", link: s.delivery_link ?? null });
+    });
+  }
+
   // Membros (nomes/avatares) — inclui quem não registrou nada no período.
   const [{ data: profilesData }, authList] = await Promise.all([
     admin.from("profiles").select("id, full_name, avatar_url").in("id", memberIds),
@@ -215,6 +244,7 @@ export async function POST(request: Request) {
   return NextResponse.json({
     records: enriched,
     members,
+    deliveries,
     teams: selectableTeams.map((t) => ({ id: t.id, name: t.name })),
     scopeTeamIds: scopeTeams.map((t) => t.id),
   });

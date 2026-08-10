@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { Clock, Users, ListTodo, Loader2, Lock, Download, ChevronDown } from "lucide-react";
+import { Clock, Users, ListTodo, Loader2, Lock, Download, ChevronDown, Link2 } from "lucide-react";
 import { cn } from "@/lib/utils";
 import { buildCsv, downloadCsv } from "@/lib/csvExport";
 
@@ -19,7 +19,14 @@ interface TMRecord {
   minutes: number;
 }
 interface TMMember { id: string; full_name: string; avatar_url: string | null; weeklyHours: number | null }
-interface TMData { records: TMRecord[]; members: TMMember[]; teams: { id: string; name: string }[]; scopeTeamIds: string[] }
+interface TMDelivery { userId: string | null; note: string; link: string | null }
+interface TMData {
+  records: TMRecord[];
+  members: TMMember[];
+  deliveries: Record<string, TMDelivery[]>;
+  teams: { id: string; name: string }[];
+  scopeTeamIds: string[];
+}
 
 const PALETTE = ["#00205B", "#01CFB5", "#407EC9", "#FFB81C", "#AC145A", "#3B3FB6", "#00EFC8", "#52575C", "#EA580C", "#16A34A"];
 
@@ -56,6 +63,9 @@ function businessDaysInclusive(from: string, to: string): number {
 function fmtDateBR(d: string) {
   const [y, m, dd] = d.split("-");
   return dd && m ? `${dd}/${m}` : d;
+}
+function normalizeUrl(u: string): string {
+  return /^[a-z][a-z0-9+.-]*:/i.test(u) ? u : `https://${u}`;
 }
 
 type Preset = "7d" | "month" | "30d" | "lastMonth" | "custom";
@@ -118,6 +128,7 @@ export default function TimeManagementPage() {
 
   const records = data?.records ?? [];
   const members = data?.members ?? [];
+  const deliveries = data?.deliveries ?? {};
   const memberName = useMemo(() => new Map(members.map((m) => [m.id, m.full_name])), [members]);
 
   const allTypes = useMemo(() => [...new Set(records.map((r) => r.taskType))].sort(), [records]);
@@ -175,10 +186,10 @@ export default function TimeManagementPage() {
   }, [filtered, from, to]);
 
   const byTask = useMemo(() => {
-    const m = new Map<string, { title: string; type: string; project: string; subproject: string; minutes: number; users: Set<string> }>();
+    const m = new Map<string, { taskId: string | null; title: string; type: string; project: string; subproject: string; minutes: number; users: Set<string> }>();
     for (const r of filtered) {
       const k = r.taskId ?? `sem:${r.taskTitle}`;
-      const e = m.get(k) ?? { title: r.taskTitle, type: r.taskType, project: r.projectName, subproject: r.subprojectName, minutes: 0, users: new Set() };
+      const e = m.get(k) ?? { taskId: r.taskId, title: r.taskTitle, type: r.taskType, project: r.projectName, subproject: r.subprojectName, minutes: 0, users: new Set() };
       e.minutes += r.minutes;
       e.users.add(r.userId);
       m.set(k, e);
@@ -419,6 +430,7 @@ export default function TimeManagementPage() {
                         <th className="text-left font-semibold py-2 pr-3">Projeto</th>
                         <th className="text-left font-semibold py-2 pr-3">Quadro</th>
                         <th className="text-left font-semibold py-2 pr-3">Pessoas</th>
+                        <th className="text-left font-semibold py-2 pr-3">Entrega</th>
                         <th className="text-right font-semibold py-2">Horas</th>
                       </tr>
                     </thead>
@@ -430,6 +442,27 @@ export default function TimeManagementPage() {
                           <td className="py-2 pr-3 text-neutral-500 text-xs">{t.subproject}</td>
                           <td className="py-2 pr-3 text-neutral-500 text-xs">{t.project}</td>
                           <td className="py-2 pr-3 text-neutral-500 text-xs">{[...t.users].map((u) => memberName.get(u) ?? "?").join(", ")}</td>
+                          <td className="py-2 pr-3 text-xs max-w-[260px]">
+                            {(() => {
+                              const items = (t.taskId && deliveries[t.taskId]) || [];
+                              if (items.length === 0) return <span className="text-neutral-300">—</span>;
+                              return (
+                                <div className="space-y-0.5">
+                                  {items.map((d, j) => (
+                                    <div key={j} className="flex items-start gap-1 text-neutral-600">
+                                      {d.userId && <span className="font-medium shrink-0">{(memberName.get(d.userId) ?? "?").split(" ")[0]}:</span>}
+                                      {d.note && <span className="break-words">{d.note}</span>}
+                                      {d.link && (
+                                        <a href={normalizeUrl(d.link)} target="_blank" rel="noopener noreferrer" className="text-brand-teal hover:underline shrink-0 inline-flex items-center gap-0.5">
+                                          <Link2 size={11} /> link
+                                        </a>
+                                      )}
+                                    </div>
+                                  ))}
+                                </div>
+                              );
+                            })()}
+                          </td>
                           <td className="py-2 text-right font-semibold text-neutral-700 whitespace-nowrap">{fmtHm(t.minutes)}</td>
                         </tr>
                       ))}
