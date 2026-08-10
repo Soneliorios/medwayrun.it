@@ -13,6 +13,8 @@ interface TMRecord {
   taskType: string;
   projectId: string | null;
   projectName: string;
+  subprojectId: string | null;
+  subprojectName: string; // "Projeto" (board_subproject) ou "Sem projeto"
   date: string; // YYYY-MM-DD
   minutes: number;
 }
@@ -86,6 +88,7 @@ export default function TimeManagementPage() {
   // Filtros no cliente (não refazem a busca).
   const [personFilter, setPersonFilter] = useState<Set<string>>(new Set());
   const [typeFilter, setTypeFilter] = useState<Set<string>>(new Set());
+  const [projectFilter, setProjectFilter] = useState<Set<string>>(new Set());
 
   useEffect(() => {
     let alive = true;
@@ -118,13 +121,15 @@ export default function TimeManagementPage() {
   const memberName = useMemo(() => new Map(members.map((m) => [m.id, m.full_name])), [members]);
 
   const allTypes = useMemo(() => [...new Set(records.map((r) => r.taskType))].sort(), [records]);
+  const allProjects = useMemo(() => [...new Set(records.map((r) => r.subprojectName))].sort(), [records]);
 
   const filtered = useMemo(
     () => records.filter((r) =>
       (personFilter.size === 0 || personFilter.has(r.userId)) &&
-      (typeFilter.size === 0 || typeFilter.has(r.taskType))
+      (typeFilter.size === 0 || typeFilter.has(r.taskType)) &&
+      (projectFilter.size === 0 || projectFilter.has(r.subprojectName))
     ),
-    [records, personFilter, typeFilter]
+    [records, personFilter, typeFilter, projectFilter]
   );
 
   const totalMinutes = useMemo(() => filtered.reduce((s, r) => s + r.minutes, 0), [filtered]);
@@ -146,6 +151,12 @@ export default function TimeManagementPage() {
     return [...m.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
   }, [filtered]);
 
+  const byProject = useMemo(() => {
+    const m = new Map<string, number>();
+    for (const r of filtered) m.set(r.subprojectName, (m.get(r.subprojectName) ?? 0) + r.minutes);
+    return [...m.entries()].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+  }, [filtered]);
+
   const byDay = useMemo(() => {
     const m = new Map<string, number>();
     for (const r of filtered) m.set(r.date, (m.get(r.date) ?? 0) + r.minutes);
@@ -164,10 +175,10 @@ export default function TimeManagementPage() {
   }, [filtered, from, to]);
 
   const byTask = useMemo(() => {
-    const m = new Map<string, { title: string; type: string; project: string; minutes: number; users: Set<string> }>();
+    const m = new Map<string, { title: string; type: string; project: string; subproject: string; minutes: number; users: Set<string> }>();
     for (const r of filtered) {
       const k = r.taskId ?? `sem:${r.taskTitle}`;
-      const e = m.get(k) ?? { title: r.taskTitle, type: r.taskType, project: r.projectName, minutes: 0, users: new Set() };
+      const e = m.get(k) ?? { title: r.taskTitle, type: r.taskType, project: r.projectName, subproject: r.subprojectName, minutes: 0, users: new Set() };
       e.minutes += r.minutes;
       e.users.add(r.userId);
       m.set(k, e);
@@ -206,10 +217,10 @@ export default function TimeManagementPage() {
   const maxPerson = Math.max(...perPersonRows.map((p) => p.minutes), 1);
 
   function exportCsv() {
-    const header = ["Pessoa", "Tarefa", "Tipo", "Quadro", "Data", "Horas"];
+    const header = ["Pessoa", "Tarefa", "Tipo", "Projeto", "Quadro", "Data", "Horas"];
     const rows: (string | number)[][] = [header];
     for (const r of [...filtered].sort((a, b) => a.date.localeCompare(b.date))) {
-      rows.push([memberName.get(r.userId) ?? r.userId, r.taskTitle, r.taskType, r.projectName, fmtDateBR(r.date), (r.minutes / 60).toFixed(2)]);
+      rows.push([memberName.get(r.userId) ?? r.userId, r.taskTitle, r.taskType, r.subprojectName, r.projectName, fmtDateBR(r.date), (r.minutes / 60).toFixed(2)]);
     }
     downloadCsv(`gestao-de-tempo_${from}_a_${to}.csv`, buildCsv(rows));
   }
@@ -219,6 +230,9 @@ export default function TimeManagementPage() {
   }
   function toggleType(t: string) {
     setTypeFilter((prev) => { const n = new Set(prev); n.has(t) ? n.delete(t) : n.add(t); return n; });
+  }
+  function toggleProject(p: string) {
+    setProjectFilter((prev) => { const n = new Set(prev); n.has(p) ? n.delete(p) : n.add(p); return n; });
   }
 
   if (forbidden) {
@@ -330,8 +344,19 @@ export default function TimeManagementPage() {
                     ))}
                   </div>
                 )}
-                {(personFilter.size > 0 || typeFilter.size > 0) && (
-                  <button onClick={() => { setPersonFilter(new Set()); setTypeFilter(new Set()); }} className="text-[11px] text-brand-teal hover:underline">Limpar filtros</button>
+                {allProjects.length > 0 && (
+                  <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-[11px] font-semibold uppercase tracking-wide text-neutral-400 mr-1">Projeto</span>
+                    {allProjects.map((p) => (
+                      <button key={p} onClick={() => toggleProject(p)}
+                        className={cn("px-2.5 py-1 rounded-full text-xs font-medium transition-colors", projectFilter.has(p) ? "bg-brand-navy text-white" : "bg-neutral-100 text-neutral-600 hover:bg-neutral-200")}>
+                        {p}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                {(personFilter.size > 0 || typeFilter.size > 0 || projectFilter.size > 0) && (
+                  <button onClick={() => { setPersonFilter(new Set()); setTypeFilter(new Set()); setProjectFilter(new Set()); }} className="text-[11px] text-brand-teal hover:underline">Limpar filtros</button>
                 )}
               </div>
             )}
@@ -368,26 +393,19 @@ export default function TimeManagementPage() {
             <div className="grid md:grid-cols-2 gap-4">
               {/* Por tipo */}
               <Section title="Tempo por tipo de tarefa">
-                {byType.length === 0 ? <Empty /> : (
-                  <div className="space-y-2">
-                    {byType.map((d, i) => (
-                      <div key={d.label} className="flex items-center gap-3">
-                        <span className="w-28 shrink-0 text-xs text-neutral-600 truncate" title={d.label}>{d.label}</span>
-                        <div className="flex-1 h-5 rounded-full bg-neutral-100 overflow-hidden">
-                          <div className="h-full rounded-full transition-all duration-500" style={{ width: `${(d.value / (byType[0]?.value || 1)) * 100}%`, background: PALETTE[i % PALETTE.length] }} />
-                        </div>
-                        <span className="w-16 text-right text-xs font-semibold text-neutral-700 shrink-0">{fmtHm(d.value)}</span>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                {byType.length === 0 ? <Empty /> : <BreakdownBars data={byType} />}
               </Section>
 
-              {/* Por dia */}
-              <Section title="Tempo ao longo do período">
-                {byDay.length === 0 ? <Empty /> : <DayChart data={byDay} />}
+              {/* Por projeto */}
+              <Section title="Tempo por projeto">
+                {byProject.length === 0 ? <Empty /> : <BreakdownBars data={byProject} />}
               </Section>
             </div>
+
+            {/* Por dia */}
+            <Section title="Tempo ao longo do período">
+              {byDay.length === 0 ? <Empty /> : <DayChart data={byDay} />}
+            </Section>
 
             {/* Detalhe por tarefa */}
             <Section title={`Detalhe por tarefa (${byTask.length})`}>
@@ -398,6 +416,7 @@ export default function TimeManagementPage() {
                       <tr className="text-[11px] uppercase tracking-wide text-neutral-400 border-b border-neutral-100">
                         <th className="text-left font-semibold py-2 pr-3">Tarefa</th>
                         <th className="text-left font-semibold py-2 pr-3">Tipo</th>
+                        <th className="text-left font-semibold py-2 pr-3">Projeto</th>
                         <th className="text-left font-semibold py-2 pr-3">Quadro</th>
                         <th className="text-left font-semibold py-2 pr-3">Pessoas</th>
                         <th className="text-right font-semibold py-2">Horas</th>
@@ -408,6 +427,7 @@ export default function TimeManagementPage() {
                         <tr key={i} className="border-b border-neutral-50 hover:bg-neutral-50/60">
                           <td className="py-2 pr-3 text-neutral-700 max-w-[280px] break-words">{t.title}</td>
                           <td className="py-2 pr-3"><span className="text-xs px-1.5 py-0.5 rounded bg-neutral-100 text-neutral-500">{t.type}</span></td>
+                          <td className="py-2 pr-3 text-neutral-500 text-xs">{t.subproject}</td>
                           <td className="py-2 pr-3 text-neutral-500 text-xs">{t.project}</td>
                           <td className="py-2 pr-3 text-neutral-500 text-xs">{[...t.users].map((u) => memberName.get(u) ?? "?").join(", ")}</td>
                           <td className="py-2 text-right font-semibold text-neutral-700 whitespace-nowrap">{fmtHm(t.minutes)}</td>
@@ -447,6 +467,23 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 
 function Empty() {
   return <p className="text-sm text-neutral-400 py-6 text-center">Nenhum registro de tempo no período.</p>;
+}
+
+function BreakdownBars({ data }: { data: { label: string; value: number }[] }) {
+  const max = data[0]?.value || 1;
+  return (
+    <div className="space-y-2">
+      {data.map((d, i) => (
+        <div key={d.label} className="flex items-center gap-3">
+          <span className="w-28 shrink-0 text-xs text-neutral-600 truncate" title={d.label}>{d.label}</span>
+          <div className="flex-1 h-5 rounded-full bg-neutral-100 overflow-hidden">
+            <div className="h-full rounded-full transition-all duration-500" style={{ width: `${(d.value / max) * 100}%`, background: PALETTE[i % PALETTE.length] }} />
+          </div>
+          <span className="w-16 text-right text-xs font-semibold text-neutral-700 shrink-0">{fmtHm(d.value)}</span>
+        </div>
+      ))}
+    </div>
+  );
 }
 
 function DayChart({ data }: { data: { date: string; minutes: number }[] }) {

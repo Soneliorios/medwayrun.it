@@ -137,19 +137,22 @@ export async function POST(request: Request) {
     if (mins > 0) records.push({ userId: t.assignee_id, taskId: t.id, date, minutes: mins });
   });
 
-  // Metadados das tarefas envolvidas (título, tipo, quadro).
+  // Metadados das tarefas envolvidas (título, tipo, quadro, projeto do quadro).
   const taskIds = [...new Set(records.map((r) => r.taskId).filter(Boolean) as string[])];
-  const taskMeta = new Map<string, { title: string; type: string; projectId: string | null }>();
+  const taskMeta = new Map<string, { title: string; type: string; projectId: string | null; subprojectId: string | null }>();
   const projectIds = new Set<string>();
+  const subprojectIds = new Set<string>();
   if (taskIds.length) {
-    const { data: tks } = await admin.from("tasks").select("id, title, task_type, project_id").in("id", taskIds);
+    const { data: tks } = await admin.from("tasks").select("id, title, task_type, project_id, board_subproject_id").in("id", taskIds);
     ((tks ?? []) as any[]).forEach((t) => {
       taskMeta.set(t.id, {
         title: t.title ?? "(sem título)",
         type: typeof t.task_type === "string" && t.task_type ? t.task_type : "Sem tipo",
         projectId: t.project_id ?? null,
+        subprojectId: t.board_subproject_id ?? null,
       });
       if (t.project_id) projectIds.add(t.project_id);
+      if (t.board_subproject_id) subprojectIds.add(t.board_subproject_id);
     });
   }
   // Nomes dos quadros + ACESSO do solicitante. Conteúdo de quadro privado que o
@@ -169,6 +172,13 @@ export async function POST(request: Request) {
     });
   }
 
+  // Nomes dos "Projetos" (board_subprojects) atribuídos às tarefas.
+  const subprojectName = new Map<string, string>();
+  if (subprojectIds.size) {
+    const { data: sp } = await admin.from("board_subprojects").select("id, name").in("id", [...subprojectIds]);
+    ((sp ?? []) as any[]).forEach((s) => subprojectName.set(s.id, s.name ?? "Projeto"));
+  }
+
   // Membros (nomes/avatares) — inclui quem não registrou nada no período.
   const [{ data: profilesData }, authList] = await Promise.all([
     admin.from("profiles").select("id, full_name, avatar_url").in("id", memberIds),
@@ -186,6 +196,7 @@ export async function POST(request: Request) {
     const meta = r.taskId ? taskMeta.get(r.taskId) : undefined;
     const projId = meta?.projectId ?? null;
     const restricted = !!projId && !accessibleProjects.has(projId);
+    const subId = meta?.subprojectId ?? null;
     return {
       userId: r.userId,
       taskId: r.taskId,
@@ -193,6 +204,9 @@ export async function POST(request: Request) {
       taskType: restricted ? "Restrito" : (meta?.type ?? "Sem tipo"),
       projectId: projId,
       projectName: !projId ? "—" : (restricted ? "Quadro restrito" : (projectName.get(projId) ?? "Quadro")),
+      // "Projeto" = board_subproject atribuído à task (redigido se o quadro for restrito).
+      subprojectId: restricted ? null : subId,
+      subprojectName: restricted ? "Restrito" : (subId ? (subprojectName.get(subId) ?? "Projeto") : "Sem projeto"),
       date: r.date,
       minutes: r.minutes,
     };
