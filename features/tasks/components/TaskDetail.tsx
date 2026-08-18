@@ -766,12 +766,32 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
     // Round to the nearest second (not to 0.01h). Rounding to hundredths of an
     // hour turned 1min (0.0167h) into 0.02h = 72s, adding a phantom +12s.
     const rounded = Math.round(hours * 3600) / 3600;
+    const prev = task.tracked_hours ?? 0;
+    const deltaMin = Math.round((rounded - prev) * 60);
     setTask((t) => t ? { ...t, tracked_hours: rounded } : t);
     store.updateTask(taskId, { tracked_hours: rounded } as any);
-    await taskService.update(taskId, { tracked_hours: rounded } as any).catch(() => {
-      setTask(task);
-      store.updateTask(taskId, { tracked_hours: task.tracked_hours } as any);
-    });
+    const ok = await taskService.update(taskId, { tracked_hours: rounded } as any)
+      .then(() => true)
+      .catch(() => {
+        setTask(task);
+        store.updateTask(taskId, { tracked_hours: task.tracked_hours } as any);
+        return false;
+      });
+    // Registra o AJUSTE como um time_entry (do usuário atual, hoje) para que o tempo
+    // adicionado manualmente entre na contagem do dia — mesmo com a task ainda aberta
+    // (o timer também grava time_entry; a edição manual não gravava e "sumia" do dia).
+    if (ok && deltaMin > 0 && user?.id) {
+      const nowIso = new Date().toISOString();
+      const sb = createRawClient();
+      await (sb as any).from("time_entries").insert({
+        task_id: taskId,
+        user_id: user.id,
+        started_at: nowIso,
+        ended_at: nowIso,
+        duration_minutes: deltaMin,
+        note: "Ajuste manual",
+      }).then(({ error }: { error: unknown }) => { if (error) console.error("[handleTrackedHoursUpdate] time_entry", error); });
+    }
   }
 
 
