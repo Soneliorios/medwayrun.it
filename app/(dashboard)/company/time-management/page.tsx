@@ -227,12 +227,67 @@ export default function TimeManagementPage() {
   const distinctTasks = useMemo(() => new Set(filtered.map((r) => r.taskId).filter(Boolean)).size, [filtered]);
   const maxPerson = Math.max(...perPersonRows.map((p) => p.minutes), 1);
 
+  // Exporta TODAS as informações da página (respeitando os filtros ativos), em
+  // seções: resumo, por pessoa, por tipo, por projeto, por dia, detalhe por tarefa
+  // (com a entrega) e os registros crus por pessoa/tarefa/dia.
   function exportCsv() {
-    const header = ["Pessoa", "Tarefa", "Tipo", "Projeto", "Quadro", "Data", "Horas"];
-    const rows: (string | number)[][] = [header];
-    for (const r of [...filtered].sort((a, b) => a.date.localeCompare(b.date))) {
-      rows.push([memberName.get(r.userId) ?? r.userId, r.taskTitle, r.taskType, r.subprojectName, r.projectName, fmtDateBR(r.date), (r.minutes / 60).toFixed(2)]);
+    const h = (min: number) => (min / 60).toFixed(2);
+    const teamLabel = teamId === "all" ? "Todos os times" : (data?.teams.find((t) => t.id === teamId)?.name ?? "—");
+    const deliveryText = (taskId: string | null) =>
+      ((taskId && deliveries[taskId]) || [])
+        .map((d) => `${d.userId ? (memberName.get(d.userId) ?? "?") + ": " : ""}${d.note}${d.link ? ` (${d.link})` : ""}`.trim())
+        .join(" | ");
+
+    const rows: (string | number)[][] = [];
+    rows.push(["Gestão de tempo"]);
+    rows.push(["Período", `${fmtDateBR(from)} a ${fmtDateBR(to)}`]);
+    rows.push(["Time", teamLabel]);
+    if (personFilter.size || typeFilter.size || projectFilter.size) {
+      rows.push(["Filtros ativos", [
+        personFilter.size ? `Pessoas: ${[...personFilter].map((id) => memberName.get(id) ?? id).join(", ")}` : "",
+        typeFilter.size ? `Tipos: ${[...typeFilter].join(", ")}` : "",
+        projectFilter.size ? `Projetos: ${[...projectFilter].join(", ")}` : "",
+      ].filter(Boolean).join(" | ")]);
     }
+
+    rows.push([]);
+    rows.push(["RESUMO"]);
+    rows.push(["Total no período (h)", h(totalMinutes)]);
+    rows.push(["Pessoas ativas", `${activePeople} de ${visibleMembers.length}`]);
+    rows.push(["Média por pessoa (h)", h(visibleMembers.length ? totalMinutes / visibleMembers.length : 0)]);
+    rows.push(["Tarefas trabalhadas", distinctTasks]);
+
+    rows.push([]);
+    rows.push(["TEMPO POR PESSOA"]);
+    rows.push(["Pessoa", "Horas", "Tarefas", "Meta (h)", "Utilização (%)"]);
+    perPersonRows.forEach((p) => rows.push([p.full_name, h(p.minutes), p.tasks, p.expected != null ? p.expected.toFixed(1) : "", p.util != null ? Math.round(p.util) : ""]));
+
+    rows.push([]);
+    rows.push(["TEMPO POR TIPO"]);
+    rows.push(["Tipo", "Horas"]);
+    byType.forEach((d) => rows.push([d.label, h(d.value)]));
+
+    rows.push([]);
+    rows.push(["TEMPO POR PROJETO"]);
+    rows.push(["Projeto", "Horas"]);
+    byProject.forEach((d) => rows.push([d.label, h(d.value)]));
+
+    rows.push([]);
+    rows.push(["TEMPO POR DIA"]);
+    rows.push(["Data", "Horas"]);
+    byDay.forEach((d) => rows.push([fmtDateBR(d.date), h(d.minutes)]));
+
+    rows.push([]);
+    rows.push(["DETALHE POR TAREFA"]);
+    rows.push(["Tarefa", "Tipo", "Projeto", "Quadro", "Pessoas", "Entrega", "Horas"]);
+    byTask.forEach((t) => rows.push([t.title, t.type, t.subproject, t.project, [...t.users].map((u) => memberName.get(u) ?? "?").join(", "), deliveryText(t.taskId), h(t.minutes)]));
+
+    rows.push([]);
+    rows.push(["REGISTROS (por pessoa / tarefa / dia)"]);
+    rows.push(["Pessoa", "Tarefa", "Tipo", "Projeto", "Quadro", "Data", "Horas"]);
+    [...filtered].sort((a, b) => a.date.localeCompare(b.date)).forEach((r) =>
+      rows.push([memberName.get(r.userId) ?? r.userId, r.taskTitle, r.taskType, r.subprojectName, r.projectName, fmtDateBR(r.date), h(r.minutes)]));
+
     downloadCsv(`gestao-de-tempo_${from}_a_${to}.csv`, buildCsv(rows));
   }
 
