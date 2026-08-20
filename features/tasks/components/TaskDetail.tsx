@@ -23,6 +23,7 @@ import {
   CheckCircle2,
   Flag,
   Plus,
+  Minus,
   Trash2,
   Loader2,
   MoreHorizontal,
@@ -233,8 +234,14 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
   const [deliveryS, setDeliveryS] = useState<string>("00");
   const [deliveryLink, setDeliveryLink] = useState<string>("");
   const [deliveryNote, setDeliveryNote] = useState<string>("");
-  const [editingTrackedHours, setEditingTrackedHours] = useState(false);
-  const [trackedParts, setTrackedParts] = useState({ h: 0, m: 0, s: 0 });
+  // Registro de tempo avulso (+ adicionar / − remover) com data (retroativo).
+  const [logH, setLogH] = useState(0);
+  const [logM, setLogM] = useState(0);
+  const [logDate, setLogDate] = useState<string>(() => {
+    const d = new Date();
+    const p = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())}`;
+  });
   const [editingEstimatedHours, setEditingEstimatedHours] = useState(false);
   const [estimatedParts, setEstimatedParts] = useState({ h: 0, m: 0, s: 0 });
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -761,37 +768,72 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
     }
   }
 
-  async function handleTrackedHoursUpdate(hours: number) {
-    if (!task) return;
-    // Round to the nearest second (not to 0.01h). Rounding to hundredths of an
-    // hour turned 1min (0.0167h) into 0.02h = 72s, adding a phantom +12s.
-    const rounded = Math.round(hours * 3600) / 3600;
-    const prev = task.tracked_hours ?? 0;
-    const deltaMin = Math.round((rounded - prev) * 60);
-    setTask((t) => t ? { ...t, tracked_hours: rounded } : t);
+  // Quem pode registrar/ajustar tempo: qualquer pessoa ENVOLVIDA (responsável na
+  // fila/paralelo, quem criou a task) + admins/board canEdit. (Antes só o
+  // responsável "cabeça" conseguia — travava criador e alocados em paralelo.)
+  const canLogTime = (() => {
+    if (!task) return false;
+    const isCreator = (task as any).created_by === user?.id;
+    const isResp = task.assignee_id === user?.id || queue.some((q) => q.user_id === user?.id);
+    return boardAccess.canEdit || !isUser || isCreator || isResp;
+  })();
+
+  // Atualiza o tracked_hours + o "meu tempo" (paralelo) após mexer nos time_entries.
+  async function refreshTrackedFrom(newTracked: number) {
+    const rounded = Math.max(0, Math.round(newTracked * 3600) / 3600);
+    setTask((t) => (t ? { ...t, tracked_hours: rounded } : t));
     store.updateTask(taskId, { tracked_hours: rounded } as any);
-    const ok = await taskService.update(taskId, { tracked_hours: rounded } as any)
-      .then(() => true)
-      .catch(() => {
-        setTask(task);
-        store.updateTask(taskId, { tracked_hours: task.tracked_hours } as any);
-        return false;
-      });
-    // Registra o AJUSTE como um time_entry (do usuário atual, hoje) para que o tempo
-    // adicionado manualmente entre na contagem do dia — mesmo com a task ainda aberta
-    // (o timer também grava time_entry; a edição manual não gravava e "sumia" do dia).
-    if (ok && deltaMin > 0 && user?.id) {
-      const nowIso = new Date().toISOString();
-      const sb = createRawClient();
-      await (sb as any).from("time_entries").insert({
-        task_id: taskId,
-        user_id: user.id,
-        started_at: nowIso,
-        ended_at: nowIso,
-        duration_minutes: deltaMin,
-        note: "Ajuste manual",
-      }).then(({ error }: { error: unknown }) => { if (error) console.error("[handleTrackedHoursUpdate] time_entry", error); });
+    await taskService.update(taskId, { tracked_hours: rounded } as any).catch((e) => console.error("[tracked] update", e));
+    if (user?.id) setMyTaskMinutes(await timerService.userTaskMinutes(user.id, taskId));
+  }
+
+  // ADICIONA um tempo avulso numa data escolhida (retroativo). Grava um time_entry
+  // do usuário atual — só persiste no tracked_hours se o insert der certo (atômico).
+  async function handleAddTime(minutes: number, dateStr: string) {
+    if (!task || !user?.id || !canLogTime) return;
+    const add = Math.round(minutes);
+    if (add <= 0) return;
+    // Meio-dia UTC: o timesheet agrupa por started_at.slice(0,10), então cai
+    // exatamente na data escolhida (sem virar o dia por fuso).
+    const startedAt = `${dateStr}T12:00:00.000Z`;
+    const sb = createRawClient();
+    const { error } = await (sb as any).from("time_entries").insert({
+      task_id: taskId, user_id: user.id, started_at: startedAt, ended_at: startedAt,
+      duration_minutes: add, note: "Adição manual",
+    });
+    if (error) { console.error("[handleAddTime] time_entry", error); return; }
+    await refreshTrackedFrom((task.tracked_hours ?? 0) + add / 60);
+  }
+
+  // REMOVE tempo reduzindo os PRÓPRIOS lançamentos desta task (mais recente →
+  // mais antigo), até o limite do que a pessoa registrou. Assim não vira dado
+  // negativo, não some com o tempo de outra pessoa (paralelo) e as horas saem
+  // do dia em que foram lançadas (a contagem por dia continua certa).
+  async function handleRemoveTime(minutes: number) {
+    if (!task || !user?.id || !canLogTime) return;
+    let toRemove = Math.round(minutes);
+    if (toRemove <= 0) return;
+    const sb = createRawClient();
+    const { data: mine, error } = await (sb as any)
+      .from("time_entries")
+      .select("id, duration_minutes, started_at")
+      .eq("task_id", taskId)
+      .eq("user_id", user.id)
+      .order("started_at", { ascending: false });
+    if (error) { console.error("[handleRemoveTime] list", error); return; }
+    let removed = 0;
+    for (const e of (mine ?? []) as any[]) {
+      if (toRemove <= 0) break;
+      const d = e.duration_minutes ?? 0;
+      if (d <= 0) continue;
+      const take = Math.min(d, toRemove);
+      const newD = d - take;
+      if (newD <= 0) await (sb as any).from("time_entries").delete().eq("id", e.id);
+      else await (sb as any).from("time_entries").update({ duration_minutes: newD }).eq("id", e.id);
+      toRemove -= take; removed += take;
     }
+    if (removed <= 0) return;
+    await refreshTrackedFrom((task.tracked_hours ?? 0) - removed / 60);
   }
 
 
@@ -2382,57 +2424,38 @@ export function TaskDetail({ taskId, onClose, variant = "modal", autoOpenDeliver
                 {/* Tempo registrado */}
                 <MetaField label="Tempo registrado" icon={<Clock size={12} />}>
                   <div className="space-y-1.5">
-                    {editingTrackedHours ? (() => {
-                      const commit = () => {
-                        handleTrackedHoursUpdate(trackedParts.h + trackedParts.m / 60 + trackedParts.s / 3600);
-                        setEditingTrackedHours(false);
-                      };
-                      const cell = "w-full text-xs text-center border border-brand-teal rounded-md px-1 py-1 bg-white outline-none focus:ring-1 focus:ring-brand-teal/30";
-                      return (
-                        <div
-                          className="flex items-center gap-1"
-                          onBlur={(e) => { if (!e.currentTarget.contains(e.relatedTarget as Node)) commit(); }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") { e.preventDefault(); commit(); }
-                            if (e.key === "Escape") setEditingTrackedHours(false);
-                          }}
-                        >
-                          <div className="flex-1">
-                            <input autoFocus type="number" min={0} value={trackedParts.h || ""} placeholder="0"
-                              onChange={(e) => setTrackedParts((p) => ({ ...p, h: parseInt(e.target.value) || 0 }))} className={cell} />
-                            <p className="text-[9px] text-neutral-400 text-center mt-0.5">h</p>
-                          </div>
-                          <span className="text-neutral-300 pb-3">:</span>
-                          <div className="flex-1">
-                            <input type="number" min={0} max={59} value={trackedParts.m || ""} placeholder="00"
-                              onChange={(e) => setTrackedParts((p) => ({ ...p, m: Math.min(59, parseInt(e.target.value) || 0) }))} className={cell} />
-                            <p className="text-[9px] text-neutral-400 text-center mt-0.5">min</p>
-                          </div>
-                          <span className="text-neutral-300 pb-3">:</span>
-                          <div className="flex-1">
-                            <input type="number" min={0} max={59} value={trackedParts.s || ""} placeholder="00"
-                              onChange={(e) => setTrackedParts((p) => ({ ...p, s: Math.min(59, parseInt(e.target.value) || 0) }))} className={cell} />
-                            <p className="text-[9px] text-neutral-400 text-center mt-0.5">seg</p>
-                          </div>
+                    <div className="text-sm font-semibold text-brand-navy">{formatHms(trackedHours)}</div>
+                    {canLogTime ? (
+                      <div className="space-y-1.5 pt-0.5">
+                        <div className="flex items-center gap-1.5">
+                          <input type="number" min={0} value={logH || ""} placeholder="0"
+                            onChange={(e) => setLogH(Math.max(0, parseInt(e.target.value) || 0))}
+                            className="w-11 text-xs text-center border border-neutral-200 rounded-md px-1 py-1 bg-white outline-none focus:border-brand-teal" />
+                          <span className="text-[10px] text-neutral-400">h</span>
+                          <input type="number" min={0} max={59} value={logM || ""} placeholder="00"
+                            onChange={(e) => setLogM(Math.min(59, Math.max(0, parseInt(e.target.value) || 0)))}
+                            className="w-11 text-xs text-center border border-neutral-200 rounded-md px-1 py-1 bg-white outline-none focus:border-brand-teal" />
+                          <span className="text-[10px] text-neutral-400">min</span>
+                          <input type="date" value={logDate}
+                            onChange={(e) => setLogDate(e.target.value)}
+                            className="flex-1 min-w-0 text-xs border border-neutral-200 rounded-md px-2 py-1 bg-white outline-none focus:border-brand-teal" />
                         </div>
-                      );
-                    })() : task.assignee_id === user?.id ? (
-                      <button
-                        onClick={() => {
-                          const total = Math.round(trackedHours * 3600);
-                          setTrackedParts({ h: Math.floor(total / 3600), m: Math.floor((total % 3600) / 60), s: total % 60 });
-                          setEditingTrackedHours(true);
-                        }}
-                        className="group flex items-center gap-1.5 text-xs font-medium text-brand-navy hover:text-brand-teal transition-colors"
-                        title="Clique para editar o tempo registrado"
-                      >
-                        {formatHms(trackedHours)}
-                        <Pencil size={10} className="opacity-0 group-hover:opacity-60 transition-opacity shrink-0" />
-                      </button>
+                        <div className="flex items-center gap-1.5">
+                          <button type="button" disabled={logH === 0 && logM === 0}
+                            onClick={() => { handleAddTime(logH * 60 + logM, logDate); setLogH(0); setLogM(0); }}
+                            className="flex-1 flex items-center justify-center gap-1 px-2 py-1 rounded-md text-xs font-semibold bg-brand-teal text-white hover:bg-brand-teal/90 disabled:opacity-40 transition-colors">
+                            <Plus size={12} /> Adicionar
+                          </button>
+                          <button type="button" disabled={logH === 0 && logM === 0}
+                            onClick={() => { handleRemoveTime(logH * 60 + logM); setLogH(0); setLogM(0); }}
+                            className="flex-1 flex items-center justify-center gap-1 px-2 py-1 rounded-md text-xs font-medium border border-neutral-200 text-neutral-600 hover:bg-neutral-50 disabled:opacity-40 transition-colors">
+                            <Minus size={12} /> Remover
+                          </button>
+                        </div>
+                        <p className="text-[10px] text-neutral-400">Adicionar lança na data escolhida (retroativo). Remover tira do seu tempo já lançado.</p>
+                      </div>
                     ) : (
-                      <span className="text-xs font-medium text-brand-navy" title="Somente o responsável atual pode registrar tempo">
-                        {formatHms(trackedHours)}
-                      </span>
+                      <span className="text-[10px] text-neutral-400">Só quem está na tarefa (responsáveis ou quem criou) registra tempo.</span>
                     )}
                     {(task as any).sla_minutes && (
                       <>

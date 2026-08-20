@@ -38,6 +38,8 @@ export default function MePage() {
   const [tasks, setTasks] = useState<TaskWithRelations[]>([]);
   const [responsibleIds, setResponsibleIds] = useState<Set<string>>(new Set());
   const [followingIds, setFollowingIds] = useState<Set<string>>(new Set());
+  // Tasks em que MINHA parte já foi entregue (fila/paralelo) — "concluída pra mim".
+  const [myPartDone, setMyPartDone] = useState<Set<string>>(new Set());
   const [openTaskId, setOpenTaskId] = useState<string | null>(null);
 
   // Sort/filter state (shared between tasks and created tabs)
@@ -60,10 +62,13 @@ export default function MePage() {
       const raw = createRawClient();
       // Task ids where I'm a responsible (anywhere in the queue) or a follower.
       const [{ data: seq }, { data: fol }] = await Promise.all([
-        (raw as any).from("task_sequences").select("task_id").eq("user_id", userId),
+        (raw as any).from("task_sequences").select("task_id, status, delivered_at").eq("user_id", userId),
         (raw as any).from("task_followers").select("task_id").eq("user_id", userId),
       ]);
       const respIds = new Set<string>(((seq ?? []) as any[]).map((r) => r.task_id));
+      const partDone = new Set<string>(
+        ((seq ?? []) as any[]).filter((r) => r.status === "done" || r.delivered_at != null).map((r) => r.task_id)
+      );
       const folIds = new Set<string>(((fol ?? []) as any[]).map((r) => r.task_id));
       const extraIds = Array.from(new Set<string>([...respIds, ...folIds]));
       const orParts = [`assignee_id.eq.${userId}`, `created_by.eq.${userId}`];
@@ -80,6 +85,7 @@ export default function MePage() {
         supabase.from("columns").select("id, name, color, project_id"),
       ]);
       setResponsibleIds(respIds);
+      setMyPartDone(partDone);
       setFollowingIds(folIds);
       // Mapa de etapas (por coluna) para exibir/filtrar a etapa de cada tarefa.
       const stageMap: Record<string, { name: string; color: string; project_id: string }> = {};
@@ -106,6 +112,14 @@ export default function MePage() {
 
   // "Para mim" = I'm a responsible (current assignee OR anywhere in the queue).
   const myTasks = tasks.filter((t) => (t as any).assignee_id === userId || responsibleIds.has(t.id));
+  // "Concluída pra mim" = task entregue OU minha parte (fila/paralelo) já entregue.
+  // Assim uma task paralela que EU entreguei não fica como aberta/atrasada no meu
+  // painel só porque o outro responsável ainda não entregou.
+  const isDoneForMe = (t: TaskWithRelations) => t.status === "delivered" || myPartDone.has(t.id);
+  // Na aba "Para mim", "minha parte entregue" já conta como concluída; nas abas
+  // "Que criei"/"Que acompanho" vale só o status GERAL da task (senão uma task que
+  // criei sumiria do "aberto" só porque entreguei a minha parte).
+  const doneCheck = (t: TaskWithRelations) => (activeTab === "tasks" ? isDoneForMe(t) : t.status === "delivered");
   const createdByMe = tasks.filter((t) => (t as any).created_by === userId);
   const followingTasks = tasks.filter((t) => followingIds.has(t.id));
 
@@ -122,12 +136,12 @@ export default function MePage() {
 
     // Filter by status chips (tasks + created tabs) or legacy showDelivered checkbox
     if (activeTab === "tasks" || activeTab === "created") {
-      if (filterStatus === "open") result = result.filter((t) => t.status !== "delivered");
-      else if (filterStatus === "delivered") result = result.filter((t) => t.status === "delivered");
+      if (filterStatus === "open") result = result.filter((t) => !doneCheck(t));
+      else if (filterStatus === "delivered") result = result.filter((t) => doneCheck(t));
       // "all" — no filter
     } else {
       // Filter delivered
-      result = showDelivered ? result : result.filter((t) => t.status !== "delivered");
+      result = showDelivered ? result : result.filter((t) => !doneCheck(t));
     }
 
     // Sort
@@ -155,11 +169,11 @@ export default function MePage() {
     // etapas cujas tarefas estão ocultas no momento.
     const statusOk = (t: TaskWithRelations) => {
       if (activeTab === "tasks" || activeTab === "created") {
-        if (filterStatus === "open") return t.status !== "delivered";
-        if (filterStatus === "delivered") return t.status === "delivered";
+        if (filterStatus === "open") return !doneCheck(t);
+        if (filterStatus === "delivered") return doneCheck(t);
         return true;
       }
-      return showDelivered ? true : t.status !== "delivered";
+      return showDelivered ? true : !doneCheck(t);
     };
     const seen = new Map<string, string>(); // column_id -> "Etapa — Quadro"
     for (const t of activeBaseTasks) {
@@ -198,15 +212,15 @@ export default function MePage() {
         </div>
         <div className="ml-auto flex items-center gap-3">
           <div className="text-right">
-            <p className="text-2xl font-bold text-brand-navy">{myTasks.filter(t => t.status !== "delivered").length}</p>
+            <p className="text-2xl font-bold text-brand-navy">{myTasks.filter(t => !isDoneForMe(t)).length}</p>
             <p className="text-[10px] text-neutral-400">tarefas abertas</p>
           </div>
           <div className="text-right">
-            <p className="text-2xl font-bold text-green-600">{myTasks.filter(t => t.status === "delivered").length}</p>
+            <p className="text-2xl font-bold text-green-600">{myTasks.filter(t => isDoneForMe(t)).length}</p>
             <p className="text-[10px] text-neutral-400">entregues</p>
           </div>
           <div className="text-right">
-            <p className="text-2xl font-bold text-red-500">{myTasks.filter(t => isOverdue(t.due_date)).length}</p>
+            <p className="text-2xl font-bold text-red-500">{myTasks.filter(t => !isDoneForMe(t) && isOverdue(t.due_date)).length}</p>
             <p className="text-[10px] text-neutral-400">atrasadas</p>
           </div>
         </div>
@@ -314,6 +328,7 @@ export default function MePage() {
             showDelivered={filterStatus !== "open"}
             onOpen={setOpenTaskId}
             onChanged={reloadTasks}
+            donePartIds={myPartDone}
           />
         )}
         {activeTab === "created" && (
@@ -363,6 +378,7 @@ function TaskList({
   onOpen,
   onChanged,
   stagesById,
+  donePartIds,
 }: {
   tasks: TaskWithRelations[];
   emptyText: string;
@@ -370,7 +386,9 @@ function TaskList({
   onOpen: (id: string) => void;
   onChanged: () => void;
   stagesById: Record<string, { name: string; color: string; project_id: string }>;
+  donePartIds?: Set<string>;
 }) {
+  const doneForMe = (t: TaskWithRelations) => t.status === "delivered" || (donePartIds?.has(t.id) ?? false);
   if (tasks.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center py-16 text-neutral-400">
@@ -380,9 +398,10 @@ function TaskList({
     );
   }
 
-  // Since filtering is already applied upstream, just render the list grouped by status
-  const open = tasks.filter(t => t.status !== "delivered");
-  const done = tasks.filter(t => t.status === "delivered");
+  // Agrupa por "concluída pra mim" (task entregue OU minha parte já entregue),
+  // não só pelo status geral — assim minha parte pronta sai do "Em aberto".
+  const open = tasks.filter(t => !doneForMe(t));
+  const done = tasks.filter(t => doneForMe(t));
 
   return (
     <div className="space-y-6 max-w-2xl">
@@ -392,7 +411,7 @@ function TaskList({
             Em aberto · {open.length}
           </p>
           <div className="space-y-2">
-            {open.map(t => <TaskRow key={t.id} task={t} onOpen={onOpen} onChanged={onChanged} stage={stagesById[(t as any).column_id]} />)}
+            {open.map(t => <TaskRow key={t.id} task={t} onOpen={onOpen} onChanged={onChanged} stage={stagesById[(t as any).column_id]} doneForMe={false} />)}
           </div>
         </div>
       )}
@@ -402,7 +421,7 @@ function TaskList({
             Entregues · {done.length}
           </p>
           <div className="space-y-2 opacity-60">
-            {done.map(t => <TaskRow key={t.id} task={t} onOpen={onOpen} onChanged={onChanged} stage={stagesById[(t as any).column_id]} />)}
+            {done.map(t => <TaskRow key={t.id} task={t} onOpen={onOpen} onChanged={onChanged} stage={stagesById[(t as any).column_id]} doneForMe={true} />)}
           </div>
         </div>
       )}
@@ -410,7 +429,7 @@ function TaskList({
   );
 }
 
-function TaskRow({ task: taskProp, onOpen, onChanged, stage }: { task: TaskWithRelations; onOpen: (id: string) => void; onChanged: () => void; stage?: { name: string; color: string; project_id: string } }) {
+function TaskRow({ task: taskProp, onOpen, onChanged, stage, doneForMe = false }: { task: TaskWithRelations; onOpen: (id: string) => void; onChanged: () => void; stage?: { name: string; color: string; project_id: string }; doneForMe?: boolean }) {
   const [task, setTaskState] = useState(taskProp);
   const [adjustOpen, setAdjustOpen] = useState(false);
   const { user } = useAuthStore();
@@ -426,7 +445,7 @@ function TaskRow({ task: taskProp, onOpen, onChanged, stage }: { task: TaskWithR
 
   useEffect(() => { setTaskState(taskProp); }, [taskProp]);
 
-  const overdue = isOverdue(task.due_date);
+  const overdue = isOverdue(task.due_date) && !doneForMe;
   const isDelivered = task.status === "delivered";
   const est = task.estimated_hours ?? 0;
   const tracked = task.tracked_hours ?? 0;
